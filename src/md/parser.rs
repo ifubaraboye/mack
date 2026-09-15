@@ -157,18 +157,30 @@ fn options() -> Options {
 /// before pulldown-cmark, so translated math flows through the exact same
 /// `DisplayMath`/math-run path (and tests) as dollar math.
 ///
+/// Two passes share one job:
+/// - [`join_display_spans`] drops blank lines strictly inside a matched
+///   `$$` opener..closer span. Models format multi-line formulas with blank
+///   lines between rows, which otherwise split into literal paragraphs with
+///   visible `$$` (pulldown-cmark cannot span paragraphs).
+/// - [`scan_backslash_delimiters`] rewrites `\[`/`\]` to `$$` and `\(`/`\)`
+///   to `$`.
+///
 /// Only unescaped delimiters outside fenced and inline code translate:
 /// `\\[`, `` `\[` ``, and fenced `\[` stay literal. Unmatched delimiters
 /// degrade exactly like unmatched `$$` already do (left literal).
 ///
-/// `\[`/`\]` keep their byte length (`$$`), but `\(`/`\)` shrink two bytes
-/// to one (`$`), so every translated range is mapped back to source offsets
+/// Translations change byte lengths (`\(`→`$` shrinks, blank-line drops
+/// shrink), so every translated range is mapped back to source offsets
 /// below: the incremental parser slices the *source* at block boundaries,
 /// and a drifted boundary could split a character or a delimiter.
 struct Translated<'a> {
     text: Cow<'a, str>,
-    /// Translated offsets where one source byte was dropped, ascending.
+    /// Final-coordinate offsets where phase 2 dropped one source byte
+    /// (`\(`→`$`), ascending.
     shrinks: Vec<usize>,
+    /// Cleaned-coordinate offsets where phase 1 dropped blank-line bytes
+    /// (one entry per byte), ascending.
+    drop_shrinks: Vec<usize>,
 }
 
 impl Translated<'_> {
@@ -176,15 +188,21 @@ impl Translated<'_> {
         &self.text
     }
 
-    /// Maps a translated byte offset back to the source. Strict `<` keeps a
-    /// block starting exactly at a translated delimiter on the delimiter's
-    /// backslash rather than inside it.
+    /// Maps an offset through one edit list. Strict `<` keeps a block
+    /// starting exactly at an edit site on the site's first source byte
+    /// rather than inside it. Drop sites are strictly interior to the
+    /// `DisplayMath` block they create, so no `TopBlock` boundary ever
+    /// queries one exactly.
+    fn unmap_phase(offset: usize, entries: &[usize]) -> usize {
+        offset + entries.partition_point(|&entry| entry < offset)
+    }
+
     fn unmap(&self, offset: usize) -> usize {
-        offset + self.shrinks.partition_point(|&shrink| shrink < offset)
+        Self::unmap_phase(Self::unmap_phase(offset, &self.shrinks), &self.drop_shrinks)
     }
 
     fn remap_ranges(&self, blocks: &mut [TopBlock]) {
-        if self.shrinks.is_empty() {
+        if self.shrinks.is_empty() && self.drop_shrinks.is_empty() {
             return;
         }
         for block in blocks {
@@ -195,14 +213,165 @@ impl Translated<'_> {
 }
 
 /// Translates LaTeX math delimiters to dollar delimiters. Zero-cost
-/// (borrowed) for backslash-free sources, which is the common case.
+/// (borrowed) for sources with neither backslashes nor `$$`, which is the
+/// common case.
 fn translate_latex_delimiters(source: &str) -> Translated<'_> {
-    if !source.contains('\\') {
+    if !source.contains('\\') && !source.contains("$$") {
         return Translated {
             text: Cow::Borrowed(source),
             shrinks: Vec::new(),
+            drop_shrinks: Vec::new(),
         };
     }
+    let (cleaned, drop_shrinks) = join_display_spans(source);
+    if !cleaned.contains('\\') {
+        return Translated {
+            text: cleaned,
+            shrinks: Vec::new(),
+            drop_shrinks,
+        };
+    }
+    let (text, shrinks) = scan_backslash_delimiters(&cleaned);
+    Translated {
+        text: Cow::Owned(text),
+        shrinks,
+        drop_shrinks,
+    }
+}
+
+/// Role of a `$$`-carrying line in display-span matching. Classification is
+/// deliberately narrow — bare lines plus single-occurrence openers/closers —
+// drawn from the shapes models actually emit. Anything else (`$$x$$`,
+/// `a $$ b`) is left for native single-line math.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum DollarRole {
+    /// The whole line is `$$`: opens when closed, closes when open.
+    Bare,
+    /// Starts with `$$` (once): opener only.
+    OpenerContent,
+    /// Ends with `$$` (once): closer only.
+    CloserContent,
+}
+
+fn classify_dollar_line(trimmed: &str) -> Option<DollarRole> {
+    if trimmed.matches("$$").count() != 1 {
+        return None;
+    }
+    if trimmed == "$$" {
+        Some(DollarRole::Bare)
+    } else if trimmed.starts_with("$$") {
+        Some(DollarRole::OpenerContent)
+    } else if trimmed.ends_with("$$") {
+        Some(DollarRole::CloserContent)
+    } else {
+        None
+    }
+}
+
+/// Joins `$$` display-math spans split across blank lines by dropping blank
+/// lines strictly inside a matched opener..closer span (single forward pass;
+/// pending blanks re-emit untouched when the span never closes, so genuinely
+/// unclosed `$$` degrades exactly as before). Fenced lines never participate.
+/// Returns the cleaned text plus drop entries in cleaned coordinates.
+fn join_display_spans(source: &str) -> (Cow<'_, str>, Vec<usize>) {
+    if !source.contains("$$") {
+        return (Cow::Borrowed(source), Vec::new());
+    }
+    let bytes = source.as_bytes();
+    // Line starts, including a trailing unterminated line.
+    let mut line_starts = vec![0];
+    for (index, &byte) in bytes.iter().enumerate() {
+        if byte == b'\n' && index + 1 < bytes.len() {
+            line_starts.push(index + 1);
+        }
+    }
+    let line_end = |next: Option<usize>| next.unwrap_or(bytes.len());
+    // Fenced state per line start.
+    let mut fenced: Option<(u8, usize)> = None;
+    let mut line_fenced = vec![false; line_starts.len()];
+    for (line, &start) in line_starts.iter().enumerate() {
+        if let Some((fence, len, _)) = fence_run(bytes, start) {
+            let end = line_end(line_starts.get(line + 1).copied());
+            match fenced {
+                None => fenced = Some((fence, len)),
+                Some((open, open_len))
+                    if fence == open && len >= open_len && line_tail_blank(bytes, start, end) =>
+                {
+                    fenced = None;
+                }
+                _ => {}
+            }
+            line_fenced[line] = true;
+        } else if fenced.is_some() {
+            line_fenced[line] = true;
+        }
+    }
+
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut drop_shrinks = Vec::new();
+    let mut display_open = false;
+    // Blank lines buffered inside an open span, re-emitted if it never closes.
+    let mut pending: Vec<(usize, usize)> = Vec::new();
+    let mut changed = false;
+    for (line, &start) in line_starts.iter().enumerate() {
+        let end = line_end(line_starts.get(line + 1).copied());
+        if line_fenced[line] {
+            if display_open {
+                // A fence inside a span abandons it: re-emit the waiters.
+                for (pending_start, pending_end) in pending.drain(..) {
+                    out.extend_from_slice(&bytes[pending_start..pending_end]);
+                }
+                display_open = false;
+            }
+            out.extend_from_slice(&bytes[start..end]);
+            continue;
+        }
+        let trimmed = std::str::from_utf8(&bytes[start..end])
+            .unwrap_or_default()
+            .trim();
+        let role = classify_dollar_line(trimmed);
+        match (display_open, role) {
+            (false, Some(DollarRole::Bare) | Some(DollarRole::OpenerContent)) => {
+                display_open = true;
+                out.extend_from_slice(&bytes[start..end]);
+            }
+            (true, Some(DollarRole::Bare) | Some(DollarRole::CloserContent)) => {
+                // Matched: the waiters vanish (one entry per dropped byte).
+                for (pending_start, pending_end) in pending.drain(..) {
+                    for _ in pending_start..pending_end {
+                        drop_shrinks.push(out.len());
+                    }
+                    changed = true;
+                }
+                display_open = false;
+                out.extend_from_slice(&bytes[start..end]);
+            }
+            (true, _) if trimmed.is_empty() => {
+                pending.push((start, end));
+            }
+            _ => {
+                out.extend_from_slice(&bytes[start..end]);
+            }
+        }
+    }
+    // Unclosed spans stream through untouched (today's literal behavior).
+    for (pending_start, pending_end) in pending {
+        out.extend_from_slice(&bytes[pending_start..pending_end]);
+    }
+    if !changed {
+        return (Cow::Borrowed(source), Vec::new());
+    }
+    // Joins only drop ASCII newlines/spaces, so UTF-8 is preserved.
+    (
+        Cow::Owned(String::from_utf8(out).expect("span join is UTF-8")),
+        drop_shrinks,
+    )
+}
+
+/// Rewrites `\[`/`\]` to `$$` and `\(`/`\)` to `$`, respecting `\\`
+/// escapes and fenced/inline code. Returns the rewritten text plus shrink
+/// entries in rewritten coordinates.
+fn scan_backslash_delimiters(source: &str) -> (String, Vec<usize>) {
     let bytes = source.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut shrinks = Vec::new();
@@ -279,11 +448,62 @@ fn translate_latex_delimiters(source: &str) -> Translated<'_> {
             }
         }
     }
-    Translated {
-        // Translation only swaps ASCII bytes, so UTF-8 validity is preserved.
-        text: Cow::Owned(String::from_utf8(out).expect("latex translation is UTF-8")),
+    // Translation only swaps ASCII bytes, so UTF-8 validity is preserved.
+    (
+        String::from_utf8(out).expect("latex translation is UTF-8"),
         shrinks,
+    )
+}
+
+/// Byte offset of the opener line of the display span straddling `boundary`,
+/// if any: a span with opener line start < `boundary` < closer line end.
+/// Forward scan with exact fence tracking, pairing with the same rules as
+/// [`join_display_spans`], so incremental reparses agree with full parses
+/// about which span is open. A closer whose opener settled earlier would
+/// otherwise strand as literal text.
+fn math_span_crossing(text: &str, boundary: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut fenced: Option<(u8, usize)> = None;
+    let mut open_start: Option<usize> = None;
+    let mut crossing: Option<usize> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let line_end = bytes
+            .iter()
+            .skip(i)
+            .position(|&byte| byte == b'\n')
+            .map(|offset| i + offset + 1)
+            .unwrap_or(bytes.len());
+        if let Some((fence, len, _)) = fence_run(bytes, i) {
+            match fenced {
+                None => fenced = Some((fence, len)),
+                Some((open, open_len))
+                    if fence == open && len >= open_len && line_tail_blank(bytes, i, line_end) =>
+                {
+                    fenced = None;
+                }
+                _ => {}
+            }
+        } else if fenced.is_none() {
+            let trimmed = std::str::from_utf8(&bytes[i..line_end])
+                .unwrap_or_default()
+                .trim();
+            match (open_start, classify_dollar_line(trimmed)) {
+                (None, Some(DollarRole::Bare) | Some(DollarRole::OpenerContent)) => {
+                    open_start = Some(i);
+                }
+                (Some(start), Some(DollarRole::Bare) | Some(DollarRole::CloserContent)) => {
+                    if start < boundary && boundary < line_end {
+                        crossing = Some(crossing.map_or(start, |prev| prev.min(start)));
+                    }
+                    open_start = None;
+                }
+                _ => {}
+            }
+        }
+        i = line_end;
     }
+    crossing
 }
 
 /// A fence run (` ```+ ` or `~~~+`) after up to three leading spaces at `i`.
@@ -993,7 +1213,7 @@ impl IncrementalParser {
             return;
         }
 
-        let boundary = self
+        let mut boundary = self
             .tree
             .blocks
             .get(self.stable_prefix)
@@ -1004,9 +1224,57 @@ impl IncrementalParser {
             self.reset(&text);
             return;
         }
+        // A `$$` closer whose opener settled earlier would strand as literal
+        // text: extend the reparse back to the unclosed opener so the span
+        // parses as one unit, exactly like a full parse. Skipped unless the
+        // new tail can actually contain the closer.
+        let mut trunc = self.stable_prefix;
+        if self.text[boundary..].contains("$$")
+            && let Some(opener) = math_span_crossing(&self.text, boundary)
+        {
+            trunc = self
+                .tree
+                .blocks
+                .partition_point(|block| block.range.start < opener);
+            // Never split a kept block containing the opener, nor a
+            // group sharing one source range (image-split paragraphs
+            // settle and reparse as a unit).
+            while trunc > 0 {
+                let previous = &self.tree.blocks[trunc - 1];
+                let shares_start = self
+                    .tree
+                    .blocks
+                    .get(trunc)
+                    .is_some_and(|block| block.range.start == previous.range.start)
+                    || (trunc == self.tree.blocks.len()
+                        && trunc > 1
+                        && previous.range.start == self.tree.blocks[trunc - 2].range.start);
+                if (previous.range.start <= opener && opener < previous.range.end) || shares_start {
+                    trunc -= 1;
+                } else {
+                    break;
+                }
+            }
+            boundary = self
+                .tree
+                .blocks
+                .get(trunc)
+                .map_or(self.text.len(), |block| block.range.start);
+        }
+        // An extension that reaches past every block would swallow the new
+        // tail: fall back to the stable boundary (today's behavior) rather
+        // than dropping the delta.
+        if boundary >= self.text.len() {
+            boundary = self
+                .tree
+                .blocks
+                .get(self.stable_prefix)
+                .map_or(self.text.len(), |block| block.range.start);
+            trunc = self.stable_prefix;
+        }
 
         let tail = parse(&self.text[boundary..]);
-        self.tree.blocks.truncate(self.stable_prefix);
+        self.tree.blocks.truncate(trunc);
         self.tree
             .blocks
             .extend(tail.blocks.into_iter().map(|mut block| {
@@ -1175,6 +1443,10 @@ mod tests {
             // Models emit LaTeX delimiters: identical streaming guarantee.
             "Intro\n\n\\[\n\\theta_{t+1} = \\theta_t\n\\]\n\nDone",
             "a \\(x^2\\) b",
+            // Blank-line-split display spans: the opener may settle long
+            // before the closer arrives.
+            "a\n\n$$\n\\theta\n\n\\eta\n$$\n\nb",
+            "a\n\n$$\n\\theta\n\n\\eta\n\n\\mu\n\n\\nu\n$$\n\nb",
         ] {
             let mut parser = IncrementalParser::new();
             for ch in source.chars() {
@@ -1241,6 +1513,26 @@ mod tests {
         assert_eq!(
             &source[tree.blocks[1].range.clone()],
             "\\[x^2\\] and \\(y\\)"
+        );
+    }
+
+    #[test]
+    fn blank_line_split_display_spans_join() {
+        // The model shape from the transcript: blank lines between formula
+        // rows join into one display block instead of literal `$$` text.
+        let tree = parse(
+            "The gradient is:\n\n$$\n\\nabla_\\theta J(\\theta)\n\\frac{1}{m}\n\\sum_{i=1}^{m}\n$$\n\nDone",
+        );
+        assert!(matches!(&tree.blocks[1].block, Block::DisplayMath { latex }
+                if latex.contains("\\nabla") && latex.contains("\\sum") && !latex.contains("$$")));
+        // Joined ranges still slice the source span exactly.
+        let source = "a\n\n$$\n\\theta\n\n\\eta\n$$\n\nb";
+        let tree = parse(source);
+        assert_eq!(tree.blocks.len(), 3);
+        assert!(matches!(&tree.blocks[1].block, Block::DisplayMath { .. }));
+        assert_eq!(
+            &source[tree.blocks[1].range.clone()],
+            "$$\n\\theta\n\n\\eta\n$$\n"
         );
     }
 
