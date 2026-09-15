@@ -399,7 +399,7 @@ fn render_sent_message_attachments(
         let icon_path = if attachment.is_dir {
             "icons/folder.svg"
         } else {
-            right_panel::file_icon_for_path(&attachment.mention)
+            crate::ui::file_icon_for_path(&attachment.mention)
         };
         let attachment_image = attachment_images.get(index).and_then(|image| image.clone());
         let mut tile = div()

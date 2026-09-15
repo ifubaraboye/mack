@@ -23,14 +23,12 @@ impl Waku {
         let active = self
             .panel_resize_drag
             .is_some_and(|drag| drag.target == target);
-        // The right panel's left edge abuts the browser webview, a native view
-        // that composites above every base-scene pixel at or beyond the edge.
-        // Its bar and hover strip therefore sit entirely left of the edge,
-        // where GPUI still owns rendering and input; the other edges keep the
-        // conventional straddle.
+        // The right panel's left-edge bar and hover strip sit entirely left
+        // of the edge, where GPUI owns rendering and input; the other edges
+        // keep the conventional straddle.
         let (strip_left, strip_width) = match target {
             PanelResizeTarget::RightPanel => (-7.0, 8.0),
-            PanelResizeTarget::Sidebar | PanelResizeTarget::FileTree => (-5.0, 10.0),
+            PanelResizeTarget::Sidebar => (-5.0, 10.0),
         };
         div()
             .id(id)
@@ -234,10 +232,6 @@ impl Render for Waku {
             // `with_animation` would do, minus its element-id keying.
             window.request_animation_frame();
         }
-        // Before anything can early-return (the settings page below), settle
-        // whether each native browser webview belongs on screen this frame —
-        // it floats above everything GPUI paints.
-        self.sync_browser_webviews(cx);
         if self.fps_counter_visible {
             self.tick_fps(window);
         }
@@ -304,18 +298,12 @@ impl Render for Waku {
             .on_action(cx.listener(Self::focus_composer_action))
             .on_action(cx.listener(Self::toggle_model_picker_action))
             .on_action(cx.listener(Self::toggle_usage_panel_action))
-            .on_action(cx.listener(Self::save_right_panel_file_action))
             .on_action(cx.listener(Self::cancel_turn_action))
             .on_action(cx.listener(Self::copy_selection_action))
             .on_action(cx.listener(Self::open_find_action))
-            .on_action(cx.listener(Self::open_find_replace_action))
             .on_action(cx.listener(Self::close_find_action))
             .on_action(cx.listener(Self::find_next_action))
             .on_action(cx.listener(Self::find_previous_action))
-            .on_action(cx.listener(Self::toggle_find_case_action))
-            .on_action(cx.listener(Self::toggle_find_whole_word_action))
-            .on_action(cx.listener(Self::toggle_find_regex_action))
-            .on_action(cx.listener(Self::replace_all_matches_action))
             .on_modifiers_changed(cx.listener(Self::task_switcher_modifiers_changed))
             .capture_any_mouse_down(cx.listener(Self::navigation_mouse_down))
             .on_mouse_move(cx.listener(Self::resize_panel_mouse_move))

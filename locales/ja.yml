@@ -744,22 +744,14 @@ session.rewind_title: "%{title}（巻き戻し）"
 session.rewound: タスクをターン %{turn} の前まで巻き戻しました
 session.rewound_with_stale_refs: "タスクをターン %{turn} の前まで巻き戻しましたが、古い ref が残っています：%{error}"
 
-right_panel.browser: ブラウザ
 right_panel.terminal: ターミナル
-right_panel.files: ファイル
-right_panel.diff: レビュー
+right_panel.new_terminal: 新しいターミナル
 right_panel.toggle: 右パネルの表示を切り替える
-right_panel.open_surface: パネルを開く
-right_panel.choose_surface: 右パネルに表示する内容を選択します
-right_panel.browser_description: ローカルアプリまたは URL を開きます
 right_panel.terminal_description: このワークスペースでシェルを起動します
-right_panel.files_description: ワークスペースのファイルを閲覧します
-right_panel.diff_description: ファイルの変更をレビューします
 right_panel.terminal_unavailable: ターミナルを利用できません
 right_panel.terminal_unavailable_description: ターミナルパネルをもう一度開くとシェルが起動します
 right_panel.resize: 右パネルの幅を変更
 right_panel.tabs: 右パネルのタブ
-right_panel.add_tab: パネルタブを追加
 right_panel.hide: 右パネルを隠す
 right_panel.close_tab: "%{title} を閉じる"
 
@@ -770,7 +762,6 @@ environment.title: 環境
 environment.summary: 環境とバックグラウンド作業
 environment.changes: 変更
 environment.commit_or_push: コミットまたはプッシュ
-environment.compare_branch: ブランチを比較
 environment.task_id: タスク ID
 environment.agent_cli_thread_id: エージェント CLI スレッド ID
 
@@ -830,26 +821,6 @@ background.status.stopped: 停止
 background.status.lost: 切断
 background.unavailable: このバックグラウンド処理は利用できなくなりました。
 
-files.unsaved_changes: 未保存の変更があります — %{shortcut} で保存
-files.no_project_open: プロジェクトが開かれていません
-files.no_project_open_description: プロジェクトを開くとファイルを閲覧できます
-files.no_project_is_open: 開いているプロジェクトはありません
-files.unable_to_edit: "このファイルを編集できません：%{error}"
-files.could_not_save_opening: "%{path} を保存できませんでした：まだ開いています"
-files.could_not_save_read_only: "%{path} を保存できませんでした：このファイルは編集できません"
-files.could_not_save: "%{path} を保存できませんでした：%{error}"
-files.preview_markdown: Markdown をプレビュー
-files.edit_markdown_source: ソースを編集
-files.resize_tree: ファイルツリーの幅を変更
-files.refresh: ファイルを更新
-files.loading: ファイルを読み込み中…
-files.workspace_files: ワークスペースのファイル
-files.loading_file: ファイルを読み込み中
-files.reading_from_daemon: デーモンホストから読み込んでいます。
-files.file_unavailable: ファイルを利用できません
-files.loading_editor: エディタを読み込み中
-files.preparing_editor: エディタを準備中…
-files.preparing_syntax: シンタックスハイライトを準備しています。
 file_picker.open_project: プロジェクトを開く
 file_picker.attach: 添付
 file_picker.daemon_folders: デーモンのフォルダ
@@ -883,63 +854,19 @@ file_picker.folder: フォルダ
 file_picker.file: ファイル
 file_picker.typed_file: "%{type} ファイル"
 
-diff.no_changes: 変更はありません
-diff.no_changes_description: このソースにはレビューするファイル変更がありません
-diff.filter_files: ファイルを絞り込む…
-diff.source_last_turn: 前回のターン
-diff.source_turn: ターン %{turn}
-diff.source_uncommitted: 未コミット
-diff.source_unstaged: 未ステージ
-diff.source_staged: ステージ済み
-diff.source_committed: コミット済み
-diff.source_branch: ブランチ
-diff.loading: 変更を読み込み中…
-diff.preparing_review: レビューを準備中…
-diff.loading_description: レビュー用に一貫した Git スナップショットを取得しています
-diff.unavailable: 変更を利用できません
-diff.refresh: 変更を更新
-diff.refresh_failed: "変更を更新できませんでした：%{error}"
-diff.truncated: 大きな差分 · 先頭 50,000 行を表示
 diff.unmodified_lines: "未変更の行 %{count} 行"
-diff.expand_all_context: 未変更の行をすべて展開
-diff.expand_context: 未変更の行を展開 · Shift キーを押しながらクリックですべて展開
-diff.expand_context_above: 上の 100 行を表示 · Shift キーを押しながらクリックですべて表示
-diff.expand_context_below: 下の 100 行を表示 · Shift キーを押しながらクリックですべて表示
-diff.resize_tree: 差分ファイルツリーの幅を変更
-diff.changed_files: 変更されたファイル
-diff.file_count_one: ファイル 1 件
-diff.file_count: "ファイル %{count} 件"
-diff.status_added: 追加
-diff.status_deleted: 削除
-diff.rows_hidden_one: 残り 1 行 · レビューを開くと変更全体を読めます
-diff.rows_hidden: "残り %{count} 行 · レビューを開くと変更全体を読めます"
+diff.rows_hidden_one: 残り 1 行
+diff.rows_hidden: "残り %{count} 行"
 terminal.transport_failed: ターミナル転送に失敗しました
 terminal.no_workspace_description: ターミナルを開く前にタスクを選択してください。
 terminal.process_exited: プロセスが終了しました
 
-browser.back: 戻る（%{shortcut}）
-browser.forward: 進む（%{shortcut}）
-browser.stop_loading: 読み込みを停止（Esc）
-browser.reload: 再読み込み（%{shortcut}）
-browser.open_external: デフォルトのブラウザで開く
-browser.browse_web: ウェブを閲覧
-browser.start_hint: 上に URL または検索語句を入力してください — %{shortcut} でアドレスバーにフォーカス
-browser.unavailable: ブラウザを利用できません
-browser.unavailable_on_platform: ブラウザパネルはこのプラットフォームではまだ利用できません
-
 find.bad_pattern: 無効なパターン
 find.no_results: 結果なし
 find.result_count: "%{total} 件中 %{current} 件目"
-find.match_case: 大文字と小文字を区別（%{shortcut}）
-find.match_whole_word: 単語単位で検索（%{shortcut}）
-find.use_regex: 正規表現を使用（%{shortcut}）
 find.previous_match: 前の一致項目（⇧Enter）
 find.next_match: 次の一致項目（Enter）
 find.close: 閉じる（Esc）
-find.replace: 置換（Enter）
-find.replace_all: すべて置換（%{shortcut}）
-find.toggle_replace: 置換欄の表示を切り替える
-
 common.dismiss_notification: 通知を閉じる
 common.reveal_in_finder: ファイルマネージャーで表示
 
@@ -957,7 +884,6 @@ transcript.thinking: 思考中
 transcript.thought_for: 思考時間 %{duration}
 transcript.changed_file: "%{count} 個のファイルを変更"
 transcript.changed_files: "%{count} 個のファイルを変更"
-transcript.review_changes: レビュー
 transcript.show_more_files: "さらに %{count} 個のファイルを表示"
 transcript.show_fewer_files: 表示するファイルを減らす
 transcript.showing_first_files: "%{total} 個中、先頭 %{count} 個を表示"

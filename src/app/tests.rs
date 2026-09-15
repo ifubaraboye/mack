@@ -10,18 +10,16 @@ use super::{
     NAVIGATION_RAIL_TURN_HEIGHT, PendingUserInput, SessionNavigation, StreamDeltaKind,
     TranscriptRowKind::*, Waku, active_navigation_turn_index, append_text_delta_to_session,
     assistant_response_footer, assistant_response_footer_index, assistant_response_footer_time,
-    compact_driver_error, disclosure_leading_space, fenced_code, fitted_file_tree_width,
-    fitted_panel_widths, folded_transcript_row_kinds, format_worked_duration,
-    format_working_elapsed, maintain_transcript_anchor, message_opens_turn,
-    message_starts_followup_turn, navigation_preview_snippet, navigation_rail_fade_visibility,
-    navigation_rail_height, navigation_rail_scale, paused_toast_duration, pop_stream_batch,
-    push_transcript_activity, response_footer_message_index, response_row_turn_id,
-    session_accepts_turn_output, session_is_reapable, should_refresh_branch_after_activity,
-    should_show_navigation_rail, should_show_scroll_to_bottom, task_id_from_notification_tag,
-    task_notification_tag, transcript_anchor_end_space, transcript_navigation_turns,
-    transcript_rests_at_tail, transcript_row_kinds, transcript_row_splice,
-    transcript_rows_fingerprint, widened_panel_width_for_file_editor,
-    widened_panel_width_for_review,
+    compact_driver_error, disclosure_leading_space, fenced_code, fitted_panel_widths,
+    folded_transcript_row_kinds, format_worked_duration, format_working_elapsed,
+    maintain_transcript_anchor, message_opens_turn, message_starts_followup_turn,
+    navigation_preview_snippet, navigation_rail_fade_visibility, navigation_rail_height,
+    navigation_rail_scale, paused_toast_duration, pop_stream_batch, push_transcript_activity,
+    response_footer_message_index, response_row_turn_id, session_accepts_turn_output,
+    session_is_reapable, should_refresh_branch_after_activity, should_show_navigation_rail,
+    should_show_scroll_to_bottom, task_id_from_notification_tag, task_notification_tag,
+    transcript_anchor_end_space, transcript_navigation_turns, transcript_rests_at_tail,
+    transcript_row_kinds, transcript_row_splice, transcript_rows_fingerprint,
 };
 use crate::git_branch::BranchEntry;
 use crate::model::{
@@ -520,27 +518,6 @@ fn hidden_panels_do_not_consume_layout_width() {
 
     assert_eq!(sidebar, 0.0);
     assert_eq!(right_panel, 620.0);
-}
-
-#[test]
-fn file_tree_width_preserves_a_usable_editor() {
-    assert_eq!(fitted_file_tree_width(460.0, 184.0), 184.0);
-    assert_eq!(fitted_file_tree_width(460.0, 400.0), 320.0);
-    assert_eq!(fitted_file_tree_width(280.0, 184.0), 140.0);
-    assert_eq!(fitted_file_tree_width(280.0, f32::NAN), 140.0);
-}
-
-#[test]
-fn first_file_editor_opening_reserves_500_pixels() {
-    assert_eq!(widened_panel_width_for_file_editor(460.0, 184.0), 684.0);
-    assert_eq!(widened_panel_width_for_file_editor(720.0, 184.0), 720.0);
-    assert_eq!(widened_panel_width_for_file_editor(460.0, 360.0), 860.0);
-}
-
-#[test]
-fn first_review_opening_reserves_diff_and_tree_space() {
-    assert_eq!(widened_panel_width_for_review(460.0), 820.0);
-    assert_eq!(widened_panel_width_for_review(920.0), 920.0);
 }
 
 #[test]

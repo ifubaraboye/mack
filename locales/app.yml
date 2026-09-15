@@ -1508,28 +1508,14 @@ session.rewound:
 session.rewound_with_stale_refs:
   en: "Rewound to before turn %{turn}; stale refs remain: %{error}"
 
-right_panel.browser:
-  en: Browser
 right_panel.terminal:
   en: Terminal
-right_panel.files:
-  en: Files
-right_panel.diff:
-  en: Review
+right_panel.new_terminal:
+  en: New terminal
 right_panel.toggle:
   en: Toggle right panel
-right_panel.open_surface:
-  en: Open a surface
-right_panel.choose_surface:
-  en: Choose what to show in the right panel
-right_panel.browser_description:
-  en: Open a local app or URL
 right_panel.terminal_description:
   en: Start a shell in this workspace
-right_panel.files_description:
-  en: Browse and read workspace files
-right_panel.diff_description:
-  en: Review file changes
 right_panel.terminal_unavailable:
   en: Terminal unavailable
 right_panel.terminal_unavailable_description:
@@ -1538,8 +1524,6 @@ right_panel.resize:
   en: Resize right panel
 right_panel.tabs:
   en: Right panel tabs
-right_panel.add_tab:
-  en: Add panel tab
 right_panel.hide:
   en: Hide right panel
 right_panel.close_tab:
@@ -1558,8 +1542,6 @@ environment.changes:
   en: Changes
 environment.commit_or_push:
   en: Commit or push
-environment.compare_branch:
-  en: Compare branch
 environment.task_id:
   en: Task ID
 environment.agent_cli_thread_id:
@@ -1675,47 +1657,6 @@ background.status.lost:
 background.unavailable:
   en: This work is no longer available.
 
-files.unsaved_changes:
-  en: Unsaved changes — %{shortcut} to save
-files.no_project_open:
-  en: No project open
-files.no_project_open_description:
-  en: Open a project to browse its files
-files.no_project_is_open:
-  en: No project is open
-files.unable_to_edit:
-  en: "Unable to edit this file: %{error}"
-files.could_not_save_opening:
-  en: "Could not save %{path}: still opening"
-files.could_not_save_read_only:
-  en: "Could not save %{path}: file is not editable"
-files.could_not_save:
-  en: "Could not save %{path}: %{error}"
-files.preview_markdown:
-  en: Preview markdown
-files.edit_markdown_source:
-  en: Edit source
-files.resize_tree:
-  en: Resize file tree
-files.refresh:
-  en: Refresh files
-files.loading:
-  en: Loading files…
-files.workspace_files:
-  en: Workspace files
-files.loading_file:
-  en: Loading file
-files.reading_from_daemon:
-  en: Reading from the daemon host.
-files.file_unavailable:
-  en: File unavailable
-files.loading_editor:
-  en: Loading editor
-files.preparing_editor:
-  en: Preparing editor…
-files.preparing_syntax:
-  en: Preparing syntax highlighting.
-
 file_picker.open_project:
   en: Open Project
 file_picker.attach:
@@ -1781,66 +1722,12 @@ file_picker.file:
 file_picker.typed_file:
   en: "%{type} file"
 
-diff.no_changes:
-  en: No changes
-diff.no_changes_description:
-  en: This source has no file changes to review
-diff.filter_files:
-  en: Filter files…
-diff.source_last_turn:
-  en: Last Turn
-diff.source_turn:
-  en: Turn %{turn}
-diff.source_uncommitted:
-  en: Uncommitted
-diff.source_unstaged:
-  en: Unstaged
-diff.source_staged:
-  en: Staged
-diff.source_committed:
-  en: Committed
-diff.source_branch:
-  en: Branch
-diff.loading:
-  en: Loading changes…
-diff.preparing_review:
-  en: Preparing review…
-diff.loading_description:
-  en: Capturing a consistent Git snapshot for review
-diff.unavailable:
-  en: Changes unavailable
-diff.refresh:
-  en: Refresh changes
-diff.refresh_failed:
-  en: "Could not refresh changes: %{error}"
-diff.truncated:
-  en: Large diff · showing first 50,000 lines
 diff.unmodified_lines:
   en: "%{count} unmodified lines"
-diff.expand_all_context:
-  en: Expand all unmodified lines
-diff.expand_context:
-  en: Expand unmodified lines · Shift-click for all
-diff.expand_context_above:
-  en: Show 100 lines above · Shift-click for all
-diff.expand_context_below:
-  en: Show 100 lines below · Shift-click for all
-diff.resize_tree:
-  en: Resize diff file tree
-diff.changed_files:
-  en: Changed files
-diff.file_count_one:
-  en: 1 file
-diff.file_count:
-  en: "%{count} files"
-diff.status_added:
-  en: Added
-diff.status_deleted:
-  en: Deleted
 diff.rows_hidden_one:
-  en: 1 more line · open Review to read the whole change
+  en: 1 more line
 diff.rows_hidden:
-  en: "%{count} more lines · open Review to read the whole change"
+  en: "%{count} more lines"
 
 terminal.transport_failed:
   en: Terminal transport failed
@@ -1849,50 +1736,18 @@ terminal.no_workspace_description:
 terminal.process_exited:
   en: Process exited
 
-browser.back:
-  en: Back (%{shortcut})
-browser.forward:
-  en: Forward (%{shortcut})
-browser.stop_loading:
-  en: Stop loading (Esc)
-browser.reload:
-  en: Reload (%{shortcut})
-browser.open_external:
-  en: Open in default browser
-browser.browse_web:
-  en: Browse the web
-browser.start_hint:
-  en: Enter a URL or search above — %{shortcut} focuses the address bar
-browser.unavailable:
-  en: Browser unavailable
-browser.unavailable_on_platform:
-  en: The browser surface is not available on this platform yet
-
 find.bad_pattern:
   en: Bad pattern
 find.no_results:
   en: No results
 find.result_count:
   en: "%{current} of %{total}"
-find.match_case:
-  en: Match case (%{shortcut})
-find.match_whole_word:
-  en: Match whole word (%{shortcut})
-find.use_regex:
-  en: Use regular expression (%{shortcut})
 find.previous_match:
   en: Previous match (⇧Enter)
 find.next_match:
   en: Next match (Enter)
 find.close:
   en: Close (Esc)
-find.replace:
-  en: Replace (Enter)
-find.replace_all:
-  en: Replace all (%{shortcut})
-find.toggle_replace:
-  en: Toggle replace
-
 common.dismiss_notification:
   en: Dismiss notification
 
@@ -1926,8 +1781,6 @@ transcript.changed_file:
   en: Changed %{count} file
 transcript.changed_files:
   en: Changed %{count} files
-transcript.review_changes:
-  en: Review
 transcript.show_more_files:
   en: Show %{count} more files
 transcript.show_fewer_files:

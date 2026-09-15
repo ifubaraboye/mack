@@ -250,7 +250,6 @@ impl Waku {
         self.sidebar_branch_scan_fingerprint.set(None);
         self.sidebar_branch_scan_generation
             .set(self.sidebar_branch_scan_generation.get().wrapping_add(1));
-        self.refresh_workspace_surfaces(cx);
         self.invalidate_composer_sources(cx);
     }
 
@@ -597,12 +596,6 @@ impl Waku {
                 self.right_panel_width = right_panel_width;
                 right_panel_width
             }
-            PanelResizeTarget::FileTree => {
-                let width =
-                    fitted_file_tree_width(right_panel_width, self.right_panel_file_tree_width);
-                self.right_panel_file_tree_width = width;
-                width
-            }
         };
         self.panel_resize_drag = Some(PanelResizeDrag {
             target,
@@ -647,16 +640,6 @@ impl Waku {
                 }
                 self.right_panel_width = width;
             }
-            PanelResizeTarget::FileTree => {
-                let maximum = FILE_TREE_MAX_WIDTH
-                    .min(right_panel_width - FILE_EDITOR_MIN_WIDTH)
-                    .max(FILE_TREE_MIN_WIDTH);
-                let width = (drag.start_width - delta).clamp(FILE_TREE_MIN_WIDTH, maximum);
-                if (self.right_panel_file_tree_width - width).abs() < 0.5 {
-                    return;
-                }
-                self.right_panel_file_tree_width = width;
-            }
         }
         cx.notify();
     }
@@ -670,9 +653,10 @@ impl Waku {
         if event.button == MouseButton::Left
             && let Some(drag) = self.panel_resize_drag.take()
         {
-            if drag.target != PanelResizeTarget::FileTree {
-                self.persist_panel_layout();
+            if drag.target != PanelResizeTarget::RightPanel {
+                return;
             }
+            self.persist_panel_layout();
             cx.notify();
         }
     }

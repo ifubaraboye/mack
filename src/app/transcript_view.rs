@@ -403,34 +403,19 @@ impl Waku {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let reviewing_diff = self.right_panel_visible
-            && self
-                .right_panel_active_surface
-                .and_then(|index| self.right_panel_surfaces.get(index))
-                .is_some_and(|surface| matches!(surface, RightPanelSurface::Diff));
         let reviewing_background_work = self.right_panel_visible
             && self
                 .right_panel_active_surface
                 .and_then(|index| self.right_panel_surfaces.get(index))
                 .is_some_and(|surface| matches!(surface, RightPanelSurface::BackgroundWork { .. }));
-        let selected = reviewing_diff
+        let selected = reviewing_background_work
             .then(|| {
-                self.right_panel_diff_selection
-                    .selection
-                    .borrow()
-                    .selected_text()
+                self.state
+                    .selected_session
+                    .and_then(|session_id| self.background_work.get(&session_id))
+                    .and_then(BackgroundWorkRegistry::selected_text)
             })
             .flatten()
-            .or_else(|| {
-                reviewing_background_work
-                    .then(|| {
-                        self.state
-                            .selected_session
-                            .and_then(|session_id| self.background_work.get(&session_id))
-                            .and_then(BackgroundWorkRegistry::selected_text)
-                    })
-                    .flatten()
-            })
             .or_else(|| self.toast_selection.selection.borrow().selected_text())
             .or_else(|| self.skills_selection.selection.borrow().selected_text())
             .or_else(|| self.transcript_selection.selection.borrow().selected_text());
@@ -1522,41 +1507,6 @@ impl Waku {
         let can_expand = files.len() > CHANGED_FILES_PREVIEW_LIMIT;
         let clipped = expanded && files.len() > CHANGED_FILES_EXPANDED_LIMIT;
 
-        let review_focus =
-            self.transcript_control_focus(format!("changed-files-review-{turn_id}"), cx);
-        let review = div()
-            .id(SharedString::from(format!(
-                "changed-files-review-{turn_id}"
-            )))
-            .track_focus(&review_focus)
-            .tab_index(0)
-            .h(px(28.0))
-            .px(px(10.0))
-            .rounded(px(7.0))
-            .border_1()
-            .border_color(theme.border_strong)
-            .flex()
-            .items_center()
-            .gap(px(5.0))
-            .cursor_default()
-            .text_size(sp(12.5))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(theme.text_secondary)
-            .focus_visible(|style| style.border_color(theme.accent))
-            .hover(|style| style.bg(theme.overlay_strong).text_color(theme.text))
-            .active(|style| style.bg(theme.overlay))
-            .child(icon("icons/file-diff.svg", 12.0, theme.text_tertiary))
-            .child(tr_cow!("transcript.review_changes"))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_turn_diff(turn_id, cx);
-            }))
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.open_turn_diff(turn_id, cx);
-                    cx.stop_propagation();
-                }
-            }));
-
         let title = if files.len() == 1 {
             tr!("transcript.changed_file", count = files.len())
         } else {
@@ -1626,8 +1576,7 @@ impl Waku {
                                             .child(format!("-{deletions}")),
                                     ),
                             ),
-                    )
-                    .child(review),
+                    ),
             );
 
         let mut file_rows = div()

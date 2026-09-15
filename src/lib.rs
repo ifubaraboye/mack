@@ -31,7 +31,6 @@ macro_rules! tr_cow {
 mod analytics;
 mod app;
 mod assets;
-mod browser;
 mod computer_use;
 pub mod daemon;
 mod driver;
@@ -83,30 +82,12 @@ actions!(
         FocusComposer,
         ToggleModelPicker,
         ToggleUsagePanel,
-        SaveFile,
         CancelTurn,
         CopySelection,
         OpenFind,
-        OpenFindReplace,
         CloseFind,
         FindNext,
-        FindPrevious,
-        ToggleFindCaseSensitive,
-        ToggleFindWholeWord,
-        ToggleFindRegex,
-        ReplaceAllMatches,
-        BrowserBack,
-        BrowserForward,
-        BrowserReload,
-        BrowserHardReload,
-        BrowserStop,
-        BrowserDevtools,
-        FocusBrowserAddress,
-        BrowserAddressCancel,
-        WebviewCopy,
-        WebviewCut,
-        WebviewPaste,
-        WebviewSelectAll
+        FindPrevious
     ]
 );
 
@@ -257,12 +238,11 @@ pub fn run() {
                 KeyBinding::new("secondary-l", FocusComposer, None),
                 KeyBinding::new("secondary-/", ToggleModelPicker, None),
                 KeyBinding::new("secondary-u", ToggleUsagePanel, None),
-                KeyBinding::new("secondary-s", SaveFile, None),
                 KeyBinding::new("escape", CancelTurn, Some("Waku")),
                 KeyBinding::new("secondary-c", CopySelection, Some("Waku")),
-                // Find and replace in the right panel's file editor, on the
-                // conventional VS Code bindings. The primary shortcut + G cycles matches from
-                // the editor without moving focus to the bar.
+                // Find in the transcript, on the conventional VS Code
+                // bindings. The primary shortcut + G cycles matches without
+                // moving focus to the bar.
                 KeyBinding::new("secondary-f", OpenFind, Some("Waku")),
                 // The text input's macOS-style Ctrl-F caret binding is more
                 // specific than Waku's root context. Reassert the platform
@@ -270,44 +250,10 @@ pub fn run() {
                 // remains find-in-page on Linux/Windows while Cmd-F keeps the
                 // native behavior on macOS.
                 KeyBinding::new("secondary-f", OpenFind, Some("Waku > TextInput")),
-                KeyBinding::new("secondary-alt-f", OpenFindReplace, Some("Waku")),
                 KeyBinding::new("secondary-g", FindNext, Some("Waku")),
                 KeyBinding::new("secondary-shift-g", FindPrevious, Some("Waku")),
-                // Scoped to the editor pane: escape closes the bar there and
-                // falls through to CancelTurn anywhere else.
-                KeyBinding::new("escape", CloseFind, Some("FileEditorPane")),
                 KeyBinding::new("escape", CloseFind, Some("FindBar")),
-                KeyBinding::new(
-                    "secondary-alt-c",
-                    ToggleFindCaseSensitive,
-                    Some("FileEditorPane"),
-                ),
-                KeyBinding::new(
-                    "secondary-alt-w",
-                    ToggleFindWholeWord,
-                    Some("FileEditorPane"),
-                ),
-                KeyBinding::new("secondary-alt-r", ToggleFindRegex, Some("FileEditorPane")),
                 KeyBinding::new("shift-enter", FindPrevious, Some("FindBar")),
-                KeyBinding::new("secondary-alt-enter", ReplaceAllMatches, Some("FindBar")),
-                // Browser surface. Deeper than "Waku", so while focus is on the
-                // page or its address bar the browser reads the platform's
-                // conventional navigation shortcuts; the same keys elsewhere
-                // keep their app meanings. The clipboard trio is rebound
-                // because GPUI's window view claims key equivalents before
-                // AppKit can walk the responder chain into the webview.
-                KeyBinding::new("secondary-l", FocusBrowserAddress, Some("Browser")),
-                KeyBinding::new("secondary-r", BrowserReload, Some("Browser")),
-                KeyBinding::new("secondary-shift-r", BrowserHardReload, Some("Browser")),
-                KeyBinding::new("secondary-[", BrowserBack, Some("Browser")),
-                KeyBinding::new("secondary-]", BrowserForward, Some("Browser")),
-                KeyBinding::new("escape", BrowserStop, Some("Browser")),
-                KeyBinding::new("secondary-alt-i", BrowserDevtools, Some("Browser")),
-                KeyBinding::new("secondary-c", WebviewCopy, Some("Browser")),
-                KeyBinding::new("secondary-x", WebviewCut, Some("Browser")),
-                KeyBinding::new("secondary-v", WebviewPaste, Some("Browser")),
-                KeyBinding::new("secondary-a", WebviewSelectAll, Some("Browser")),
-                KeyBinding::new("escape", BrowserAddressCancel, Some("BrowserAddress")),
             ]);
 
             cx.on_action(|_: &Quit, cx| cx.quit());

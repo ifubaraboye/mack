@@ -1107,12 +1107,6 @@ impl Render for TerminalView {
         } else {
             self.title.clone()
         };
-        let directory = self
-            .working_directory
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(str::to_owned)
-            .unwrap_or_else(|| tr!("workspace.workspace"));
 
         let mut screen = div()
             .flex_1()
@@ -1326,13 +1320,6 @@ impl Render for TerminalView {
                             .text_size(sp(12.5))
                             .text_color(theme.text_secondary)
                             .child(SharedString::from(title.to_owned())),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(sp(12.5))
-                            .text_color(theme.text_tertiary)
-                            .child(directory),
                     ),
             )
             .child(grid)

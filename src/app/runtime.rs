@@ -3213,7 +3213,6 @@ impl Waku {
         });
         if workspace_changed && self.state.selected_session == Some(session_id) {
             self.invalidate_workspace_queries(cx);
-            self.reload_clean_right_panel_file_editors(cx);
             self.ensure_right_panel_terminals(cx);
         }
         match driver {
@@ -3764,7 +3763,6 @@ impl Waku {
         });
         if selected && workspace_changed {
             self.invalidate_workspace_queries(cx);
-            self.reload_clean_right_panel_file_editors(cx);
             self.ensure_right_panel_terminals(cx);
         }
         let driver = match prepared_driver {

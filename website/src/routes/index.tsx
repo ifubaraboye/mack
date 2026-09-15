@@ -45,7 +45,7 @@ const WINDOWS_DOCS_URL =
 const PROVIDERS = [
   { slug: 'amp', label: 'Amp' },
   { slug: 'claude', label: 'Claude Code' },
-  { slug: 'openai', label: 'Codex' },
+  { slug: 'codex', label: 'Codex' },
   { slug: 'cursor', label: 'Cursor' },
   { slug: 'opencode', label: 'OpenCode' },
   { slug: 'grok', label: 'Grok' },

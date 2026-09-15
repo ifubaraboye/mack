@@ -652,7 +652,7 @@ impl Waku {
                 let icon_path = if file.is_dir {
                     "icons/folder.svg"
                 } else {
-                    super::right_panel::file_icon_for_path(&file.path)
+                    crate::ui::file_icon_for_path(&file.path)
                 };
                 base.child(icon(icon_path, 13.0, theme.text_tertiary))
                     .child(

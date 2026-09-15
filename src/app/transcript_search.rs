@@ -531,6 +531,60 @@ fn literal_find_regex(query: &str) -> Regex {
         .expect("an escaped literal is always a valid regex")
 }
 
+impl Waku {
+    /// Global find shortcut now that the file-editor find bar is gone: the
+    /// transcript is the only searchable surface.
+    pub(super) fn open_find_action(
+        &mut self,
+        _: &OpenFind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_transcript_search(window, cx);
+    }
+
+    pub(super) fn close_find_action(
+        &mut self,
+        _: &CloseFind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.transcript_search_open() {
+            self.close_transcript_search(true, window, cx);
+        } else {
+            // Unhandled, so the keystroke falls through to the next binding —
+            // escape reaches CancelTurn when no find bar is up.
+            cx.propagate();
+        }
+    }
+
+    pub(super) fn find_next_action(
+        &mut self,
+        _: &FindNext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.transcript_search_open() {
+            self.navigate_transcript_search(false, cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
+    pub(super) fn find_previous_action(
+        &mut self,
+        _: &FindPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.transcript_search_open() {
+            self.navigate_transcript_search(true, cx);
+        } else {
+            cx.propagate();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

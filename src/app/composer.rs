@@ -2341,7 +2341,7 @@ impl Waku {
             let icon_path = if attachment.is_dir {
                 "icons/folder.svg"
             } else {
-                super::right_panel::file_icon_for_path(&attachment.mention)
+                crate::ui::file_icon_for_path(&attachment.mention)
             };
             let mut tile = div()
                 .id(SharedString::from(format!("composer-attachment-{index}")))

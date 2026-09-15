@@ -327,7 +327,7 @@ function fileTypeIconName(path: string): FileTypeIconName {
 const PROVIDER_ICONS: Record<ProviderKind, string> = {
   amp: 'i-waku-provider-amp',
   claude: 'i-waku-provider-claude',
-  codex: 'i-waku-provider-openai',
+  codex: 'i-waku-provider-codex',
   cursor: 'i-waku-provider-cursor',
   deepSeek: 'i-waku-provider-deepseek',
   fx: 'i-waku-provider-fx',

@@ -52,27 +52,24 @@ use crate::ui::menu::{
 use crate::ui::scrollbar::{self, ScrollbarState};
 use crate::ui::tooltip::Tooltip;
 
-use crate::browser::BrowserView;
 use crate::persistence::{
     ComposerDraftStore, ComposerDrafts, DEFAULT_RIGHT_PANEL_WIDTH, DEFAULT_SIDEBAR_WIDTH,
     PersistedState, PersistedWindowState, SidebarGrouping, SidebarOrdering, StateStore,
 };
 use crate::query::{Query, QueryCache};
-use crate::review_diff::{Snapshot as ReviewDiffSnapshot, Source as ReviewDiffSource};
 use crate::terminal::TerminalView;
 use crate::theme::{Theme, ThemePreference, sp};
 use crate::ui::text_field::TextField;
 use crate::ui::{
-    MenuChip, ProjectNameSelector, activity_icon, activity_noun, contain_scroll, file_icon, icon,
-    icon_button, motion, provider_color, provider_mark, status_color, toggle_switch,
+    MenuChip, ProjectNameSelector, activity_icon, activity_noun, contain_scroll, icon, icon_button,
+    motion, provider_color, provider_mark, status_color, toggle_switch,
 };
 use crate::{
     CancelTaskSwitch, CancelTurn, CloseFind, CloseWindow, ConfirmTaskSwitch, CopySelection,
     FindNext, FindPrevious, FocusComposer, NavigateBack, NavigateForward, NewProject, NewSession,
-    OpenFind, OpenFindReplace, OpenResumePicker, OpenSettings, ReplaceAllMatches, SaveFile,
-    SelectFirstTask, SelectLastTask, SwitchTaskBackward, SwitchTaskForward, ToggleCommandPalette,
-    ToggleFindCaseSensitive, ToggleFindRegex, ToggleFindWholeWord, ToggleFpsCounter,
-    ToggleModelPicker, ToggleRightPanel, ToggleSidebar, ToggleUsagePanel,
+    OpenFind, OpenResumePicker, OpenSettings, SelectFirstTask, SelectLastTask, SwitchTaskBackward,
+    SwitchTaskForward, ToggleCommandPalette, ToggleFpsCounter, ToggleModelPicker, ToggleRightPanel,
+    ToggleSidebar, ToggleUsagePanel,
 };
 
 #[cfg(target_os = "macos")]
@@ -91,12 +88,6 @@ const UPDATER_BUTTON_COLLAPSED_WIDTH: f32 = 20.0;
 const UPDATER_BUTTON_EXPANDED_WIDTH: f32 = 58.0;
 const RIGHT_PANEL_MIN_WIDTH: f32 = 280.0;
 const RIGHT_PANEL_MAX_WIDTH: f32 = 1000.0;
-const DEFAULT_FILE_TREE_WIDTH: f32 = 184.0;
-const FILE_TREE_MIN_WIDTH: f32 = 140.0;
-const FILE_TREE_MAX_WIDTH: f32 = 360.0;
-const FILE_EDITOR_MIN_WIDTH: f32 = 140.0;
-const FILE_EDITOR_INITIAL_WIDTH: f32 = 500.0;
-const REVIEW_INITIAL_WIDTH: f32 = 820.0;
 const MAIN_PANEL_MIN_WIDTH: f32 = 360.0;
 const FOLLOWUP_TURN_TOP_GAP: f32 = 48.0;
 const NAVIGATION_RAIL_WIDTH: f32 = 44.0;
@@ -289,7 +280,6 @@ enum UsageBreakdown {
 enum PanelResizeTarget {
     Sidebar,
     RightPanel,
-    FileTree,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -449,46 +439,6 @@ fn persisted_window_state(
     }
 }
 
-fn fitted_file_tree_width(panel_width: f32, file_tree_width: f32) -> f32 {
-    let maximum = FILE_TREE_MAX_WIDTH
-        .min(panel_width - FILE_EDITOR_MIN_WIDTH)
-        .max(FILE_TREE_MIN_WIDTH);
-    sanitize_panel_width(
-        file_tree_width,
-        DEFAULT_FILE_TREE_WIDTH.clamp(FILE_TREE_MIN_WIDTH, maximum),
-        FILE_TREE_MIN_WIDTH,
-        maximum,
-    )
-}
-
-fn widened_panel_width_for_file_editor(panel_width: f32, file_tree_width: f32) -> f32 {
-    let panel_width = sanitize_panel_width(
-        panel_width,
-        DEFAULT_RIGHT_PANEL_WIDTH,
-        RIGHT_PANEL_MIN_WIDTH,
-        RIGHT_PANEL_MAX_WIDTH,
-    );
-    let file_tree_width = sanitize_panel_width(
-        file_tree_width,
-        DEFAULT_FILE_TREE_WIDTH,
-        FILE_TREE_MIN_WIDTH,
-        FILE_TREE_MAX_WIDTH,
-    );
-    panel_width
-        .max(file_tree_width + FILE_EDITOR_INITIAL_WIDTH)
-        .min(RIGHT_PANEL_MAX_WIDTH)
-}
-
-fn widened_panel_width_for_review(panel_width: f32) -> f32 {
-    sanitize_panel_width(
-        panel_width,
-        DEFAULT_RIGHT_PANEL_WIDTH,
-        RIGHT_PANEL_MIN_WIDTH,
-        RIGHT_PANEL_MAX_WIDTH,
-    )
-    .max(REVIEW_INITIAL_WIDTH)
-}
-
 fn fitted_panel_widths(
     viewport_width: f32,
     sidebar_visible: bool,
@@ -551,15 +501,11 @@ fn fitted_panel_widths(
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RightPanelSurface {
-    Browser(Uuid),
     Terminal(Uuid),
     BackgroundWork {
         key: BackgroundWorkKey,
         title: String,
     },
-    Files,
-    Diff,
-    File(String),
 }
 
 /// A turn whose checkpoint still has to be captured.
@@ -740,36 +686,12 @@ impl Render for WakuPane {
     }
 }
 
-struct RightPanelFileEditor {
-    state: Entity<TextInput>,
-    disk_content: String,
-    writable: bool,
-    dirty: bool,
-    /// A read is in flight on the background executor. Set from the moment the
-    /// editor is created, because `render` may not touch the filesystem: until
-    /// the first read lands the editor is empty and locked, and that means
-    /// "not read yet", never "empty file".
-    reading: bool,
-    /// Bumped whenever the editor's idea of the file changes, so a read that
-    /// started earlier cannot apply over a newer truth — a save in particular,
-    /// which makes any read already in flight describe the pre-save file.
-    read_epoch: u64,
-}
-
 struct RightPanelSessionState {
     visible: bool,
     surfaces: Vec<RightPanelSurface>,
     active_surface: Option<usize>,
     tabs_scroll_handle: ScrollHandle,
     pending_tab_reveal: Option<usize>,
-    expanded_paths: HashSet<PathBuf>,
-    files_selected_path: Option<String>,
-    file_tree_width: f32,
-    file_editors: HashMap<String, RightPanelFileEditor>,
-    diff_source: ReviewDiffSource,
-    diff_snapshot: Option<Arc<ReviewDiffSnapshot>>,
-    diff_selected_file: Option<usize>,
-    diff_expanded_paths: HashSet<String>,
 }
 
 impl RightPanelSessionState {
@@ -780,14 +702,6 @@ impl RightPanelSessionState {
             active_surface: None,
             tabs_scroll_handle: ScrollHandle::new(),
             pending_tab_reveal: None,
-            expanded_paths: HashSet::new(),
-            files_selected_path: None,
-            file_tree_width: DEFAULT_FILE_TREE_WIDTH,
-            file_editors: HashMap::new(),
-            diff_source: ReviewDiffSource::default(),
-            diff_snapshot: None,
-            diff_selected_file: None,
-            diff_expanded_paths: HashSet::new(),
         }
     }
 
@@ -1397,65 +1311,12 @@ pub struct Waku {
     right_panel_surfaces: Vec<RightPanelSurface>,
     right_panel_active_surface: Option<usize>,
     right_panel_tabs_scroll_handle: ScrollHandle,
-    right_panel_files_scroll_handle: ScrollHandle,
-    right_panel_files_scrollbar: Rc<ScrollbarState>,
-    right_panel_diff_filter: Entity<TextInput>,
-    /// Unified diff rows and changed-file tree rows are independently
-    /// virtualized. Large generated patches stay proportional to what is on
-    /// screen rather than the size of the repository change.
-    right_panel_diff_list_state: ListState,
-    right_panel_diff_scrollbar: Rc<ScrollbarState>,
-    /// Selection spans and visible glyph geometry for the Review surface.
-    /// Kept separate from the transcript because both surfaces paint at once.
-    right_panel_diff_selection: TranscriptSelection,
-    right_panel_diff_tree_list_state: ListState,
-    right_panel_diff_tree_scrollbar: Rc<ScrollbarState>,
-    right_panel_editor_scroll_handle: ScrollHandle,
-    right_panel_editor_scrollbar: Rc<ScrollbarState>,
-    /// Rendered-markdown preview of the visible file editor, cached per path
-    /// the way `skills_detail_markdown` caches the skill document.
-    file_preview_markdown: RefCell<Option<(String, MarkdownView)>>,
-    file_preview_selection: TranscriptSelection,
-    file_preview_scroll_handle: ScrollHandle,
-    file_preview_scrollbar: Rc<ScrollbarState>,
     right_panel_pending_tab_reveal: Option<usize>,
     right_panel_pending_terminal_focus: Option<Uuid>,
-    right_panel_expanded_paths: HashSet<PathBuf>,
-    right_panel_files_selected_path: Option<String>,
-    right_panel_file_tree_width: f32,
-    right_panel_file_editors: HashMap<String, RightPanelFileEditor>,
-    /// Find-and-replace over the visible file editor. Created on first use of
-    /// the primary find shortcut and kept for the window's lifetime so the
-    /// query and toggles survive closing the bar; `open` says whether it shows.
-    file_search: Option<file_search::FileSearch>,
-    right_panel_diff_source: ReviewDiffSource,
-    right_panel_diff_snapshot: Option<Arc<ReviewDiffSnapshot>>,
-    right_panel_diff_loading: bool,
-    right_panel_diff_error: Option<String>,
-    right_panel_diff_generation: u64,
-    right_panel_diff_selected_file: Option<usize>,
-    right_panel_diff_expanded_paths: HashSet<String>,
-    right_panel_diff_tree_rows: RefCell<Vec<right_panel::ReviewDiffTreeRow>>,
-    right_panel_diff_tree_cursor: Option<usize>,
-    /// The working tree as currently drawn. Held so a refresh can redraw the
-    /// previous listing instead of blanking the panel.
-    right_panel_working_tree: Vec<right_panel::WorkingTreeEntry>,
-    /// Working tree per project path. Walking it is filesystem I/O and must
-    /// never happen in a frame.
-    working_trees: QueryCache<PathBuf, Vec<right_panel::WorkingTreeEntry>>,
     /// Set when a turn finishes; the drain loop drops the workspace queries,
     /// since the event handler has no `Context` to refresh them itself.
     workspace_queries_stale: bool,
     right_panel_terminals: HashMap<Uuid, Entity<TerminalView>>,
-    right_panel_browsers: HashMap<Uuid, Entity<BrowserView>>,
-    /// A Browser surface was just opened; the next right panel render moves
-    /// focus into its address bar.
-    right_panel_pending_browser_focus: Option<Uuid>,
-    /// GPUI is compositing deferred draws on a plane above native views, so
-    /// menus render over the live webview and no snapshot occlusion is needed.
-    /// When the overlay could not be enabled, the browser falls back to
-    /// swapping in frozen page pixels while an overlay is open.
-    scene_overlay_enabled: bool,
     settings_page: Option<SettingsPage>,
     /// The Skills page's library snapshot, scanned off-thread. Frames read
     /// only this; `None` means the first scan has not landed yet.
@@ -1658,7 +1519,6 @@ mod commit_dialog;
 mod components;
 mod composer;
 mod drafts;
-mod file_search;
 mod goal_dialog;
 mod image_preview;
 mod render;
@@ -2074,8 +1934,6 @@ impl Waku {
         });
         let usage_project_filter =
             cx.new(|cx| TextInput::new(window, cx).placeholder(tr!("input.filter_projects")));
-        let right_panel_diff_filter =
-            cx.new(|cx| TextInput::new(window, cx).placeholder(tr!("diff.filter_files")));
         let navigation_rail = cx.new(|_| ConversationNavigationRail::new());
         let sidebar_pane = WakuPane::new(Waku::sidebar_pane_content, cx);
         let transcript_pane = WakuPane::new(Waku::transcript_pane_content, cx);
@@ -2319,14 +2177,6 @@ impl Waku {
         // Enable GPUI's experimental overlay plane so deferred draws (menus,
         // tooltips, popovers) composite above native content — without it the
         // browser surface would cover them.
-        //
-        // Both backends of the pinned fork implement it, and both browser
-        // hosts render somewhere it can reach: a sibling NSView below GPUI's
-        // overlay layer on macOS, a DirectComposition visual between GPUI's
-        // base and overlay planes on Windows. When it is unavailable the
-        // surface falls back to freezing the page to a bitmap while an
-        // overlay is open.
-        let scene_overlay_enabled = window.enable_scene_overlay().is_ok();
         let (updater_status, updater_events) = cx
             .try_global::<crate::updater::UpdaterState>()
             .and_then(|state| state.0.as_ref())
@@ -2392,7 +2242,6 @@ impl Waku {
 
             cx.observe_window_activation(window, |this: &mut Self, window, cx| {
                 if window.is_window_active() {
-                    this.reload_clean_right_panel_file_editors(cx);
                     // The working tree and branch may have moved while another
                     // app had focus — a checkout in a terminal, an edit in an
                     // editor. Coming back is the moment to re-check.
@@ -2627,16 +2476,6 @@ impl Waku {
                 &usage_project_filter,
                 |_: &mut Self, _, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Edited) {
-                        cx.notify();
-                    }
-                },
-            )
-            .detach();
-            cx.subscribe(
-                &right_panel_diff_filter,
-                |this: &mut Self, _, event: &InputEvent, cx| {
-                    if matches!(event, InputEvent::Edited) {
-                        this.sync_right_panel_diff_tree_rows(cx);
                         cx.notify();
                     }
                 },
@@ -2928,44 +2767,10 @@ impl Waku {
                 right_panel_surfaces: Vec::new(),
                 right_panel_active_surface: None,
                 right_panel_tabs_scroll_handle: ScrollHandle::new(),
-                right_panel_files_scroll_handle: ScrollHandle::new(),
-                right_panel_files_scrollbar: ScrollbarState::new(),
-                right_panel_diff_filter,
-                right_panel_diff_list_state: ListState::new(0, ListAlignment::Top, px(512.0)),
-                right_panel_diff_scrollbar: ScrollbarState::new(),
-                right_panel_diff_selection: TranscriptSelection::default(),
-                right_panel_diff_tree_list_state: ListState::new(0, ListAlignment::Top, px(180.0))
-                    .with_uniform_item_height(px(30.0)),
-                right_panel_diff_tree_scrollbar: ScrollbarState::new(),
-                right_panel_editor_scroll_handle: ScrollHandle::new(),
-                right_panel_editor_scrollbar: ScrollbarState::new(),
-                file_preview_markdown: RefCell::new(None),
-                file_preview_selection: TranscriptSelection::default(),
-                file_preview_scroll_handle: ScrollHandle::new(),
-                file_preview_scrollbar: ScrollbarState::new(),
                 right_panel_pending_tab_reveal: None,
                 right_panel_pending_terminal_focus: None,
-                right_panel_expanded_paths: HashSet::new(),
-                right_panel_files_selected_path: None,
-                right_panel_file_tree_width: DEFAULT_FILE_TREE_WIDTH,
-                right_panel_file_editors: HashMap::new(),
-                file_search: None,
-                right_panel_diff_source: ReviewDiffSource::default(),
-                right_panel_diff_snapshot: None,
-                right_panel_diff_loading: false,
-                right_panel_diff_error: None,
-                right_panel_diff_generation: 0,
-                right_panel_diff_selected_file: None,
-                right_panel_diff_expanded_paths: HashSet::new(),
-                right_panel_diff_tree_rows: RefCell::new(Vec::new()),
-                right_panel_diff_tree_cursor: None,
-                right_panel_working_tree: Vec::new(),
-                working_trees: QueryCache::new(MAX_CACHED_WORKSPACES),
                 workspace_queries_stale: false,
                 right_panel_terminals: HashMap::new(),
-                right_panel_browsers: HashMap::new(),
-                right_panel_pending_browser_focus: None,
-                scene_overlay_enabled,
                 settings_page: None,
                 skills_catalog: None,
                 skills_scan_generation: 0,

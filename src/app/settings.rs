@@ -1487,13 +1487,6 @@ impl Waku {
     /// sidebar list keeps its uniform row height and needs no reset.
     fn remeasure_font_sized_surfaces(&self) {
         self.reset_transcript_rows(self.transcript_row_count());
-        let line_count = self
-            .right_panel_diff_snapshot
-            .as_ref()
-            .map_or(0, |snapshot| snapshot.lines.len());
-        self.right_panel_diff_list_state.reset(line_count);
-        self.right_panel_diff_tree_list_state
-            .reset(self.right_panel_diff_tree_rows.borrow().len());
         self.skills_list_state
             .reset(self.skills_rows.borrow().len());
     }
@@ -2717,11 +2710,7 @@ impl Waku {
             input.set_placeholder(tr!("input.filter_projects"), cx)
         });
         self.refresh_command_palette_localized_text(cx);
-        self.refresh_file_search_localized_text(cx);
         self.refresh_transcript_search_localized_text(cx);
-        for browser in self.right_panel_browsers.values() {
-            browser.update(cx, |browser, cx| browser.refresh_localized_text(cx));
-        }
         for terminal in self.right_panel_terminals.values() {
             terminal.update(cx, |terminal, cx| terminal.refresh_localized_text(cx));
         }

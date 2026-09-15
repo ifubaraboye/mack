@@ -1,9 +1,9 @@
 use gpui::{
-    AnyElement, App, Context, Div, ElementId, Hsla, Img, InteractiveElement, Interactivity,
+    AnyElement, App, Context, Div, ElementId, Hsla, InteractiveElement, Interactivity,
     KeyDownEvent, ParentElement, PathBuilder, Pixels, RenderOnce, ScrollHandle, SharedString,
-    Stateful, StyleRefinement, Styled, Svg, Window, canvas, div, img, point, prelude::*, px, rgb,
-    svg,
+    Stateful, StyleRefinement, Styled, Svg, Window, canvas, div, point, prelude::*, px, rgb, svg,
 };
+use std::path::Path;
 
 pub mod menu;
 pub mod motion;
@@ -26,11 +26,216 @@ pub fn icon(path: &'static str, size: f32, color: Hsla) -> Svg {
         .text_color(color)
 }
 
-/// A polychrome file icon rendered as an image so the SVG's authored colors
-/// are preserved. GPUI's `svg()` element intentionally renders an alpha mask
-/// tinted with one text color.
-pub fn file_icon(path: &'static str, size: f32) -> Img {
-    img(path).w(sp(size)).h(sp(size)).flex_none()
+/// Maps a file path to its embedded Material-Icon-Theme SVG. Used by
+/// attachment tiles and autocomplete rows — formerly lived beside the
+/// right-panel file browser, which was its heaviest consumer.
+pub fn file_icon_for_path(path: &str) -> &'static str {
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path);
+    file_icon_for_name(name)
+}
+
+fn file_icon_for_name(name: &str) -> &'static str {
+    let name = name.to_ascii_lowercase();
+    let named_icon = if name.starts_with("readme") {
+        Some("icons/file-types/readme.svg")
+    } else if name.starts_with("license")
+        || name.starts_with("licence")
+        || name.starts_with("copying")
+    {
+        Some("icons/file-types/certificate.svg")
+    } else if name.starts_with("dockerfile") || name.starts_with("compose.") {
+        Some("icons/file-types/docker.svg")
+    } else if name == "cmakelists.txt" || name.starts_with("cmake.") {
+        Some("icons/file-types/cmake.svg")
+    } else if name == "makefile" || name.starts_with("makefile.") || name == "justfile" {
+        Some("icons/file-types/makefile.svg")
+    } else if matches!(
+        name.as_str(),
+        "cargo.toml" | "cargo.lock" | "rust-toolchain.toml"
+    ) {
+        Some("icons/file-types/rust.svg")
+    } else if matches!(name.as_str(), "go.mod" | "go.sum" | "go.work") {
+        Some("icons/file-types/go.svg")
+    } else if name == "pyproject.toml" || name == "pipfile" || name.starts_with("requirements") {
+        Some("icons/file-types/python.svg")
+    } else if matches!(name.as_str(), "bun.lock" | "bun.lockb" | "bunfig.toml") {
+        Some("icons/file-types/bun.svg")
+    } else if name.starts_with("pnpm-") || name == ".pnpmfile.cjs" {
+        Some("icons/file-types/pnpm.svg")
+    } else if name == "yarn.lock" || name.starts_with(".yarnrc") {
+        Some("icons/file-types/yarn.svg")
+    } else if name == "package.json" {
+        Some("icons/file-types/nodejs.svg")
+    } else if name == "package-lock.json" {
+        Some("icons/file-types/npm.svg")
+    } else if name.starts_with("tsconfig.") || name == "tsconfig.json" {
+        Some("icons/file-types/typescript.svg")
+    } else if name.starts_with("jsconfig.") || name == "jsconfig.json" {
+        Some("icons/file-types/javascript.svg")
+    } else if name == ".gitignore"
+        || name == ".gitattributes"
+        || name == ".gitmodules"
+        || name == ".gitconfig"
+    {
+        Some("icons/file-types/git.svg")
+    } else if name == ".editorconfig" {
+        Some("icons/file-types/editorconfig.svg")
+    } else if name.starts_with(".env") {
+        Some("icons/file-types/settings.svg")
+    } else if name.starts_with(".prettier") || name.starts_with("prettier.config.") {
+        Some("icons/file-types/prettier.svg")
+    } else if name.starts_with(".eslint") || name.starts_with("eslint.config.") {
+        Some("icons/file-types/eslint.svg")
+    } else if name.starts_with("biome.json") {
+        Some("icons/file-types/biome.svg")
+    } else if name.starts_with(".babel") || name.starts_with("babel.config.") {
+        Some("icons/file-types/babel.svg")
+    } else if name.starts_with(".stylelint") || name.starts_with("stylelint.config.") {
+        Some("icons/file-types/stylelint.svg")
+    } else if name.starts_with("vite.config.") {
+        Some("icons/file-types/vite.svg")
+    } else if name.starts_with("vitest.config.") || name.starts_with("vitest.workspace.") {
+        Some("icons/file-types/vitest.svg")
+    } else if name.starts_with("webpack.") {
+        Some("icons/file-types/webpack.svg")
+    } else if name.starts_with("rollup.config.") {
+        Some("icons/file-types/rollup.svg")
+    } else if name.starts_with("next.config.") {
+        Some("icons/file-types/next.svg")
+    } else if name == "next-env.d.ts" {
+        Some("icons/file-types/next.svg")
+    } else if name.starts_with("nuxt.config.") || name == ".nuxtrc" {
+        Some("icons/file-types/nuxt.svg")
+    } else if name.starts_with("astro.config.") {
+        Some("icons/file-types/astro.svg")
+    } else if name == "angular.json" || name.ends_with(".component.ts") {
+        Some("icons/file-types/angular.svg")
+    } else if name == "nest-cli.json" {
+        Some("icons/file-types/nest.svg")
+    } else if name.starts_with("tailwind.config.") {
+        Some("icons/file-types/tailwindcss.svg")
+    } else if name.starts_with("svelte.config.") {
+        Some("icons/file-types/svelte.svg")
+    } else if name.starts_with("vue.config.") {
+        Some("icons/file-types/vue.svg")
+    } else if name == "firebase.json" || name == ".firebaserc" {
+        Some("icons/file-types/firebase.svg")
+    } else if name == "supabase.toml" {
+        Some("icons/file-types/supabase.svg")
+    } else if name.starts_with("prisma.config.") {
+        Some("icons/file-types/prisma.svg")
+    } else if name == "turbo.json" {
+        Some("icons/file-types/turborepo.svg")
+    } else if name.starts_with("deno.json") || name == "deno.lock" {
+        Some("icons/file-types/deno.svg")
+    } else if name == ".gitlab-ci.yml" || name == ".gitlab-ci.yaml" {
+        Some("icons/file-types/gitlab.svg")
+    } else if name == "kustomization.yaml" || name == "kustomization.yml" {
+        Some("icons/file-types/kubernetes.svg")
+    } else if name == "chart.yaml" || name == "values.yaml" {
+        Some("icons/file-types/helm.svg")
+    } else if name == "nginx.conf" {
+        Some("icons/file-types/nginx.svg")
+    } else if name == ".nvmrc" || name == ".node-version" {
+        Some("icons/file-types/nodejs.svg")
+    } else if name == "build.gradle"
+        || name == "settings.gradle"
+        || name == "gradlew"
+        || name == "gradlew.bat"
+    {
+        Some("icons/file-types/gradle.svg")
+    } else if name.contains(".stories.") || name.contains(".story.") {
+        Some("icons/file-types/storybook.svg")
+    } else if name == "gemfile" || name == "gemfile.lock" {
+        Some("icons/file-types/ruby.svg")
+    } else if name == "pom.xml" {
+        Some("icons/file-types/java.svg")
+    } else {
+        None
+    };
+    if let Some(icon) = named_icon {
+        return icon;
+    }
+
+    let extension = Path::new(&name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("");
+    match extension {
+        "rs" => "icons/file-types/rust.svg",
+        "js" | "mjs" | "cjs" => "icons/file-types/javascript.svg",
+        "ts" | "mts" | "cts" => "icons/file-types/typescript.svg",
+        "jsx" | "tsx" => "icons/file-types/react.svg",
+        "py" | "pyi" | "pyw" => "icons/file-types/python.svg",
+        "go" => "icons/file-types/go.svg",
+        "c" | "h" | "m" => "icons/file-types/c.svg",
+        "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" | "mm" => "icons/file-types/cpp.svg",
+        "cs" => "icons/file-types/csharp.svg",
+        "swift" => "icons/file-types/swift.svg",
+        "kt" | "kts" => "icons/file-types/kotlin.svg",
+        "java" | "class" => "icons/file-types/java.svg",
+        "rb" => "icons/file-types/ruby.svg",
+        "php" => "icons/file-types/php.svg",
+        "html" | "htm" => "icons/file-types/html.svg",
+        "css" | "less" => "icons/file-types/css.svg",
+        "scss" | "sass" => "icons/file-types/sass.svg",
+        "json" | "jsonc" | "jsonl" => "icons/file-types/json.svg",
+        "yaml" | "yml" => "icons/file-types/yaml.svg",
+        "toml" | "ini" | "cfg" | "conf" | "config" => "icons/file-types/settings.svg",
+        "xml" | "xsl" | "plist" => "icons/file-types/xml.svg",
+        "md" | "mdx" | "markdown" => "icons/file-types/markdown.svg",
+        "sh" | "bash" | "zsh" | "fish" => "icons/file-types/console.svg",
+        "ps1" | "psm1" => "icons/file-types/powershell.svg",
+        "sql" | "db" | "sqlite" | "sqlite3" | "csv" | "xls" | "xlsx" => {
+            "icons/file-types/database.svg"
+        }
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "ico" | "tiff" => {
+            "icons/file-types/image.svg"
+        }
+        "svg" => "icons/file-types/svg.svg",
+        "pdf" => "icons/file-types/pdf.svg",
+        "mp3" | "wav" | "flac" | "ogg" | "m4a" => "icons/file-types/audio.svg",
+        "mp4" | "mov" | "avi" | "webm" | "mkv" => "icons/file-types/video.svg",
+        "zip" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "tar" | "jar" => {
+            "icons/file-types/zip.svg"
+        }
+        "wasm" | "wat" => "icons/file-types/webassembly.svg",
+        "svelte" => "icons/file-types/svelte.svg",
+        "vue" => "icons/file-types/vue.svg",
+        "tf" | "tfvars" => "icons/file-types/terraform.svg",
+        "graphql" | "gql" => "icons/file-types/graphql.svg",
+        "lua" => "icons/file-types/lua.svg",
+        "dart" => "icons/file-types/dart.svg",
+        "astro" => "icons/file-types/astro.svg",
+        "coffee" | "cson" => "icons/file-types/coffee.svg",
+        "cr" => "icons/file-types/crystal.svg",
+        "ex" | "exs" => "icons/file-types/elixir.svg",
+        "elm" => "icons/file-types/elm.svg",
+        "erl" | "hrl" => "icons/file-types/erlang.svg",
+        "clj" | "cljs" | "cljc" | "edn" => "icons/file-types/clojure.svg",
+        "hs" | "lhs" => "icons/file-types/haskell.svg",
+        "hx" | "hxml" => "icons/file-types/haxe.svg",
+        "jinja" | "jinja2" | "j2" => "icons/file-types/jinja.svg",
+        "jl" => "icons/file-types/julia.svg",
+        "ml" | "mli" => "icons/file-types/ocaml.svg",
+        "pl" | "pm" => "icons/file-types/perl.svg",
+        "prisma" => "icons/file-types/prisma.svg",
+        "pug" | "jade" => "icons/file-types/pug.svg",
+        "scala" | "sbt" | "sc" => "icons/file-types/scala.svg",
+        "sol" => "icons/file-types/solidity.svg",
+        "tex" | "sty" | "cls" => "icons/file-types/tex.svg",
+        "xaml" => "icons/file-types/xaml.svg",
+        "zig" => "icons/file-types/zig.svg",
+        "nix" => "icons/file-types/nix.svg",
+        "proto" => "icons/file-types/proto.svg",
+        "diff" | "patch" => "icons/file-types/diff.svg",
+        "exe" | "dll" | "so" | "dylib" => "icons/file-types/exe.svg",
+        "lock" => "icons/file-types/lock.svg",
+        _ => "icons/file-types/file.svg",
+    }
 }
 
 /// A compact ghost icon button: the only button shape outside the composer's
@@ -188,9 +393,9 @@ pub fn provider_icon(provider: ProviderKind) -> &'static str {
     match provider {
         ProviderKind::Amp => "icons/provider-amp.svg",
         ProviderKind::Claude => "icons/provider-claude.svg",
-        ProviderKind::Codex => "icons/provider-openai.svg",
-        // ChatGPT is ChatGPT-backed like Codex, so it shares the OpenAI mark
-        // rather than gaining a new asset in Stage 2.
+        ProviderKind::Codex => "icons/provider-codex.svg",
+        // ChatGPT keeps the OpenAI blossom; Codex CLI has its own
+        // cloud-terminal mark.
         ProviderKind::ChatGpt => "icons/provider-openai.svg",
         ProviderKind::Cursor => "icons/provider-cursor.svg",
         ProviderKind::DeepSeek => "icons/provider-deepseek.svg",
@@ -523,6 +728,36 @@ impl RenderOnce for ProjectNameSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_icons_follow_names_and_extensions() {
+        assert_eq!(file_icon_for_path("main.rs"), "icons/file-types/rust.svg");
+        assert_eq!(
+            file_icon_for_path("Panel.tsx"),
+            "icons/file-types/react.svg"
+        );
+        assert_eq!(
+            file_icon_for_path("README.md"),
+            "icons/file-types/readme.svg"
+        );
+        assert_eq!(
+            file_icon_for_path("Dockerfile.dev"),
+            "icons/file-types/docker.svg"
+        );
+        assert_eq!(file_icon_for_path("bun.lock"), "icons/file-types/bun.svg");
+        assert_eq!(
+            file_icon_for_path("pnpm-lock.yaml"),
+            "icons/file-types/pnpm.svg"
+        );
+        assert_eq!(
+            file_icon_for_path("vite.config.ts"),
+            "icons/file-types/vite.svg"
+        );
+        assert_eq!(
+            file_icon_for_path("unknown.data"),
+            "icons/file-types/file.svg"
+        );
+    }
 
     #[test]
     fn nested_scroll_chains_only_after_reaching_a_boundary() {

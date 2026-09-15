@@ -51,7 +51,6 @@ struct BackgroundSummaryEntry {
 struct EnvironmentSummary {
     commit_status: Option<String>,
     commit_focus: FocusHandle,
-    compare_focus: FocusHandle,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -787,7 +786,6 @@ impl Waku {
         let environment = Some(EnvironmentSummary {
             commit_status: self.commit_operation_status_label(),
             commit_focus: self.transcript_control_focus("environment-summary-commit", cx),
-            compare_focus: self.transcript_control_focus("environment-summary-compare", cx),
         });
         let (processes, agents) = session_id
             .map(|session_id| self.background_work_counts(session_id))
@@ -837,11 +835,8 @@ impl Waku {
                 )
             });
         let git_status = change_counts.map(|(additions, deletions)| {
-            let focus = self.transcript_control_focus("header-git-status", cx);
             div()
                 .id("header-git-status")
-                .track_focus(&focus)
-                .tab_index(0)
                 .h(px(28.0))
                 .px(px(7.0))
                 .rounded(px(7.0))
@@ -852,14 +847,6 @@ impl Waku {
                 .cursor_default()
                 .text_size(sp(12.5))
                 .font_weight(FontWeight::MEDIUM)
-                .focus_visible(|style| {
-                    style
-                        .bg(theme.overlay)
-                        .border_1()
-                        .border_color(theme.accent)
-                })
-                .hover(|style| style.bg(theme.overlay))
-                .active(|style| style.bg(theme.overlay_strong))
                 .when(additions > 0, |button| {
                     button.child(
                         div()
@@ -875,19 +862,6 @@ impl Waku {
                     )
                 })
                 .tooltip(Tooltip::text(tr!("environment.changes")))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_click(cx.listener(|this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.set_right_panel_diff_source(ReviewDiffSource::Uncommitted, cx);
-                }))
-                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                        this.set_right_panel_diff_source(ReviewDiffSource::Uncommitted, cx);
-                        cx.stop_propagation();
-                    }
-                }))
                 .into_any_element()
         });
         let open_in = self.render_open_in_control(workspace_path, cx);
@@ -1684,26 +1658,6 @@ fn render_environment_summary_section(
         },
     );
 
-    let compare_handle = handle;
-    let compare_weak = weak;
-    let compare = render_environment_action_row(
-        "environment-summary-compare",
-        &environment.compare_focus,
-        "icons/github.svg",
-        tr!("environment.compare_branch"),
-        true,
-        false,
-        Some(icon("icons/arrow-up-right.svg", 13.0, theme.text_tertiary).into_any_element()),
-        theme,
-        move |window, cx| {
-            compare_handle.close(window, cx);
-            window.refresh();
-            let _ = compare_weak.update(cx, |this, cx| {
-                this.set_right_panel_diff_source(ReviewDiffSource::Branch, cx);
-            });
-        },
-    );
-
     div()
         .w_full()
         .flex()
@@ -1720,7 +1674,6 @@ fn render_environment_summary_section(
                 .child(tr!("environment.title")),
         )
         .child(commit)
-        .child(compare)
 }
 
 fn render_environment_action_row(
