@@ -3,6 +3,7 @@
 mod acp;
 mod activity;
 mod amp;
+mod chatgpt;
 mod claude;
 mod codex;
 mod computer_use;
@@ -220,6 +221,9 @@ pub(crate) fn start_local(
         crate::computer_use::resolve_enabled(options.computer_use_enabled);
     let inner: Arc<dyn DriverControl> = match provider {
         ProviderKind::Codex => Arc::new(codex::CodexDriver::start(options, events)?),
+        // Daemon-owned `/responses` driver: device-flow auth plus model
+        // discovery from Stage 2, streaming text turns over HTTPS.
+        ProviderKind::ChatGpt => Arc::new(chatgpt::ChatGptDriver::start(options, events)?),
         ProviderKind::Pi => Arc::new(pi::PiDriver::start(pi::PiFlavor::Pi, options, events)?),
         ProviderKind::OhMyPi => {
             Arc::new(pi::PiDriver::start(pi::PiFlavor::OhMyPi, options, events)?)

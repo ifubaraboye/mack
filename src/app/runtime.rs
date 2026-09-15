@@ -24,6 +24,30 @@ fn workspace_has_ref(
     }
 }
 
+/// Resolves the executable a provider runtime starts from. ChatGPT is a
+/// native daemon driver with no CLI, so an empty path stands in (the driver
+/// ignores it); every other provider needs its detected binary, and a
+/// missing one keeps the exact `provider_not_found` error callers showed
+/// before.
+pub(super) fn start_binary_for_provider(
+    probes: &[ProviderProbe],
+    provider: ProviderKind,
+) -> anyhow::Result<PathBuf> {
+    if provider == ProviderKind::ChatGpt {
+        return Ok(PathBuf::new());
+    }
+    probes
+        .iter()
+        .find(|probe| probe.provider == provider)
+        .and_then(|probe| probe.path.clone())
+        .ok_or_else(|| {
+            anyhow::anyhow!(tr!(
+                "errors.provider_not_found",
+                provider = provider.display_name()
+            ))
+        })
+}
+
 fn start_driver(mut request: DriverStartRequest, cwd: PathBuf) -> anyhow::Result<PreparedDriver> {
     request.options.cwd = cwd;
     let (event_tx, events) = driver::event_channel(request.event_wake);
@@ -601,8 +625,9 @@ fn perform_provider_rewind(
             Ok((cursor, None, prepared_driver))
         }
         // Unreachable through the UI, which hides rewinding for providers that
-        // answer `supports_conversation_rollback` with false.
-        ProviderKind::Fx | ProviderKind::Kimi => Err(anyhow::anyhow!(tr!(
+        // answer `supports_conversation_rollback` with false. ChatGPT joins
+        // them: no conversations exist before Stage 3.
+        ProviderKind::Fx | ProviderKind::Kimi | ProviderKind::ChatGpt => Err(anyhow::anyhow!(tr!(
             "errors.provider_turn_branching_unsupported",
             provider = provider.display_name()
         ))),
@@ -924,8 +949,9 @@ fn perform_response_fork(mut request: ResponseForkRequest) -> Result<PreparedRes
                 Ok((cursor, None, prepared_driver))
             }
             // Unreachable through the UI, which hides branching for providers
-            // that answer `supports_conversation_fork` with false.
-            ProviderKind::Fx | ProviderKind::Kimi => anyhow::bail!(tr!(
+            // that answer `supports_conversation_fork` with false. ChatGPT
+            // joins them: no conversations exist before Stage 3.
+            ProviderKind::Fx | ProviderKind::Kimi | ProviderKind::ChatGpt => anyhow::bail!(tr!(
                 "errors.provider_turn_branching_unsupported",
                 provider = provider.display_name()
             )),
@@ -1437,6 +1463,259 @@ impl Waku {
         }
         self.provider_model_discoveries.remove(&provider);
         self.request_provider_model_discovery(provider);
+    }
+
+    /// Desktop-side ChatGPT panel state. Render reads only this; the poll
+    /// loop and discovery threads report through [`ChatGptClientEvent`] and
+    /// the transitions below, so the full table is unit-testable without a
+    /// GPUI entity or a daemon.
+    pub(super) fn reduce_chatgpt_event(
+        state: &mut ChatGptPanelState,
+        event: &ChatGptClientEvent,
+    ) -> ChatGptEffect {
+        use waku_client::chatgpt::ChatGptLoginStatus;
+        match event {
+            ChatGptClientEvent::Session(session) => {
+                let discover = session.status == ChatGptLoginStatus::Authenticated;
+                state.session = Some(session.clone());
+                state.error = None;
+                state.connecting = false;
+                if discover {
+                    ChatGptEffect::DiscoverModels
+                } else {
+                    ChatGptEffect::None
+                }
+            }
+            ChatGptClientEvent::Models(_) => {
+                state.models_pending = false;
+                ChatGptEffect::None
+            }
+            ChatGptClientEvent::Failed(error) => {
+                state.models_pending = false;
+                state.connecting = false;
+                state.error = Some(error.clone());
+                ChatGptEffect::None
+            }
+        }
+    }
+
+    /// Merges discovered ChatGPT models into the probe catalog the model
+    /// picker reads. Pure over the probe list so tests need no app state.
+    pub(super) fn merge_chatgpt_probe_models(
+        probes: &mut Vec<ProviderProbe>,
+        models: Vec<ProviderModel>,
+    ) {
+        if let Some(probe) = probes
+            .iter_mut()
+            .find(|probe| probe.provider == ProviderKind::ChatGpt)
+        {
+            probe.models = models;
+        } else {
+            probes.push(ProviderProbe {
+                provider: ProviderKind::ChatGpt,
+                installed: true,
+                path: None,
+                models,
+                agent_presets: Vec::new(),
+            });
+        }
+    }
+
+    /// One-shot ChatGPT session read: startup restore and post-failure
+    /// resync. The daemon answers from stored state without network (except
+    /// a transparent refresh when the token is stale but alive).
+    pub(super) fn refresh_chatgpt_session(&mut self) {
+        let tx = self.chatgpt_tx.clone();
+        let wake = self.event_wake_tx.clone();
+        let daemon = self.daemon.client();
+        if std::thread::Builder::new()
+            .name("waku-chatgpt-session".into())
+            .spawn(move || {
+                let event = match daemon.request(
+                    Uuid::nil(),
+                    Uuid::nil(),
+                    waku_client::Command::ChatGptSession,
+                ) {
+                    Ok(waku_client::ResponsePayload::ChatGptSession { session }) => {
+                        ChatGptClientEvent::Session(session)
+                    }
+                    Ok(_) => ChatGptClientEvent::Failed(tr!("chatgpt.session_failed")),
+                    Err(error) => ChatGptClientEvent::Failed(error.to_string()),
+                };
+                if tx.send(event).is_ok() {
+                    signal_event_pump(&wake);
+                }
+            })
+            .is_err()
+        {
+            self.chatgpt.error = Some(tr!("chatgpt.session_failed"));
+        }
+    }
+
+    /// Starts the device login and polls the daemon until the user authorizes
+    /// (or the code expires). The loop runs on its own thread at the
+    /// server-provided interval — never on a frame — and any superseding
+    /// Connect/Disconnect bumps the generation so stale loops exit quietly.
+    pub(super) fn connect_chatgpt(&mut self) {
+        let generation = self.chatgpt_poll_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.chatgpt.error = None;
+        self.chatgpt.connecting = true;
+        let generations = self.chatgpt_poll_generation.clone();
+        let tx = self.chatgpt_tx.clone();
+        let wake = self.event_wake_tx.clone();
+        let daemon = self.daemon.client();
+        let pump = move |event: ChatGptClientEvent| {
+            if tx.send(event).is_ok() {
+                signal_event_pump(&wake);
+            }
+        };
+        if std::thread::Builder::new()
+            .name("waku-chatgpt-login".into())
+            .spawn(move || {
+                use waku_client::chatgpt::ChatGptLoginStatus;
+                let live = || generations.load(Ordering::SeqCst) == generation;
+                let mut session = match daemon.request(
+                    Uuid::nil(),
+                    Uuid::nil(),
+                    waku_client::Command::ChatGptConnect,
+                ) {
+                    Ok(waku_client::ResponsePayload::ChatGptSession { session }) => session,
+                    Ok(_) => {
+                        pump(ChatGptClientEvent::Failed(tr!("chatgpt.connect_failed")));
+                        return;
+                    }
+                    Err(error) => {
+                        pump(ChatGptClientEvent::Failed(error.to_string()));
+                        return;
+                    }
+                };
+                if !live() {
+                    return;
+                }
+                pump(ChatGptClientEvent::Session(session.clone()));
+                while session.status == ChatGptLoginStatus::Pending {
+                    let interval = session.interval_secs.unwrap_or(5).clamp(1, 30);
+                    std::thread::sleep(Duration::from_secs(interval));
+                    if !live() {
+                        return;
+                    }
+                    session = match daemon.request(
+                        Uuid::nil(),
+                        Uuid::nil(),
+                        waku_client::Command::ChatGptPoll,
+                    ) {
+                        Ok(waku_client::ResponsePayload::ChatGptSession { session }) => session,
+                        Ok(_) => {
+                            pump(ChatGptClientEvent::Failed(tr!("chatgpt.poll_failed")));
+                            return;
+                        }
+                        Err(error) => {
+                            pump(ChatGptClientEvent::Failed(error.to_string()));
+                            return;
+                        }
+                    };
+                    if !live() {
+                        return;
+                    }
+                    pump(ChatGptClientEvent::Session(session.clone()));
+                }
+            })
+            .is_err()
+        {
+            self.chatgpt.connecting = false;
+            self.chatgpt.error = Some(tr!("chatgpt.connect_failed"));
+        }
+    }
+
+    /// Supersedes any login poll loop and deletes the daemon-side session,
+    /// for both Cancel (while pending) and Disconnect (while authenticated).
+    pub(super) fn disconnect_chatgpt(&mut self) {
+        self.chatgpt_poll_generation.fetch_add(1, Ordering::SeqCst);
+        self.chatgpt.error = None;
+        self.chatgpt.connecting = false;
+        let tx = self.chatgpt_tx.clone();
+        let wake = self.event_wake_tx.clone();
+        let daemon = self.daemon.client();
+        if std::thread::Builder::new()
+            .name("waku-chatgpt-logout".into())
+            .spawn(move || {
+                let event = match daemon.request(
+                    Uuid::nil(),
+                    Uuid::nil(),
+                    waku_client::Command::ChatGptLogout,
+                ) {
+                    Ok(waku_client::ResponsePayload::ChatGptSession { session }) => {
+                        ChatGptClientEvent::Session(session)
+                    }
+                    Ok(_) => ChatGptClientEvent::Failed(tr!("chatgpt.logout_failed")),
+                    Err(error) => ChatGptClientEvent::Failed(error.to_string()),
+                };
+                if tx.send(event).is_ok() {
+                    signal_event_pump(&wake);
+                }
+            })
+            .is_err()
+        {
+            self.chatgpt.error = Some(tr!("chatgpt.logout_failed"));
+        }
+    }
+
+    /// Discovers the signed-in account's ChatGPT models through the daemon
+    /// (which refreshes first). Coalesces while one is already in flight.
+    pub(super) fn refresh_chatgpt_models(&mut self) {
+        if self.chatgpt.models_pending {
+            return;
+        }
+        self.chatgpt.models_pending = true;
+        let tx = self.chatgpt_tx.clone();
+        let wake = self.event_wake_tx.clone();
+        let daemon = self.daemon.client();
+        if std::thread::Builder::new()
+            .name("waku-chatgpt-models".into())
+            .spawn(move || {
+                let event = match daemon.request(
+                    Uuid::nil(),
+                    Uuid::nil(),
+                    waku_client::Command::ChatGptDiscoverModels,
+                ) {
+                    Ok(waku_client::ResponsePayload::ChatGptModels { models }) => {
+                        ChatGptClientEvent::Models(models)
+                    }
+                    // A dead refresh arrives as the expired session instead
+                    // of models, so the panel reflects Expired, not an error.
+                    Ok(waku_client::ResponsePayload::ChatGptSession { session }) => {
+                        ChatGptClientEvent::Session(session)
+                    }
+                    Ok(_) => ChatGptClientEvent::Failed(tr!("chatgpt.models_failed")),
+                    Err(error) => ChatGptClientEvent::Failed(error.to_string()),
+                };
+                if tx.send(event).is_ok() {
+                    signal_event_pump(&wake);
+                }
+            })
+            .is_err()
+        {
+            self.chatgpt.models_pending = false;
+        }
+    }
+
+    pub(super) fn drain_chatgpt_events(&mut self) -> bool {
+        let mut changed = false;
+        while let Ok(event) = self.chatgpt_events.try_recv() {
+            let models = match &event {
+                ChatGptClientEvent::Models(models) => Some(models.clone()),
+                _ => None,
+            };
+            let effect = Self::reduce_chatgpt_event(&mut self.chatgpt, &event);
+            if let Some(models) = models {
+                Self::merge_chatgpt_probe_models(&mut self.probes, models);
+            }
+            if effect == ChatGptEffect::DiscoverModels {
+                self.refresh_chatgpt_models();
+            }
+            changed = true;
+        }
+        changed
     }
 
     /// Ask every installed CLI for its version, one short-lived subprocess per
@@ -2772,17 +3051,7 @@ impl Waku {
         session: &AgentSession,
         cwd: PathBuf,
     ) -> anyhow::Result<DriverStartRequest> {
-        let binary = self
-            .probes
-            .iter()
-            .find(|probe| probe.provider == session.provider)
-            .and_then(|probe| probe.path.clone())
-            .ok_or_else(|| {
-                anyhow::anyhow!(tr!(
-                    "errors.provider_not_found",
-                    provider = session.provider.display_name()
-                ))
-            })?;
+        let binary = start_binary_for_provider(&self.probes, session.provider)?;
         let agent_preset = self.agent_preset_for_session(session);
         let SessionOptions {
             mode,
@@ -3598,6 +3867,7 @@ impl Waku {
             | self.drain_provider_probe_events()
             | self.drain_provider_version_events()
             | self.drain_provider_detection_events()
+            | self.drain_chatgpt_events()
             | self.drain_computer_permission_events()
             | self.drain_plan_usage_events()
             | self.drain_task_state_sync_events(cx)

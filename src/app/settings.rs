@@ -1554,7 +1554,7 @@ impl Waku {
                 .and_then(|version| version.clone());
             let disabled = self.state.disabled_providers.contains(&kind);
 
-            let dot_color = if !installed {
+            let mut dot_color = if !installed {
                 theme.text_ghost
             } else if disabled {
                 theme.warning
@@ -1562,7 +1562,7 @@ impl Waku {
                 theme.success
             };
 
-            let detail: AnyElement = if installed {
+            let mut detail: AnyElement = if installed {
                 let mut parts = Vec::new();
                 if let Some(path) = binary_path {
                     parts.push(path);
@@ -1590,6 +1590,17 @@ impl Waku {
                     )))
                     .into_any_element()
             };
+
+            // ChatGPT reports connection state instead of CLI detection: it
+            // needs no installation, only a sign-in.
+            if kind == ProviderKind::ChatGpt {
+                let (dot, summary) = self.chatgpt_row_summary(theme, model_count, disabled);
+                dot_color = dot;
+                detail = div()
+                    .truncate()
+                    .child(SharedString::from(summary))
+                    .into_any_element();
+            }
 
             let toggle_on = !disabled;
             let toggle = toggle_switch(
@@ -1762,13 +1773,17 @@ impl Waku {
     }
 
     /// The expanded row's settings body: the binary override for this
-    /// provider, with the detection result as its caption.
+    /// provider, with the detection result as its caption. ChatGPT needs no
+    /// CLI, so it renders the sign-in panel instead.
     fn render_provider_expanded_settings(
         &self,
         kind: ProviderKind,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
+        if kind == ProviderKind::ChatGpt {
+            return self.render_chatgpt_settings(theme, cx);
+        }
         let override_value = self.state.provider_binary_overrides.get(&kind).cloned();
         let full_path = self
             .provider_probe(kind)
@@ -1854,6 +1869,312 @@ impl Waku {
                     .text_color(theme.text_ghost)
                     .child(SharedString::from(caption)),
             )
+    }
+
+    /// ChatGPT sign-in panel: device-flow status plus Connect / code /
+    /// browser / Disconnect actions. Tokens never appear here — the daemon
+    /// only sends status, display material, and the public profile.
+    fn render_chatgpt_settings(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        use waku_client::chatgpt::ChatGptLoginStatus;
+        let session = self.chatgpt.session.clone();
+        let status = session.as_ref().map(|session| session.status);
+
+        let mut body = div()
+            .mt(px(10.0))
+            .pl(px(42.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .text_size(sp(12.5))
+                    .line_height(sp(18.0))
+                    .text_color(theme.text_tertiary)
+                    .child(tr!("chatgpt.description")),
+            );
+
+        match status {
+            Some(ChatGptLoginStatus::Pending) => {
+                body = body.child(self.render_chatgpt_pending(theme, session, cx));
+            }
+            Some(ChatGptLoginStatus::Authenticated) => {
+                body = body.child(self.render_chatgpt_connected(theme, session, cx));
+            }
+            Some(ChatGptLoginStatus::Expired) => {
+                body = body
+                    .child(
+                        div()
+                            .text_size(sp(12.5))
+                            .text_color(theme.text_secondary)
+                            .child(tr!("chatgpt.expired_description")),
+                    )
+                    .child(
+                        self.chatgpt_action_button(
+                            "chatgpt-sign-in-again",
+                            tr!("chatgpt.sign_in_again"),
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.connect_chatgpt();
+                            cx.notify();
+                        })),
+                    );
+            }
+            _ => {
+                if self.chatgpt.connecting {
+                    body = body.child(
+                        div()
+                            .text_size(sp(12.5))
+                            .text_color(theme.text_secondary)
+                            .child(tr!("chatgpt.connecting")),
+                    );
+                } else {
+                    body = body.child(
+                        self.chatgpt_action_button(
+                            "chatgpt-connect",
+                            tr!("chatgpt.connect"),
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.connect_chatgpt();
+                            cx.notify();
+                        })),
+                    );
+                }
+            }
+        }
+
+        if let Some(error) = self.chatgpt.error.clone() {
+            body = body.child(
+                div()
+                    .text_size(sp(12.5))
+                    .text_color(theme.danger)
+                    .child(SharedString::from(error)),
+            );
+        }
+        body
+    }
+
+    /// Waiting state: the user code to type into the verification page,
+    /// opened in the external browser — never embedded here.
+    fn render_chatgpt_pending(
+        &self,
+        theme: Theme,
+        session: Option<waku_client::chatgpt::ChatGptPublicSession>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let user_code = session
+            .as_ref()
+            .and_then(|session| session.user_code.clone())
+            .unwrap_or_default();
+        let verification_url = session
+            .as_ref()
+            .and_then(|session| session.verification_url.clone())
+            .unwrap_or_default();
+        let copy_code = user_code.clone();
+        let open_url = verification_url.clone();
+        let has_code = !user_code.is_empty();
+        let has_url = !verification_url.is_empty();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .text_size(sp(12.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.text)
+                    .child(tr!("chatgpt.waiting")),
+            )
+            .child(
+                div()
+                    .text_size(sp(12.5))
+                    .text_color(theme.text_tertiary)
+                    .child(tr!("chatgpt.waiting_description")),
+            )
+            .when(has_code, |element| {
+                element.child(
+                    div()
+                        .font_family(crate::md::render::MONO_FAMILY)
+                        .text_size(sp(20.0))
+                        .text_color(theme.text)
+                        .child(SharedString::from(user_code.clone())),
+                )
+            })
+            .when(has_url, |element| {
+                element.child(
+                    div()
+                        .font_family(crate::md::render::MONO_FAMILY)
+                        .text_size(sp(12.0))
+                        .text_color(theme.text_secondary)
+                        .child(SharedString::from(verification_url.clone())),
+                )
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .when(has_code, |element| {
+                        element.child(
+                            self.chatgpt_action_button(
+                                "chatgpt-copy-code",
+                                tr!("chatgpt.copy_code"),
+                                theme,
+                            )
+                            .on_click(cx.listener(
+                                move |_, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        copy_code.clone(),
+                                    ));
+                                },
+                            )),
+                        )
+                    })
+                    .when(has_url, |element| {
+                        element.child(
+                            self.chatgpt_action_button(
+                                "chatgpt-open-browser",
+                                tr!("chatgpt.open_browser"),
+                                theme,
+                            )
+                            .on_click(move |_, _, cx| {
+                                cx.open_url(&open_url);
+                            }),
+                        )
+                    })
+                    .child(
+                        self.chatgpt_action_button("chatgpt-cancel", tr!("chatgpt.cancel"), theme)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.disconnect_chatgpt();
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// Connected state: who is signed in, plus model refresh and Disconnect.
+    fn render_chatgpt_connected(
+        &self,
+        theme: Theme,
+        session: Option<waku_client::chatgpt::ChatGptPublicSession>,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let account = session
+            .as_ref()
+            .and_then(|session| session.user.as_ref())
+            .and_then(|user| user.email.clone().or_else(|| user.plan.clone()));
+        let connected = match account {
+            Some(email) => tr!("chatgpt.connected_as", email = email),
+            None => tr!("chatgpt.connected"),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .text_size(sp(12.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.text)
+                    .child(SharedString::from(connected)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        self.chatgpt_action_button(
+                            "chatgpt-refresh-models",
+                            tr!("chatgpt.refresh_models"),
+                            theme,
+                        )
+                        .on_click(_cx.listener(|this, _, _, cx| {
+                            this.refresh_chatgpt_models();
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        self.chatgpt_action_button(
+                            "chatgpt-disconnect",
+                            tr!("chatgpt.disconnect"),
+                            theme,
+                        )
+                        .on_click(_cx.listener(|this, _, _, cx| {
+                            this.disconnect_chatgpt();
+                            cx.notify();
+                        })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// Ghost-style action button matching the Providers page refresh control.
+    fn chatgpt_action_button(&self, id: &str, label: String, theme: Theme) -> Stateful<Div> {
+        div()
+            .id(SharedString::from(id.to_owned()))
+            .tab_index(0)
+            .focus_visible(|style| style.border_color(theme.accent))
+            .h(px(28.0))
+            .px(px(11.0))
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(theme.border_strong)
+            .flex()
+            .items_center()
+            .cursor_default()
+            .text_size(sp(12.5))
+            .text_color(theme.text_secondary)
+            .hover(|element| element.bg(theme.overlay))
+            .child(label)
+    }
+
+    /// Providers-page row summary for ChatGPT: connection state instead of a
+    /// binary path, since there is no CLI to detect.
+    fn chatgpt_row_summary(
+        &self,
+        theme: Theme,
+        model_count: usize,
+        disabled: bool,
+    ) -> (Hsla, String) {
+        use waku_client::chatgpt::ChatGptLoginStatus;
+        let session = self.chatgpt.session.as_ref();
+        let status = session.map(|session| session.status);
+        let dot = match status {
+            Some(ChatGptLoginStatus::Authenticated) if !disabled => theme.success,
+            Some(ChatGptLoginStatus::Authenticated) => theme.warning,
+            Some(ChatGptLoginStatus::Pending) => theme.warning,
+            Some(ChatGptLoginStatus::Expired) => theme.danger,
+            _ => theme.text_ghost,
+        };
+        let text = match status {
+            Some(ChatGptLoginStatus::Authenticated) => {
+                let account = session
+                    .and_then(|session| session.user.as_ref())
+                    .and_then(|user| user.email.clone().or_else(|| user.plan.clone()));
+                let mut parts = vec![match account {
+                    Some(email) => tr!("chatgpt.connected_as", email = email),
+                    None => tr!("chatgpt.connected"),
+                }];
+                if disabled {
+                    parts.push(tr!("providers.disabled_for_new_tasks"));
+                } else if model_count > 0 {
+                    parts.push(if model_count == 1 {
+                        tr!("providers.model_count_one", count = model_count)
+                    } else {
+                        tr!("providers.model_count_many", count = model_count)
+                    });
+                }
+                parts.join("  ·  ")
+            }
+            Some(ChatGptLoginStatus::Pending) => tr!("chatgpt.waiting"),
+            Some(ChatGptLoginStatus::Expired) => tr!("chatgpt.expired"),
+            _ if self.chatgpt.connecting => tr!("chatgpt.connecting"),
+            _ => tr!("chatgpt.not_connected"),
+        };
+        (dot, text)
     }
 
     fn toggle_provider_expanded(

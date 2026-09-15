@@ -165,6 +165,7 @@ pub fn provider_color(theme: &Theme, provider: ProviderKind) -> Hsla {
         ProviderKind::Claude => rgb(0xD97757).into(),
         ProviderKind::DeepSeek => rgb(0x4D6BFE).into(),
         ProviderKind::Codex
+        | ProviderKind::ChatGpt
         | ProviderKind::Cursor
         | ProviderKind::Fx
         | ProviderKind::OpenCode
@@ -188,6 +189,9 @@ pub fn provider_icon(provider: ProviderKind) -> &'static str {
         ProviderKind::Amp => "icons/provider-amp.svg",
         ProviderKind::Claude => "icons/provider-claude.svg",
         ProviderKind::Codex => "icons/provider-openai.svg",
+        // ChatGPT is ChatGPT-backed like Codex, so it shares the OpenAI mark
+        // rather than gaining a new asset in Stage 2.
+        ProviderKind::ChatGpt => "icons/provider-openai.svg",
         ProviderKind::Cursor => "icons/provider-cursor.svg",
         ProviderKind::DeepSeek => "icons/provider-deepseek.svg",
         ProviderKind::Fx => "icons/provider-fx.svg",

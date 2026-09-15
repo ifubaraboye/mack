@@ -14,6 +14,7 @@ pub enum ProviderKind {
     Claude,
     #[default]
     Codex,
+    ChatGpt,
     Cursor,
     DeepSeek,
     Fx,
@@ -26,10 +27,11 @@ pub enum ProviderKind {
 }
 
 impl ProviderKind {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Amp,
         Self::Claude,
         Self::Codex,
+        Self::ChatGpt,
         Self::Cursor,
         Self::DeepSeek,
         Self::Fx,
@@ -46,6 +48,7 @@ impl ProviderKind {
             Self::Amp => "amp",
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::ChatGpt => "chatgpt",
             Self::Cursor => "cursor",
             Self::DeepSeek => "deepseek",
             Self::Fx => "fx",
@@ -63,6 +66,7 @@ impl ProviderKind {
             Self::Amp => "Amp",
             Self::Claude => "Claude Code",
             Self::Codex => "Codex CLI",
+            Self::ChatGpt => "ChatGPT",
             Self::Cursor => "Cursor CLI",
             Self::DeepSeek => "DeepSeek Harness",
             Self::Fx => "Fx",
@@ -80,6 +84,7 @@ impl ProviderKind {
             Self::Amp => "Amp",
             Self::Claude => "Claude",
             Self::Codex => "Codex",
+            Self::ChatGpt => "ChatGPT",
             Self::Cursor => "Cursor",
             Self::DeepSeek => "DeepSeek",
             Self::Fx => "Fx",
@@ -97,6 +102,10 @@ impl ProviderKind {
             Self::Amp => "amp",
             Self::Claude => "claude",
             Self::Codex => "codex",
+            // ChatGPT needs no CLI: authentication happens through the
+            // daemon-owned device flow, so this is display-only. The Settings
+            // page special-cases ChatGPT instead of showing PATH detection.
+            Self::ChatGpt => "chatgpt",
             // Cursor documents `agent` as its primary command, but that name is
             // shared by other CLIs. The backward-compatible alias is unambiguous.
             Self::Cursor => "cursor-agent",
@@ -153,6 +162,7 @@ impl ProviderKind {
             self,
             Self::Claude
                 | Self::Codex
+                | Self::ChatGpt
                 | Self::Cursor
                 | Self::DeepSeek
                 | Self::Fx
@@ -170,7 +180,7 @@ impl ProviderKind {
     pub fn is_user_visible(self) -> bool {
         matches!(
             self,
-            Self::Claude | Self::Codex | Self::OpenCode | Self::OpenCode2
+            Self::Claude | Self::Codex | Self::ChatGpt | Self::OpenCode | Self::OpenCode2
         )
     }
 }
@@ -194,6 +204,11 @@ pub enum ProviderResumeCursor {
     },
     Codex {
         thread_id: String,
+    },
+    /// ChatGPT conversations arrive in Stage 3; the cursor shape is reserved
+    /// now so persisted types stay forward-compatible.
+    ChatGpt {
+        session_id: String,
     },
     Cursor {
         session_id: String,
@@ -244,6 +259,7 @@ impl ProviderResumeCursor {
                 resume_at: None,
             },
             ProviderKind::Codex => Self::Codex { thread_id: id },
+            ProviderKind::ChatGpt => Self::ChatGpt { session_id: id },
             ProviderKind::Cursor => Self::Cursor {
                 session_id: id,
                 fork_context: None,
@@ -273,6 +289,7 @@ impl ProviderResumeCursor {
             Self::Amp { .. } => ProviderKind::Amp,
             Self::Claude { .. } => ProviderKind::Claude,
             Self::Codex { .. } => ProviderKind::Codex,
+            Self::ChatGpt { .. } => ProviderKind::ChatGpt,
             Self::Cursor { .. } => ProviderKind::Cursor,
             Self::DeepSeek { .. } => ProviderKind::DeepSeek,
             Self::Fx { .. } => ProviderKind::Fx,
@@ -290,6 +307,7 @@ impl ProviderResumeCursor {
             Self::Amp { thread_id, .. } => thread_id,
             Self::Claude { session_id, .. }
             | Self::Cursor { session_id, .. }
+            | Self::ChatGpt { session_id }
             | Self::DeepSeek { session_id }
             | Self::Fx { session_id }
             | Self::OpenCode { session_id }
@@ -4233,7 +4251,7 @@ mod tests {
 
     #[test]
     fn all_contains_every_provider_kind() {
-        assert_eq!(ProviderKind::ALL.len(), 12);
+        assert_eq!(ProviderKind::ALL.len(), 13);
         let ids: std::collections::HashSet<_> =
             ProviderKind::ALL.iter().map(|kind| kind.id()).collect();
         assert_eq!(
@@ -4846,5 +4864,43 @@ mod tests {
         assert!(projection.transcript_blocks.is_empty());
         assert!(projection.turns.is_empty());
         assert!(projection.queued_messages.is_empty());
+    }
+
+    #[test]
+    fn chatgpt_registers_as_its_own_visible_provider() {
+        assert_eq!(ProviderKind::ALL.len(), 13);
+        assert!(ProviderKind::ALL.contains(&ProviderKind::ChatGpt));
+        assert_eq!(ProviderKind::ChatGpt.id(), "chatgpt");
+        assert_eq!(ProviderKind::ChatGpt.display_name(), "ChatGPT");
+        assert_eq!(ProviderKind::ChatGpt.short_name(), "ChatGPT");
+        assert!(ProviderKind::ChatGpt.is_user_visible());
+        assert!(ProviderKind::ChatGpt.supports_model_discovery());
+        // No conversations exist before Stage 3, so no rollback or fork.
+        assert!(!ProviderKind::ChatGpt.supports_conversation_rollback());
+        assert!(!ProviderKind::ChatGpt.supports_conversation_fork());
+        // Wire spelling is camelCase like every other provider.
+        assert_eq!(
+            serde_json::to_value(ProviderKind::ChatGpt).unwrap(),
+            serde_json::json!("chatGpt")
+        );
+        assert_eq!(
+            serde_json::from_value::<ProviderKind>(serde_json::json!("chatGpt")).unwrap(),
+            ProviderKind::ChatGpt
+        );
+        // Cursor shapes round-trip through the reserved variant.
+        let cursor =
+            ProviderResumeCursor::from_session_id(ProviderKind::ChatGpt, "session-1".to_owned());
+        assert_eq!(cursor.provider(), ProviderKind::ChatGpt);
+        assert_eq!(cursor.native_id(), "session-1");
+    }
+
+    #[test]
+    fn codex_registration_is_unchanged_by_chatgpt() {
+        assert_eq!(ProviderKind::Codex.id(), "codex");
+        assert_eq!(ProviderKind::Codex.display_name(), "Codex CLI");
+        assert_eq!(ProviderKind::Codex.command(), "codex");
+        assert!(ProviderKind::Codex.supports_conversation_rollback());
+        assert!(ProviderKind::Codex.supports_conversation_fork());
+        assert!(ProviderKind::Codex.supports_model_discovery());
     }
 }

@@ -11,6 +11,7 @@
 //! Soundness guard: link reference definitions (`[label]: url`) resolve
 //! non-locally, so a source containing one drops back to full reparses.
 
+use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::LazyLock;
 
@@ -148,9 +149,206 @@ fn options() -> Options {
         | Options::ENABLE_MATH
 }
 
+// ── LaTeX delimiter translation ──────────────────────────────────────────
+
+/// Models emit `\[…\]` / `\(…\)` math, which pulldown-cmark's `ENABLE_MATH`
+/// does not recognize: `\[` parses as an escaped bracket, so a formula
+/// renders as a literal `[`, raw backslash commands, `]`. Translation runs
+/// before pulldown-cmark, so translated math flows through the exact same
+/// `DisplayMath`/math-run path (and tests) as dollar math.
+///
+/// Only unescaped delimiters outside fenced and inline code translate:
+/// `\\[`, `` `\[` ``, and fenced `\[` stay literal. Unmatched delimiters
+/// degrade exactly like unmatched `$$` already do (left literal).
+///
+/// `\[`/`\]` keep their byte length (`$$`), but `\(`/`\)` shrink two bytes
+/// to one (`$`), so every translated range is mapped back to source offsets
+/// below: the incremental parser slices the *source* at block boundaries,
+/// and a drifted boundary could split a character or a delimiter.
+struct Translated<'a> {
+    text: Cow<'a, str>,
+    /// Translated offsets where one source byte was dropped, ascending.
+    shrinks: Vec<usize>,
+}
+
+impl Translated<'_> {
+    fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Maps a translated byte offset back to the source. Strict `<` keeps a
+    /// block starting exactly at a translated delimiter on the delimiter's
+    /// backslash rather than inside it.
+    fn unmap(&self, offset: usize) -> usize {
+        offset + self.shrinks.partition_point(|&shrink| shrink < offset)
+    }
+
+    fn remap_ranges(&self, blocks: &mut [TopBlock]) {
+        if self.shrinks.is_empty() {
+            return;
+        }
+        for block in blocks {
+            block.range.start = self.unmap(block.range.start);
+            block.range.end = self.unmap(block.range.end);
+        }
+    }
+}
+
+/// Translates LaTeX math delimiters to dollar delimiters. Zero-cost
+/// (borrowed) for backslash-free sources, which is the common case.
+fn translate_latex_delimiters(source: &str) -> Translated<'_> {
+    if !source.contains('\\') {
+        return Translated {
+            text: Cow::Borrowed(source),
+            shrinks: Vec::new(),
+        };
+    }
+    let bytes = source.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut shrinks = Vec::new();
+    // Fenced code state: (fence char, opening run length).
+    let mut fenced: Option<(u8, usize)> = None;
+    // Inline code span: opening backtick run length (spans lines).
+    let mut code: Option<usize> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        // Fence runs only open/close at line starts outside code spans.
+        if code.is_none()
+            && (i == 0 || bytes[i - 1] == b'\n')
+            && let Some((fence, len, line_end)) = fence_run(bytes, i)
+        {
+            match fenced {
+                None => fenced = Some((fence, len)),
+                Some((open, open_len))
+                    if fence == open && len >= open_len && line_tail_blank(bytes, i, line_end) =>
+                {
+                    fenced = None;
+                }
+                _ => {}
+            }
+            out.extend_from_slice(&bytes[i..line_end]);
+            i = line_end;
+            continue;
+        }
+        if fenced.is_some() {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        match (code, bytes[i]) {
+            (None, b'\\') if i + 1 < bytes.len() => match bytes[i + 1] {
+                // An escaped backslash is literal: the char after it cannot
+                // open a delimiter.
+                b'\\' => {
+                    out.extend_from_slice(&bytes[i..i + 2]);
+                    i += 2;
+                }
+                b'[' | b']' => {
+                    out.extend_from_slice(b"$$");
+                    i += 2;
+                }
+                b'(' | b')' => {
+                    shrinks.push(out.len());
+                    out.push(b'$');
+                    i += 2;
+                }
+                _ => {
+                    out.push(bytes[i]);
+                    i += 1;
+                }
+            },
+            (None, b'`') => {
+                let run = backtick_run(bytes, i);
+                if code.is_none() {
+                    code = Some(run);
+                }
+                out.extend_from_slice(&bytes[i..i + run]);
+                i += run;
+            }
+            (Some(open), b'`') => {
+                let run = backtick_run(bytes, i);
+                if run == open {
+                    code = None;
+                }
+                out.extend_from_slice(&bytes[i..i + run]);
+                i += run;
+            }
+            _ => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    Translated {
+        // Translation only swaps ASCII bytes, so UTF-8 validity is preserved.
+        text: Cow::Owned(String::from_utf8(out).expect("latex translation is UTF-8")),
+        shrinks,
+    }
+}
+
+/// A fence run (` ```+ ` or `~~~+`) after up to three leading spaces at `i`.
+/// Returns the fence char, run length, and end of the line.
+fn fence_run(bytes: &[u8], i: usize) -> Option<(u8, usize, usize)> {
+    let mut j = i;
+    while j < bytes.len() && bytes[j] == b' ' && j - i < 3 {
+        j += 1;
+    }
+    // Tabs before a fence make it indented code, not a fence: bail.
+    if j < bytes.len() && bytes[j] == b'\t' {
+        return None;
+    }
+    let fence = *bytes.get(j)?;
+    if fence != b'`' && fence != b'~' {
+        return None;
+    }
+    let mut len = 0;
+    while bytes.get(j + len) == Some(&fence) {
+        len += 1;
+    }
+    if len < 3 {
+        return None;
+    }
+    let line_end = bytes
+        .iter()
+        .skip(j)
+        .position(|&byte| byte == b'\n')
+        .map(|offset| j + offset + 1)
+        .unwrap_or(bytes.len());
+    Some((fence, len, line_end))
+}
+
+/// Whether the fence line carries nothing but trailing whitespace after its
+/// run: only then does it close an open fence.
+fn line_tail_blank(bytes: &[u8], i: usize, line_end: usize) -> bool {
+    let mut j = i;
+    while j < line_end && bytes[j] == b' ' {
+        j += 1;
+    }
+    let fence = match bytes.get(j) {
+        Some(&byte) if byte == b'`' || byte == b'~' => byte,
+        _ => return false,
+    };
+    j += 1;
+    while j < line_end && bytes[j] == fence {
+        j += 1;
+    }
+    bytes[j..line_end]
+        .iter()
+        .all(|&byte| byte == b' ' || byte == b'\n')
+}
+
+fn backtick_run(bytes: &[u8], i: usize) -> usize {
+    let mut len = 0;
+    while bytes.get(i + len) == Some(&b'`') {
+        len += 1;
+    }
+    len.max(1)
+}
+
 /// Parse a whole source into a [`BlockTree`].
 pub fn parse(source: &str) -> BlockTree {
-    let events = Parser::new_ext(source, options())
+    let translated = translate_latex_delimiters(source);
+    let events = Parser::new_ext(translated.text(), options())
         .into_offset_iter()
         .collect::<Vec<_>>();
     let mut cursor = Cursor {
@@ -181,7 +379,9 @@ pub fn parse(source: &str) -> BlockTree {
             _ => cursor.bump(),
         }
     }
-    BlockTree { blocks }
+    let mut tree = BlockTree { blocks };
+    translated.remap_ranges(&mut tree.blocks);
+    tree
 }
 
 struct Cursor<'a, 'e> {
@@ -972,6 +1172,9 @@ mod tests {
             "Intro\n\nBefore $x_1$ and $y$ after\n\n$$\n\\frac{a}{b}\n$$\n\nDone",
             "- Before $$x$$ after\n- Next $y$\n",
             "before $$x$$ after **bold**",
+            // Models emit LaTeX delimiters: identical streaming guarantee.
+            "Intro\n\n\\[\n\\theta_{t+1} = \\theta_t\n\\]\n\nDone",
+            "a \\(x^2\\) b",
         ] {
             let mut parser = IncrementalParser::new();
             for ch in source.chars() {
@@ -995,6 +1198,50 @@ mod tests {
             parser.set_text(source);
             assert_eq!(parser.display_tree(), *parser.tree(), "{source}");
         }
+    }
+
+    #[test]
+    fn latex_delimiters_translate_to_math_runs() {
+        // The shape models emit for display math: previously this rendered
+        // as a literal `[`, raw backslash commands, `]`.
+        let tree = parse("Before\n\n\\[\n\\theta_{t+1} = \\theta_t\n\\]\n\nafter");
+        // Pulldown keeps multiline display content verbatim (newlines
+        // included); the math renderer tolerates the whitespace.
+        assert!(
+            matches!(&tree.blocks[1].block, Block::DisplayMath { latex } if latex == "\n\\theta_{t+1} = \\theta_t\n")
+        );
+        // Inline parens delimiters.
+        let tree = parse("a \\(x^2\\) b");
+        let Block::Paragraph { runs } = &tree.blocks[0].block else {
+            panic!("{tree:?}");
+        };
+        let math: Vec<_> = runs.iter().filter(|run| run.style.math).collect();
+        assert_eq!(math.len(), 1);
+        assert_eq!(math[0].text, "x^2");
+        // Escaped delimiters, code spans, and fenced blocks stay literal.
+        for source in [
+            r"\\[x\\]",
+            r"`\[x\]`",
+            "```\n\\[x\\]\n```",
+            r"bare \frac{a}{b} text",
+        ] {
+            let tree = parse(source);
+            let has_math = tree.blocks.iter().any(|block| match &block.block {
+                Block::DisplayMath { .. } => true,
+                Block::Paragraph { runs } | Block::Heading { runs, .. } => {
+                    runs.iter().any(|run| run.style.math)
+                }
+                _ => false,
+            });
+            assert!(!has_math, "{source}");
+        }
+        // Translated ranges still slice the source: no drift, no panic.
+        let source = "text\n\n\\[x^2\\] and \\(y\\)";
+        let tree = parse(source);
+        assert_eq!(
+            &source[tree.blocks[1].range.clone()],
+            "\\[x^2\\] and \\(y\\)"
+        );
     }
 
     fn paragraph_text(block: &Block) -> String {

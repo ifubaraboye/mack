@@ -335,6 +335,9 @@ fn assemble_slash_commands(
         // and Kimi Code likewise publishes its whole command set over ACP
         // rather than from files Waku could scan.
         ProviderKind::DeepSeek | ProviderKind::Grok | ProviderKind::Kimi => {}
+        // ChatGPT carries no filesystem command/skill trees; its catalog
+        // surface arrives with the Stage 3 conversation driver.
+        ProviderKind::ChatGpt => {}
     }
     // The cross-tool skill standard, read by Amp and OpenCode among others;
     // Waku lists it for every provider.

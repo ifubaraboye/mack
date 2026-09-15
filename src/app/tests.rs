@@ -5,13 +5,14 @@ use super::composer::{
 use super::runtime::{merge_remote_session_catalog, session_has_active_provider_turn};
 use super::settings::visible_settings_pages;
 use super::{
-    ESCAPE_STOP_CONFIRMATION_TIMEOUT, EscapeStopConfirmation, EscapeStopPress, EscapeStopTarget,
-    NAVIGATION_RAIL_TICK_HEIGHT, NAVIGATION_RAIL_TURN_HEIGHT, PendingUserInput, SessionNavigation,
-    StreamDeltaKind, TranscriptRowKind::*, active_navigation_turn_index,
-    append_text_delta_to_session, assistant_response_footer, assistant_response_footer_index,
-    assistant_response_footer_time, compact_driver_error, disclosure_leading_space, fenced_code,
-    fitted_file_tree_width, fitted_panel_widths, folded_transcript_row_kinds,
-    format_worked_duration, format_working_elapsed, maintain_transcript_anchor, message_opens_turn,
+    ChatGptClientEvent, ChatGptEffect, ChatGptPanelState, ESCAPE_STOP_CONFIRMATION_TIMEOUT,
+    EscapeStopConfirmation, EscapeStopPress, EscapeStopTarget, NAVIGATION_RAIL_TICK_HEIGHT,
+    NAVIGATION_RAIL_TURN_HEIGHT, PendingUserInput, SessionNavigation, StreamDeltaKind,
+    TranscriptRowKind::*, Waku, active_navigation_turn_index, append_text_delta_to_session,
+    assistant_response_footer, assistant_response_footer_index, assistant_response_footer_time,
+    compact_driver_error, disclosure_leading_space, fenced_code, fitted_file_tree_width,
+    fitted_panel_widths, folded_transcript_row_kinds, format_worked_duration,
+    format_working_elapsed, maintain_transcript_anchor, message_opens_turn,
     message_starts_followup_turn, navigation_preview_snippet, navigation_rail_fade_visibility,
     navigation_rail_height, navigation_rail_scale, paused_toast_duration, pop_stream_batch,
     push_transcript_activity, response_footer_message_index, response_row_turn_id,
@@ -70,6 +71,7 @@ fn structured_user_input_preserves_question_order_and_custom_answer_precedence()
 use gpui::{ListAlignment, ListState, Pixels, px};
 use std::{
     collections::{HashSet, VecDeque},
+    path::PathBuf,
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -2206,4 +2208,231 @@ fn hidden_providers_leave_the_picker_for_new_work() {
         Some(ProviderKind::Pi),
         ProviderKind::Pi
     ));
+}
+
+#[test]
+fn chatgpt_login_reaches_connected_and_discovers_models() {
+    use waku_client::chatgpt::{ChatGptLoginStatus, ChatGptPublicSession};
+
+    fn session(status: ChatGptLoginStatus) -> ChatGptPublicSession {
+        ChatGptPublicSession {
+            status,
+            user_code: (status == ChatGptLoginStatus::Pending).then(|| "ABCD-1234".to_owned()),
+            verification_url: (status == ChatGptLoginStatus::Pending)
+                .then(|| "https://auth.openai.com/codex/device".to_owned()),
+            interval_secs: Some(5),
+            expires_at_ms: Some(99_000),
+            user: None,
+            error: None,
+        }
+    }
+
+    let mut state = ChatGptPanelState::default();
+    // Not connected -> waiting: stored, no side effect yet.
+    let effect = Waku::reduce_chatgpt_event(
+        &mut state,
+        &ChatGptClientEvent::Session(session(ChatGptLoginStatus::Pending)),
+    );
+    assert_eq!(effect, ChatGptEffect::None);
+    assert_eq!(
+        state.session.as_ref().map(|session| session.status),
+        Some(ChatGptLoginStatus::Pending)
+    );
+    assert!(state.error.is_none());
+
+    // Waiting -> connected: discovery is the only side effect.
+    let effect = Waku::reduce_chatgpt_event(
+        &mut state,
+        &ChatGptClientEvent::Session(session(ChatGptLoginStatus::Authenticated)),
+    );
+    assert_eq!(effect, ChatGptEffect::DiscoverModels);
+
+    // Models landing clears the pending flag.
+    state.models_pending = true;
+    let effect = Waku::reduce_chatgpt_event(&mut state, &ChatGptClientEvent::Models(Vec::new()));
+    assert_eq!(effect, ChatGptEffect::None);
+    assert!(!state.models_pending);
+}
+
+#[test]
+fn chatgpt_waiting_expires_without_models() {
+    use waku_client::chatgpt::{ChatGptLoginStatus, ChatGptPublicSession};
+
+    let mut state = ChatGptPanelState::default();
+    let effect = Waku::reduce_chatgpt_event(
+        &mut state,
+        &ChatGptClientEvent::Session(ChatGptPublicSession {
+            status: ChatGptLoginStatus::Pending,
+            ..ChatGptPublicSession::default()
+        }),
+    );
+    assert_eq!(effect, ChatGptEffect::None);
+
+    let effect = Waku::reduce_chatgpt_event(
+        &mut state,
+        &ChatGptClientEvent::Session(ChatGptPublicSession {
+            status: ChatGptLoginStatus::Expired,
+            ..ChatGptPublicSession::default()
+        }),
+    );
+    assert_eq!(effect, ChatGptEffect::None);
+    assert_eq!(
+        state.session.as_ref().map(|session| session.status),
+        Some(ChatGptLoginStatus::Expired)
+    );
+    assert!(state.error.is_none());
+}
+
+#[test]
+fn chatgpt_connected_expires_and_clears_on_logout() {
+    use waku_client::chatgpt::{ChatGptLoginStatus, ChatGptPublicSession};
+
+    let mut state = ChatGptPanelState::default();
+    // Connected triggers exactly one discovery side effect.
+    let effect = Waku::reduce_chatgpt_event(
+        &mut state,
+        &ChatGptClientEvent::Session(ChatGptPublicSession {
+            status: ChatGptLoginStatus::Authenticated,
+            ..ChatGptPublicSession::default()
+        }),
+    );
+    assert_eq!(effect, ChatGptEffect::DiscoverModels);
+
+    // A dead refresh lands as Expired (not an error): sign in again.
+    let effect = Waku::reduce_chatgpt_event(
+        &mut state,
+        &ChatGptClientEvent::Session(ChatGptPublicSession {
+            status: ChatGptLoginStatus::Expired,
+            ..ChatGptPublicSession::default()
+        }),
+    );
+    assert_eq!(effect, ChatGptEffect::None);
+    assert_eq!(
+        state.session.as_ref().map(|session| session.status),
+        Some(ChatGptLoginStatus::Expired)
+    );
+
+    // Logout returns to Unauthenticated with no models pending.
+    state.models_pending = true;
+    let effect = Waku::reduce_chatgpt_event(
+        &mut state,
+        &ChatGptClientEvent::Session(ChatGptPublicSession {
+            status: ChatGptLoginStatus::Unauthenticated,
+            ..ChatGptPublicSession::default()
+        }),
+    );
+    assert_eq!(effect, ChatGptEffect::None);
+    assert_eq!(
+        state.session.as_ref().map(|session| session.status),
+        Some(ChatGptLoginStatus::Unauthenticated)
+    );
+}
+
+#[test]
+fn chatgpt_failure_preserves_last_session_and_reports_inline() {
+    use waku_client::chatgpt::{ChatGptLoginStatus, ChatGptPublicSession};
+
+    let mut state = ChatGptPanelState::default();
+    Waku::reduce_chatgpt_event(
+        &mut state,
+        &ChatGptClientEvent::Session(ChatGptPublicSession {
+            status: ChatGptLoginStatus::Authenticated,
+            ..ChatGptPublicSession::default()
+        }),
+    );
+    Waku::reduce_chatgpt_event(
+        &mut state,
+        &ChatGptClientEvent::Failed("Could not load ChatGPT models".to_owned()),
+    );
+    // The last known session stays put; the error shows inline.
+    assert_eq!(
+        state.session.as_ref().map(|session| session.status),
+        Some(ChatGptLoginStatus::Authenticated)
+    );
+    assert_eq!(
+        state.error.as_deref(),
+        Some("Could not load ChatGPT models")
+    );
+    assert!(!state.models_pending);
+    assert!(!state.connecting);
+
+    // The next successful session clears the error.
+    Waku::reduce_chatgpt_event(
+        &mut state,
+        &ChatGptClientEvent::Session(ChatGptPublicSession {
+            status: ChatGptLoginStatus::Authenticated,
+            ..ChatGptPublicSession::default()
+        }),
+    );
+    assert!(state.error.is_none());
+}
+
+#[test]
+fn chatgpt_probe_merge_replaces_only_chatgpt_models() {
+    use crate::model::{ProviderModel, ProviderProbe};
+
+    let mut probes = vec![
+        ProviderProbe {
+            provider: ProviderKind::Codex,
+            installed: true,
+            path: Some(PathBuf::from("/usr/bin/codex")),
+            models: vec![ProviderModel::new("gpt-5.6-sol", "GPT-5.6-Sol")],
+            agent_presets: Vec::new(),
+        },
+        ProviderProbe {
+            provider: ProviderKind::ChatGpt,
+            installed: true,
+            path: None,
+            models: vec![ProviderModel::new("old", "Old")],
+            agent_presets: Vec::new(),
+        },
+    ];
+    Waku::merge_chatgpt_probe_models(&mut probes, vec![ProviderModel::new("gpt-5.5", "GPT-5.5")]);
+    assert_eq!(probes.len(), 2);
+    let codex = probes
+        .iter()
+        .find(|probe| probe.provider == ProviderKind::Codex)
+        .unwrap();
+    assert_eq!(codex.models.len(), 1);
+    assert_eq!(codex.models[0].id, "gpt-5.6-sol");
+    let chatgpt = probes
+        .iter()
+        .find(|probe| probe.provider == ProviderKind::ChatGpt)
+        .unwrap();
+    assert_eq!(chatgpt.models.len(), 1);
+    assert_eq!(chatgpt.models[0].id, "gpt-5.5");
+
+    // A missing probe is inserted as installed with no binary.
+    let mut probes = Vec::new();
+    Waku::merge_chatgpt_probe_models(&mut probes, vec![ProviderModel::new("gpt-5.5", "GPT-5.5")]);
+    assert_eq!(probes.len(), 1);
+    assert!(probes[0].installed);
+    assert_eq!(probes[0].path, None);
+}
+
+#[test]
+fn chatgpt_starts_without_a_cli_binary() {
+    use super::runtime::start_binary_for_provider;
+    use crate::model::ProviderProbe;
+
+    // ChatGPT is a native daemon driver: no probe path, no error.
+    let probes = Vec::new();
+    let binary = start_binary_for_provider(&probes, ProviderKind::ChatGpt).unwrap();
+    assert!(binary.as_os_str().is_empty());
+
+    // Every other provider keeps the exact previous behavior: missing
+    // binary is the `provider_not_found` error, present binary passes.
+    let error = start_binary_for_provider(&probes, ProviderKind::Codex).unwrap_err();
+    assert!(error.to_string().contains("Codex"));
+    let probes = vec![ProviderProbe {
+        provider: ProviderKind::Codex,
+        installed: true,
+        path: Some(PathBuf::from("/usr/bin/codex")),
+        models: Vec::new(),
+        agent_presets: Vec::new(),
+    }];
+    assert_eq!(
+        start_binary_for_provider(&probes, ProviderKind::Codex).unwrap(),
+        PathBuf::from("/usr/bin/codex")
+    );
 }

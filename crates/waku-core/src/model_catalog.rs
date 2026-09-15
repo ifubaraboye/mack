@@ -83,6 +83,12 @@ pub fn fallback_models(provider: ProviderKind) -> Vec<ProviderModel> {
         // Harness reports its account/configuration-specific catalog from its
         // Host. An invented fallback would make unavailable routes selectable.
         ProviderKind::DeepSeek => Vec::new(),
+        // ChatGPT models are account- and plan-specific and come only from
+        // the authenticated `/models` endpoint through the daemon-owned
+        // session. An invented fallback would offer models the account
+        // cannot use, so discovery is authoritative and pre-discovery is
+        // empty — mirroring Fx/Grok below.
+        ProviderKind::ChatGpt => Vec::new(),
         // Fx resolves its catalog through the user's active Gateway or
         // subscription login. An invented fallback could expose an unusable
         // route, so discovery is authoritative.
@@ -130,6 +136,10 @@ pub fn discover_catalog(
         // the picker aligned with the modes advertised by the current CLI.
         ProviderKind::Amp => (Vec::new(), None),
         ProviderKind::Codex => (discover_codex_models(binary), None),
+        // ChatGPT discovery is session-authenticated, not CLI-based: the
+        // daemon serves it through the ChatGPT session manager instead of
+        // this CLI probe path, so direct calls stay empty.
+        ProviderKind::ChatGpt => (Vec::new(), None),
         ProviderKind::Claude => (discover_claude_models(binary), None),
         ProviderKind::Cursor => (discover_cursor_models(binary), None),
         ProviderKind::DeepSeek => discover_deepseek_catalog(binary),
@@ -187,7 +197,7 @@ fn read_models_file(path: &Path) -> Option<Vec<ProviderModel>> {
 
 /// Best-effort: a cache that fails to write only costs the next launch its
 /// head start.
-fn write_cached_models(provider: ProviderKind, models: &[ProviderModel]) {
+pub(crate) fn write_cached_models(provider: ProviderKind, models: &[ProviderModel]) {
     let _ = write_models_file(&model_cache_path(provider), models);
 }
 

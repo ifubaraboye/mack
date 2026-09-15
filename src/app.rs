@@ -4,6 +4,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local, Utc};
@@ -195,6 +196,33 @@ enum StreamDeltaKind {
 enum ModelPickerTab {
     Favorites,
     Provider(ProviderKind),
+}
+
+/// Daemon ChatGPT results delivered to the event pump. Sessions carry the
+/// client-safe wire session only — never bearer material.
+#[derive(Clone, Debug)]
+enum ChatGptClientEvent {
+    Session(waku_client::chatgpt::ChatGptPublicSession),
+    Models(Vec<ProviderModel>),
+    Failed(String),
+}
+
+/// Desktop-side ChatGPT panel state: last known session, inline error, and
+/// in-flight flags. Render reads only this; transitions run through
+/// `reduce_chatgpt_event` in runtime so the table is unit-testable.
+#[derive(Clone, Debug, Default)]
+struct ChatGptPanelState {
+    session: Option<waku_client::chatgpt::ChatGptPublicSession>,
+    error: Option<String>,
+    connecting: bool,
+    models_pending: bool,
+}
+
+/// Side effect a ChatGPT event asks the app to perform off-thread.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChatGptEffect {
+    None,
+    DiscoverModels,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1121,6 +1149,15 @@ pub struct Waku {
     /// override input below edits this provider's entry.
     expanded_provider_settings: Option<ProviderKind>,
     provider_path_input: Entity<TextInput>,
+    /// Last known daemon ChatGPT session (status + public profile only —
+    /// bearer material never leaves the daemon), plus inline error and
+    /// in-flight flags. Transitions run through `reduce_chatgpt_event`.
+    chatgpt: ChatGptPanelState,
+    chatgpt_tx: Sender<ChatGptClientEvent>,
+    chatgpt_events: Receiver<ChatGptClientEvent>,
+    /// Supersedes stale login poll loops: Connect/Logout bump it, and each
+    /// loop exits when its generation no longer matches.
+    chatgpt_poll_generation: Arc<AtomicU64>,
     computer_permissions: ComputerPermissions,
     computer_permission_tx: Sender<Result<ComputerPermissions, String>>,
     computer_permission_events: Receiver<Result<ComputerPermissions, String>>,
@@ -2196,6 +2233,7 @@ impl Waku {
         let (provider_detection_tx, provider_detection_events) = unbounded();
         let (computer_permission_tx, computer_permission_events) = unbounded();
         let (plan_usage_tx, plan_usage_events) = unbounded();
+        let (chatgpt_tx, chatgpt_events) = unbounded();
         let (event_wake_tx, event_wake_events) = smol::channel::bounded(1);
         let (task_state_sync_tx, task_state_sync_events) = unbounded();
         #[cfg(target_os = "macos")]
@@ -2773,6 +2811,10 @@ impl Waku {
                 provider_detection_checked_at: None,
                 expanded_provider_settings: None,
                 provider_path_input,
+                chatgpt: ChatGptPanelState::default(),
+                chatgpt_tx,
+                chatgpt_events,
+                chatgpt_poll_generation: Arc::new(AtomicU64::new(0)),
                 computer_permissions: ComputerPermissions::default(),
                 computer_permission_tx,
                 computer_permission_events,
@@ -3040,6 +3082,10 @@ impl Waku {
             // discovery for every CLI it finds, including nvm/fnm-managed
             // installs.
             this.refresh_provider_detection(None);
+            // Restore the ChatGPT session too: an authenticated session
+            // refreshes transparently and rediscovers its models, while an
+            // expired one simply reports Expired until the user signs in.
+            this.refresh_chatgpt_session();
             // The skill library too: the Skills settings page must open onto
             // data, not a scan.
             this.ensure_skills_catalog(false, cx);

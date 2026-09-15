@@ -57,6 +57,9 @@ pub struct WakuBackend {
     checkpoint_capture_locks: Mutex<HashMap<(PathBuf, Uuid, usize), Arc<Mutex<()>>>>,
     usage_rates_dir: std::path::PathBuf,
     default_cwd: std::path::PathBuf,
+    /// Lazily created on the first ChatGPT command so unit tests and
+    /// non-ChatGPT daemons never touch the credential directory.
+    chatgpt: OnceLock<crate::chatgpt_session::ChatGptSessionManager>,
 }
 
 impl WakuBackend {
@@ -93,6 +96,7 @@ impl WakuBackend {
             checkpoint_capture_locks: Mutex::new(HashMap::new()),
             usage_rates_dir,
             default_cwd: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            chatgpt: OnceLock::new(),
         })
     }
 
@@ -248,6 +252,25 @@ impl Backend for WakuBackend {
                 Ok(ResponsePayload::Ack)
             }
             Command::ProbeProvider {
+                provider: ProviderKind::ChatGpt,
+                ..
+            } => {
+                // ChatGPT needs no CLI: it is always "installed", and its
+                // models come from the last authenticated discovery (cached
+                // daemon-side) rather than a subprocess probe.
+                Ok(ResponsePayload::ProviderProbe {
+                    probe: crate::model::ProviderProbe {
+                        provider: ProviderKind::ChatGpt,
+                        installed: true,
+                        path: None,
+                        models: crate::model_catalog::cached_models(ProviderKind::ChatGpt)
+                            .unwrap_or_default(),
+                        agent_presets: Vec::new(),
+                    },
+                    version: None,
+                })
+            }
+            Command::ProbeProvider {
                 provider,
                 binary_override,
                 discover_models,
@@ -301,6 +324,53 @@ impl Backend for WakuBackend {
                     _ => bail!("provider has no plan usage fetcher"),
                 };
                 Ok(ResponsePayload::PlanUsage { usage })
+            }
+            Command::ChatGptConnect => {
+                let manager = self.chatgpt();
+                match manager.start_device_login() {
+                    Ok(code) => Ok(ResponsePayload::ChatGptSession {
+                        session: chatgpt_pending_session(&code, None),
+                    }),
+                    Err(error) => Err(chatgpt_rpc_error(error)),
+                }
+            }
+            Command::ChatGptPoll => {
+                let manager = self.chatgpt();
+                match manager.poll() {
+                    Ok(public) => Ok(ResponsePayload::ChatGptSession {
+                        session: chatgpt_polled_session(manager, &public),
+                    }),
+                    Err(error) => Err(chatgpt_rpc_error(error)),
+                }
+            }
+            Command::ChatGptLogout => {
+                let manager = self.chatgpt();
+                manager.logout().map_err(chatgpt_rpc_error)?;
+                Ok(ResponsePayload::ChatGptSession {
+                    session: chatgpt_wire_session(
+                        &manager.public_session().map_err(chatgpt_rpc_error)?,
+                        None,
+                        None,
+                    ),
+                })
+            }
+            Command::ChatGptSession => {
+                let manager = self.chatgpt();
+                let public = manager.public_session().map_err(chatgpt_rpc_error)?;
+                Ok(ResponsePayload::ChatGptSession {
+                    session: chatgpt_polled_session(manager, &public),
+                })
+            }
+            Command::ChatGptDiscoverModels => {
+                let manager = self.chatgpt();
+                match manager.discover_models() {
+                    Ok(slugs) => {
+                        let models = chatgpt_catalog_models(&slugs);
+                        crate::model_catalog::write_cached_models(ProviderKind::ChatGpt, &models);
+                        Ok(ResponsePayload::ChatGptModels { models })
+                    }
+                    Err(error) => Err(chatgpt_rpc_error(error)),
+                }
             }
             Command::ProbeComputerPermissions { prompt } => {
                 Ok(ResponsePayload::ComputerPermissions {
@@ -536,6 +606,9 @@ impl Backend for WakuBackend {
                     ProviderKind::OhMyPi | ProviderKind::Pi => {
                         crate::pi_session::list_provider_sessions(provider, limit)?
                     }
+                    // ChatGPT conversations live in Waku's own store from
+                    // Stage 3; there are no CLI sessions to list.
+                    ProviderKind::ChatGpt => Vec::new(),
                 };
                 sessions.sort_by(|a, b| {
                     b.updated_at
@@ -618,6 +691,10 @@ impl Backend for WakuBackend {
                             session_id,
                             VISIBLE_TURN_LIMIT,
                         )?
+                    }
+                    // ChatGPT conversation import arrives with Stage 3.
+                    ProviderResumeCursor::ChatGpt { .. } => {
+                        bail!("ChatGPT conversation import is not supported yet")
                     }
                     ProviderResumeCursor::OhMyPi {
                         session_id,
@@ -1295,8 +1372,9 @@ impl WakuBackend {
                 Ok((fork.cursor, HashMap::new()))
             }
             // Unreachable through the UI, which hides branching for providers
-            // that answer `supports_conversation_fork` with false.
-            ProviderKind::Fx | ProviderKind::Kimi => {
+            // that answer `supports_conversation_fork` with false. ChatGPT
+            // joins them: no conversations exist before Stage 3.
+            ProviderKind::Fx | ProviderKind::Kimi | ProviderKind::ChatGpt => {
                 bail!(
                     "{} cannot branch a conversation at a turn",
                     source.provider.display_name()
@@ -1523,7 +1601,8 @@ impl WakuBackend {
             )),
             // Unreachable through the UI, which hides rewinding for providers
             // that answer `supports_conversation_rollback` with false.
-            ProviderKind::Fx | ProviderKind::Kimi => {
+            // ChatGPT joins them: no conversations exist before Stage 3.
+            ProviderKind::Fx | ProviderKind::Kimi | ProviderKind::ChatGpt => {
                 bail!(
                     "{} cannot rewind a conversation to a turn",
                     source.provider.display_name()
@@ -1579,6 +1658,13 @@ impl WakuBackend {
         crate::model::provider_probe(provider, binary_override)
             .path
             .ok_or_else(|| anyhow!("{} is not installed on the daemon", provider.display_name()))
+    }
+
+    /// Daemon-owned ChatGPT session manager, created on first use so tests
+    /// and non-ChatGPT daemons never touch the credential directory.
+    fn chatgpt(&self) -> &crate::chatgpt_session::ChatGptSessionManager {
+        self.chatgpt
+            .get_or_init(crate::chatgpt_session::default_session_manager)
     }
 }
 
@@ -1862,7 +1948,12 @@ fn handle_driver_command(
         | Command::WriteTerminal { .. }
         | Command::ResizeTerminal { .. }
         | Command::CloseTerminal
-        | Command::CloseSession => {
+        | Command::CloseSession
+        | Command::ChatGptConnect
+        | Command::ChatGptPoll
+        | Command::ChatGptLogout
+        | Command::ChatGptSession
+        | Command::ChatGptDiscoverModels => {
             bail!("daemon received a command in the wrong dispatch path")
         }
     }
@@ -1874,6 +1965,155 @@ fn ensure_shell_environment() {
     REFRESHED.get_or_init(|| {
         crate::command_env::refresh_from_default_shell();
     });
+}
+
+/// Maps daemon ChatGPT state onto the client-safe wire session. Pending
+/// display material (`user_code`, verification URL) attaches only while the
+/// login is pending; authenticated state carries the public profile only.
+/// No bearer material exists in either input, so none can leak into output.
+fn chatgpt_wire_session(
+    public: &crate::chatgpt_session::PublicSession,
+    device: Option<&crate::chatgpt_protocol::DeviceCode>,
+    error: Option<String>,
+) -> waku_protocol::chatgpt::ChatGptPublicSession {
+    use crate::chatgpt_session::LoginStatus as SessionStatus;
+    use waku_protocol::chatgpt::{ChatGptLoginStatus, ChatGptPublicSession, ChatGptUserInfo};
+    let status = match public.status {
+        SessionStatus::Unauthenticated => ChatGptLoginStatus::Unauthenticated,
+        SessionStatus::Pending => ChatGptLoginStatus::Pending,
+        SessionStatus::Authenticated => ChatGptLoginStatus::Authenticated,
+        SessionStatus::Expired => ChatGptLoginStatus::Expired,
+    };
+    ChatGptPublicSession {
+        status,
+        user_code: device.map(|code| code.user_code.clone()),
+        verification_url: device.map(|code| code.verification_url.clone()),
+        interval_secs: device.map(|code| code.interval_secs),
+        expires_at_ms: device.map(|code| code.expires_at_ms),
+        user: public.user.as_ref().map(|user| ChatGptUserInfo {
+            account_id: user.account_id.clone(),
+            email: user.email.clone(),
+            name: user.name.clone(),
+            plan: user.plan.clone(),
+        }),
+        error,
+    }
+}
+
+/// Wire session for a fresh `ChatGptConnect`: pending display plus an
+/// optional safe error is impossible here, so callers pass `None`.
+fn chatgpt_pending_session(
+    code: &crate::chatgpt_protocol::DeviceCode,
+    error: Option<String>,
+) -> waku_protocol::chatgpt::ChatGptPublicSession {
+    chatgpt_wire_session(
+        &crate::chatgpt_session::PublicSession {
+            status: crate::chatgpt_session::LoginStatus::Pending,
+            user: None,
+        },
+        Some(code),
+        error,
+    )
+}
+
+/// Wire session for `ChatGptPoll`/`ChatGptSession`: re-attaches pending
+/// display data when the login is still pending, so a restarted desktop can
+/// re-render the code without starting the device flow over.
+fn chatgpt_polled_session(
+    manager: &crate::chatgpt_session::ChatGptSessionManager,
+    public: &crate::chatgpt_session::PublicSession,
+) -> waku_protocol::chatgpt::ChatGptPublicSession {
+    use crate::chatgpt_session::LoginStatus as SessionStatus;
+    let device = matches!(public.status, SessionStatus::Pending)
+        .then(|| manager.pending_login_display().ok().flatten())
+        .flatten();
+    chatgpt_wire_session(public, device.as_ref(), None)
+}
+
+/// Converts a typed ChatGPT error into a client-safe RPC error. The full
+/// code and HTTP status go to daemon stderr for diagnostics; user-facing
+/// text is static per category. Raw server bodies are never retained by the
+/// session layer, so there is nothing credential-adjacent to scrub here —
+/// and `ChatGptError` messages by construction interpolate no secrets.
+fn chatgpt_rpc_error(error: crate::chatgpt_protocol::ChatGptError) -> anyhow::Error {
+    eprintln!(
+        "chatgpt request failed: kind={:?} code={:?} status={:?}",
+        chatgpt_error_kind(&error),
+        error.code,
+        error.status
+    );
+    anyhow!(chatgpt_safe_message(&error))
+}
+
+/// Maps a typed ChatGPT error onto the client-safe [`ChatGptErrorKind`]
+/// taxonomy the UI may branch on. HTTP 429 wins over the code: rate limiting
+/// is a response status, not an error domain. Raw server bodies never reach
+/// this point (the session layer drops them), so the mapping needs no
+/// scrubbing — and `ChatGptError` messages interpolate no secrets.
+fn chatgpt_error_kind(
+    error: &crate::chatgpt_protocol::ChatGptError,
+) -> waku_protocol::chatgpt::ChatGptErrorKind {
+    use crate::chatgpt_protocol::ChatGptErrorCode as Code;
+    use waku_protocol::chatgpt::ChatGptErrorKind as Kind;
+    if error.status == Some(429) {
+        return Kind::RateLimited;
+    }
+    match error.code {
+        Code::DeviceCodeDisabled | Code::DeviceCodeRequestFailed | Code::TokenExchangeFailed => {
+            Kind::AuthenticationFailed
+        }
+        Code::AuthorizationExpired => Kind::AuthorizationExpired,
+        Code::TokenRefreshFailed | Code::RefreshTokenInvalid | Code::NotAuthenticated => {
+            Kind::SessionExpired
+        }
+        Code::NetworkError => Kind::NetworkError,
+        Code::ModelsRequestFailed => Kind::ModelDiscoveryFailed,
+        Code::ResponsesRequestFailed
+        | Code::InvalidRequest
+        | Code::InvalidResponse
+        | Code::StorageError => Kind::ServiceUnavailable,
+    }
+}
+
+fn chatgpt_safe_message(error: &crate::chatgpt_protocol::ChatGptError) -> String {
+    use crate::chatgpt_protocol::ChatGptErrorCode as Code;
+    match error.code {
+        Code::DeviceCodeDisabled => {
+            "Device login is not available for this ChatGPT service".to_owned()
+        }
+        Code::DeviceCodeRequestFailed => "Could not start ChatGPT sign-in".to_owned(),
+        Code::AuthorizationExpired => {
+            "ChatGPT authorization expired before sign-in completed. Try again".to_owned()
+        }
+        Code::TokenExchangeFailed => "ChatGPT sign-in failed. Try again".to_owned(),
+        Code::TokenRefreshFailed => "Could not refresh the ChatGPT session".to_owned(),
+        Code::RefreshTokenInvalid => "ChatGPT session expired. Sign in again".to_owned(),
+        Code::NotAuthenticated => "ChatGPT is not connected".to_owned(),
+        Code::NetworkError => "Could not reach the ChatGPT service".to_owned(),
+        Code::ModelsRequestFailed => "Could not load ChatGPT models".to_owned(),
+        Code::ResponsesRequestFailed => "ChatGPT request failed".to_owned(),
+        Code::InvalidRequest => "ChatGPT request was rejected".to_owned(),
+        Code::InvalidResponse => "ChatGPT sent an unexpected response".to_owned(),
+        Code::StorageError => "Could not read the ChatGPT session".to_owned(),
+    }
+}
+
+/// Builds picker-ready catalog models from discovered slugs. The first slug
+/// becomes the default so the picker has a selection before the user picks.
+/// No reasoning/service-tier menus: the `/models` endpoint reports slugs
+/// only, and inventing capabilities would offer what the account may lack.
+fn chatgpt_catalog_models(slugs: &[String]) -> Vec<crate::model::ProviderModel> {
+    slugs
+        .iter()
+        .enumerate()
+        .map(|(index, slug)| {
+            let model = crate::model::ProviderModel::new(
+                slug.clone(),
+                crate::model_catalog::display_name_from_slug(slug),
+            );
+            if index == 0 { model.default() } else { model }
+        })
+        .collect()
 }
 
 fn decode_enum<T: DeserializeOwned>(value: &str) -> anyhow::Result<T> {
@@ -2289,5 +2529,160 @@ mod tests {
             DriverEvent::PromptSubmitted { message, turn_id: decoded_turn, message_id: decoded_message }
                 if message == "ship it" && decoded_turn == turn_id && decoded_message == message_id
         ));
+    }
+
+    fn chatgpt_manager_session(
+        status: crate::chatgpt_session::LoginStatus,
+    ) -> crate::chatgpt_session::PublicSession {
+        crate::chatgpt_session::PublicSession {
+            status,
+            user: Some(crate::chatgpt_protocol::ChatGptUser {
+                account_id: "acct-1".to_owned(),
+                email: Some("user@example.com".to_owned()),
+                name: None,
+                plan: Some("plus".to_owned()),
+            }),
+        }
+    }
+
+    #[test]
+    fn chatgpt_wire_session_maps_all_states_without_credentials() {
+        use crate::chatgpt_session::LoginStatus as SessionStatus;
+        use waku_protocol::chatgpt::ChatGptLoginStatus;
+        let code = crate::chatgpt_protocol::DeviceCode::new(
+            "device-id".to_owned(),
+            "ABCD-1234".to_owned(),
+            "https://auth.openai.com/codex/device".to_owned(),
+            5,
+            99_000,
+        )
+        .unwrap();
+
+        // Pending attaches display material for the code screen.
+        let pending = chatgpt_wire_session(
+            &chatgpt_manager_session(SessionStatus::Pending),
+            Some(&code),
+            None,
+        );
+        assert_eq!(pending.status, ChatGptLoginStatus::Pending);
+        assert_eq!(pending.user_code.as_deref(), Some("ABCD-1234"));
+        assert!(pending.verification_url.is_some());
+        assert_eq!(pending.interval_secs, Some(5));
+        assert!(pending.user.is_some());
+
+        // Authenticated carries the profile only — no code, no tokens.
+        let authenticated = chatgpt_wire_session(
+            &chatgpt_manager_session(SessionStatus::Authenticated),
+            None,
+            None,
+        );
+        assert_eq!(authenticated.status, ChatGptLoginStatus::Authenticated);
+        assert_eq!(
+            authenticated
+                .user
+                .as_ref()
+                .and_then(|user| user.email.as_deref()),
+            Some("user@example.com")
+        );
+        assert!(authenticated.user_code.is_none());
+
+        // Expired and unauthenticated carry neither.
+        for status in [SessionStatus::Expired, SessionStatus::Unauthenticated] {
+            let wire = chatgpt_wire_session(&chatgpt_manager_session(status), None, None);
+            assert!(wire.user_code.is_none());
+            assert!(wire.verification_url.is_none());
+        }
+
+        // No wire shape may name a credential field.
+        for wire in [pending, authenticated] {
+            let text = serde_json::to_string(&wire).unwrap();
+            for forbidden in [
+                "access_token",
+                "accessToken",
+                "refresh_token",
+                "refreshToken",
+                "authorization_code",
+                "code_verifier",
+                "device_auth_id",
+                "deviceAuthId",
+            ] {
+                assert!(!text.contains(forbidden), "wire leaks {forbidden}");
+            }
+        }
+    }
+
+    #[test]
+    fn chatgpt_safe_errors_cover_every_code_with_static_text() {
+        use crate::chatgpt_protocol::{ChatGptError, ChatGptErrorCode};
+        let cases = [
+            (ChatGptErrorCode::DeviceCodeDisabled, "not available"),
+            (ChatGptErrorCode::DeviceCodeRequestFailed, "Could not start"),
+            (
+                ChatGptErrorCode::AuthorizationExpired,
+                "expired before sign-in",
+            ),
+            (ChatGptErrorCode::TokenExchangeFailed, "sign-in failed"),
+            (ChatGptErrorCode::TokenRefreshFailed, "refresh"),
+            (ChatGptErrorCode::RefreshTokenInvalid, "expired"),
+            (ChatGptErrorCode::NotAuthenticated, "not connected"),
+            (ChatGptErrorCode::NetworkError, "Could not reach"),
+            (ChatGptErrorCode::ModelsRequestFailed, "models"),
+            (ChatGptErrorCode::ResponsesRequestFailed, "request failed"),
+            (ChatGptErrorCode::InvalidRequest, "rejected"),
+            (ChatGptErrorCode::InvalidResponse, "unexpected"),
+            (ChatGptErrorCode::StorageError, "Could not read"),
+        ];
+        for (code, fragment) in cases {
+            let message = chatgpt_safe_message(&ChatGptError::new(code, "upstream detail"));
+            assert!(
+                message.contains(fragment),
+                "{code:?} renders as {message:?}"
+            );
+            // Upstream detail never passes through to the client message.
+            assert!(!message.contains("upstream detail"));
+        }
+    }
+
+    #[test]
+    fn chatgpt_error_kinds_cover_every_code_with_status_override() {
+        use crate::chatgpt_protocol::{ChatGptError, ChatGptErrorCode as Code};
+        use waku_protocol::chatgpt::ChatGptErrorKind as Kind;
+        let cases = [
+            (Code::DeviceCodeDisabled, Kind::AuthenticationFailed),
+            (Code::DeviceCodeRequestFailed, Kind::AuthenticationFailed),
+            (Code::TokenExchangeFailed, Kind::AuthenticationFailed),
+            (Code::AuthorizationExpired, Kind::AuthorizationExpired),
+            (Code::TokenRefreshFailed, Kind::SessionExpired),
+            (Code::RefreshTokenInvalid, Kind::SessionExpired),
+            (Code::NotAuthenticated, Kind::SessionExpired),
+            (Code::NetworkError, Kind::NetworkError),
+            (Code::ModelsRequestFailed, Kind::ModelDiscoveryFailed),
+            (Code::ResponsesRequestFailed, Kind::ServiceUnavailable),
+            (Code::InvalidRequest, Kind::ServiceUnavailable),
+            (Code::InvalidResponse, Kind::ServiceUnavailable),
+            (Code::StorageError, Kind::ServiceUnavailable),
+        ];
+        for (code, kind) in cases {
+            assert_eq!(chatgpt_error_kind(&ChatGptError::new(code, "detail")), kind);
+            // HTTP 429 wins over the code: throttling is a status, not a domain.
+            assert_eq!(
+                chatgpt_error_kind(&ChatGptError::new(code, "detail").with_status(429)),
+                Kind::RateLimited
+            );
+            // The kind itself serializes camelCase for any future wire use.
+            let text = serde_json::to_string(&kind).unwrap();
+            assert!(!text.contains("token"), "kind leaks credential text");
+        }
+    }
+
+    #[test]
+    fn chatgpt_catalog_models_mark_first_default_with_display_names() {
+        let models = chatgpt_catalog_models(&["gpt-5.5".to_owned(), "gpt-5.4".to_owned()]);
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "gpt-5.5");
+        assert!(models[0].is_default);
+        assert!(!models[1].is_default);
+        assert!(!models[0].name.is_empty());
+        assert!(chatgpt_catalog_models(&[]).is_empty());
     }
 }

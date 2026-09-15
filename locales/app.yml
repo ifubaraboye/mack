@@ -161,7 +161,7 @@ settings.general_keywords:
 settings.appearance_keywords:
   en: appearance theme system light dark language english chinese simplified font size text editor
 settings.providers_keywords:
-  en: providers agents models cli version install detect claude codex cursor opencode opencode2 amp grok pi
+  en: providers agents models cli version install detect claude codex chatgpt cursor opencode opencode2 amp grok pi
 settings.skills:
   en: Skills
 settings.skills_keywords:
@@ -422,6 +422,49 @@ providers.checked_minutes_ago:
   en: Checked %{count}m ago
 providers.checked_hours_ago:
   en: Checked %{count}h ago
+
+chatgpt.connect:
+  en: Connect ChatGPT
+chatgpt.connecting:
+  en: Connecting…
+chatgpt.sign_in_again:
+  en: Sign in again
+chatgpt.disconnect:
+  en: Disconnect
+chatgpt.cancel:
+  en: Cancel
+chatgpt.copy_code:
+  en: Copy code
+chatgpt.open_browser:
+  en: Open in browser
+chatgpt.refresh_models:
+  en: Refresh models
+chatgpt.description:
+  en: Use your own ChatGPT subscription in Waku. Authorization happens in your external browser, and the session stays on this computer
+chatgpt.not_connected:
+  en: Not connected
+chatgpt.waiting:
+  en: Waiting for authorization
+chatgpt.waiting_description:
+  en: Open the verification page in your browser and enter this code to connect your ChatGPT account
+chatgpt.connected:
+  en: Connected
+chatgpt.connected_as:
+  en: Connected as %{email}
+chatgpt.expired:
+  en: Session expired
+chatgpt.expired_description:
+  en: Your ChatGPT session expired. Sign in again to keep using your subscription
+chatgpt.session_failed:
+  en: Could not read the ChatGPT session
+chatgpt.connect_failed:
+  en: Could not start ChatGPT sign-in
+chatgpt.poll_failed:
+  en: ChatGPT authorization check failed
+chatgpt.logout_failed:
+  en: Could not sign out of ChatGPT
+chatgpt.models_failed:
+  en: Could not load ChatGPT models
 
 computer_use.allow_apps:
   en: Let Waku use apps

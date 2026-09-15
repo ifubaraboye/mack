@@ -263,6 +263,17 @@ pub enum Command {
     },
     CloseTerminal,
     CloseSession,
+    /// Start a ChatGPT device login. Returns the user code and verification
+    /// URL the user completes in their external browser.
+    ChatGptConnect,
+    /// Advance the ChatGPT login by one poll/refresh, or report current state.
+    ChatGptPoll,
+    /// Delete the stored ChatGPT session.
+    ChatGptLogout,
+    /// Read ChatGPT session state without touching the network.
+    ChatGptSession,
+    /// Discover the signed-in account's ChatGPT models (refreshing first).
+    ChatGptDiscoverModels,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -457,6 +468,12 @@ pub enum ResponsePayload {
     Workspace {
         result: WorkspaceResult,
     },
+    ChatGptSession {
+        session: crate::chatgpt::ChatGptPublicSession,
+    },
+    ChatGptModels {
+        models: Vec<crate::model::ProviderModel>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -567,6 +584,50 @@ mod tests {
             "01900000-0000-7000-8000-000000000001"
         );
         assert_eq!(load["cwd"], "/tmp/project");
+    }
+
+    #[test]
+    fn chatgpt_commands_carry_no_credential_material() {
+        // Connect/Poll/Logout/Session/DiscoverModels take no arguments, so by
+        // construction the client can send no secret. Assert the wire shapes
+        // stay argument-free and name no credential field.
+        let forbidden = [
+            "access_token",
+            "accessToken",
+            "refresh_token",
+            "refreshToken",
+            "authorization_code",
+            "authorizationCode",
+            "code_verifier",
+            "codeVerifier",
+            "device_auth_id",
+            "deviceAuthId",
+        ];
+        let commands = [
+            Command::ChatGptConnect,
+            Command::ChatGptPoll,
+            Command::ChatGptLogout,
+            Command::ChatGptSession,
+            Command::ChatGptDiscoverModels,
+        ];
+        for command in commands {
+            let json = serde_json::to_value(&command).unwrap();
+            let text = json.to_string();
+            for field in forbidden {
+                assert!(!text.contains(field), "command wire leaks {field}");
+            }
+            // Round-trips keep the daemon/client dispatch aligned.
+            let back: Command = serde_json::from_value(json).unwrap();
+            assert_eq!(format!("{back:?}"), format!("{command:?}"));
+        }
+        // The session payload is the public shape only; models carry slugs.
+        let session = ResponsePayload::ChatGptSession {
+            session: crate::chatgpt::ChatGptPublicSession::default(),
+        };
+        let text = serde_json::to_value(&session).unwrap().to_string();
+        for field in forbidden {
+            assert!(!text.contains(field), "session payload leaks {field}");
+        }
     }
 
     #[test]

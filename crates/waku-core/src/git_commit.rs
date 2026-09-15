@@ -393,6 +393,11 @@ fn agent_arguments(
                 push(&mut args, effort);
             }
         }
+        // ChatGPT has no commit-message CLI: generation is daemon-API based
+        // and arrives with Stage 3. The trailing prompt push below keeps the
+        // every-provider-carries-the-prompt invariant; this arm is
+        // unreachable until a ChatGPT invocation binary exists.
+        ProviderKind::ChatGpt => {}
     }
     push(&mut args, prompt);
     args
@@ -823,6 +828,11 @@ mod tests {
                     assert!(has_pair(&args, "--prompt", prompt));
                     assert!(has_pair(&args, "--output-format", "text"));
                     assert!(has_pair(&args, "--model", "model"));
+                }
+                // No ChatGPT commit CLI exists yet; the shared trailing
+                // prompt push is the whole argument list.
+                ProviderKind::ChatGpt => {
+                    assert!(has(&args, prompt));
                 }
             }
         }
