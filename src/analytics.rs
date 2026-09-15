@@ -240,10 +240,10 @@ impl Event {
 }
 
 fn analytics_available() -> bool {
-    !cfg!(debug_assertions)
-        && !env_flag("WAKU_DISABLE_ANALYTICS")
-        && ENDPOINT.is_some_and(|value| !value.trim().is_empty())
-        && WEBSITE_ID.is_some_and(|value| !value.trim().is_empty())
+    // Anonymous analytics are intentionally disabled. Keep the surrounding
+    // handle and event API as a no-op so existing call sites remain harmless
+    // and old persisted preferences remain backward-compatible.
+    false
 }
 
 fn env_flag(name: &str) -> bool {

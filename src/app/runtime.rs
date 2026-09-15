@@ -1597,10 +1597,11 @@ impl Waku {
         changed
     }
 
-    /// Whether the provider can back a new session: installed and not switched
-    /// off in the Providers settings.
+    /// Whether the provider can back a new session: user-visible, installed
+    /// and not switched off in the Providers settings.
     pub(super) fn provider_enabled(&self, provider: ProviderKind) -> bool {
-        !self.state.disabled_providers.contains(&provider)
+        provider.is_user_visible()
+            && !self.state.disabled_providers.contains(&provider)
             && self
                 .provider_probe(provider)
                 .is_some_and(|probe| probe.installed)
@@ -2802,7 +2803,7 @@ impl Waku {
                 service_tier,
                 context_window,
                 agent_preset,
-                computer_use_enabled: self.state.computer_use_enabled,
+                computer_use_enabled: false,
                 provider_cursor: session.provider_cursor.clone(),
             },
             event_wake: self.event_wake_tx.clone(),

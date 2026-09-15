@@ -428,15 +428,6 @@ impl Waku {
         let updater_available = cx
             .try_global::<crate::updater::UpdaterState>()
             .is_some_and(|updater| updater.0.is_some());
-        let analytics_enabled = self.state.analytics_enabled;
-        let analytics_toggle = toggle_switch(
-            "anonymous-analytics-toggle",
-            analytics_enabled,
-            false,
-            theme,
-            cx,
-            move |this, _, cx| this.set_analytics_enabled(!analytics_enabled, cx),
-        );
         div()
             .child(
                 div()
@@ -461,84 +452,6 @@ impl Waku {
                             .text_color(theme.text_secondary)
                             .child(tr!("settings.local_by_default_description")),
                     ),
-            )
-            .child(
-                div()
-                    .mt(px(15.0))
-                    .w_full()
-                    .min_h(px(60.0))
-                    .px(px(20.0))
-                    .py(px(12.0))
-                    .rounded(px(13.0))
-                    .bg(theme.raised)
-                    .flex()
-                    .items_center()
-                    .gap(px(24.0))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(sp(13.5))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.text)
-                                    .child(tr!("settings.share_anonymous_usage_data")),
-                            )
-                            .child(
-                                div()
-                                    .mt(px(5.0))
-                                    .text_size(sp(12.5))
-                                    .line_height(sp(18.0))
-                                    .text_color(theme.text_secondary)
-                                    .child(tr!("settings.share_anonymous_usage_data_description")),
-                            ),
-                    )
-                    .child(analytics_toggle),
-            )
-            .child(
-                div()
-                    .mt(px(15.0))
-                    .w_full()
-                    .min_h(px(60.0))
-                    .px(px(20.0))
-                    .py(px(12.0))
-                    .rounded(px(13.0))
-                    .bg(theme.raised)
-                    .flex()
-                    .items_center()
-                    .gap(px(24.0))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(sp(13.5))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.text)
-                                    .child(tr!("settings.render_math")),
-                            )
-                            .child(
-                                div()
-                                    .mt(px(5.0))
-                                    .text_size(sp(12.5))
-                                    .line_height(sp(18.0))
-                                    .text_color(theme.text_secondary)
-                                    .child(tr!("settings.render_math_description")),
-                            ),
-                    )
-                    .child(toggle_switch(
-                        "render-math-toggle",
-                        self.state.render_math,
-                        false,
-                        theme,
-                        cx,
-                        {
-                            let enabled = self.state.render_math;
-                            move |this, _, cx| this.set_render_math(!enabled, cx)
-                        },
-                    )),
             )
             .when(updater_available, |column| {
                 let enabled = self.automatic_updates_enabled;
@@ -585,14 +498,16 @@ impl Waku {
                         .child(toggle),
                 )
             })
+            .child(
+                div()
+                    .mt(px(24.0))
+                    .text_size(sp(15.0))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.text)
+                    .child(tr!("settings.appearance")),
+            )
+            .child(self.render_appearance_settings(cx))
             .into_any_element()
-    }
-
-    fn set_analytics_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        self.state.analytics_enabled = enabled;
-        self.analytics.set_enabled(enabled);
-        self.save();
-        cx.notify();
     }
 
     fn set_automatic_updates_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -1541,16 +1456,6 @@ impl Waku {
             .into_any_element()
     }
 
-    fn set_render_math(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        if self.state.render_math == enabled {
-            return;
-        }
-        self.state.render_math = enabled;
-        self.remeasure_font_sized_surfaces();
-        self.save();
-        cx.notify();
-    }
-
     fn set_ui_font_size(&mut self, size: f32, window: &mut Window, cx: &mut Context<Self>) {
         let size = waku_client::persistence::sanitized_ui_font_size(size);
         if self.state.ui_font_size == size {
@@ -1630,8 +1535,12 @@ impl Waku {
             }));
 
         let mut rows = div().mt(px(4.0)).flex().flex_col();
-        let provider_count = ProviderKind::ALL.len();
-        for (index, kind) in ProviderKind::ALL.into_iter().enumerate() {
+        let visible_providers: Vec<ProviderKind> = ProviderKind::ALL
+            .into_iter()
+            .filter(|kind| kind.is_user_visible())
+            .collect();
+        let provider_count = visible_providers.len();
+        for (index, kind) in visible_providers.into_iter().enumerate() {
             let probe = self.provider_probe(kind);
             let installed = probe.is_some_and(|probe| probe.installed);
             let binary_path = probe

@@ -14,6 +14,7 @@ pub const FILE_INDEX_CAP: usize = 50_000;
 pub enum TriggerKind {
     Command,
     File,
+    Skill,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,6 +47,18 @@ pub fn detect_trigger(text: &str, cursor: usize) -> Option<Trigger> {
             index + text[index..].chars().next().unwrap().len_utf8()
         });
     let token = &text[token_start..cursor];
+    if let Some(rest) = token.strip_prefix('$') {
+        let query = rest.strip_prefix('(').unwrap_or(rest);
+        let query = query.strip_suffix(')').unwrap_or(query);
+        if !query.chars().any(char::is_whitespace) {
+            return Some(Trigger {
+                kind: TriggerKind::Skill,
+                query: query.to_owned(),
+                range: token_start..cursor,
+            });
+        }
+        return None;
+    }
     Some(Trigger {
         kind: TriggerKind::File,
         query: token.strip_prefix('@')?.to_owned(),
@@ -84,6 +97,23 @@ pub fn merge_reported_commands(
 /// Build the slash-prefixed text shown for an autocomplete command.
 pub fn command_composer_text(command: &SlashCommand) -> String {
     format!("/{}", command.name)
+}
+
+/// Build the `$(name)` text inserted for an autocomplete skill.
+pub fn skill_composer_text(command: &SlashCommand) -> String {
+    format!("$({})", command.name)
+}
+
+/// Parse a `$(name args)` skill invocation. Returns `(name, args)`.
+pub fn parse_skill_invocation(prompt: &str) -> Option<(&str, &str)> {
+    let rest = prompt.strip_prefix("$(")?;
+    let end = rest.find(')')?;
+    let name = &rest[..end];
+    if name.is_empty() || name.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let args = rest[end + 1..].trim();
+    Some((name, args))
 }
 
 /// Whether the composer submitted Waku's global terminal-session picker.
@@ -243,6 +273,9 @@ pub fn resolved_submission(
 }
 
 /// Resolve only provider-native skill syntax, without expanding templates.
+///
+/// Accepts both `/name args` and `$(name) args` forms; the latter is what the
+/// `$` picker inserts.
 pub fn resolved_skill_submission(
     provider: ProviderKind,
     prompt: &str,
@@ -250,14 +283,28 @@ pub fn resolved_skill_submission(
 ) -> Option<String> {
     if !matches!(
         provider,
-        ProviderKind::Codex | ProviderKind::Fx | ProviderKind::Pi | ProviderKind::OhMyPi
+        ProviderKind::Codex
+            | ProviderKind::Fx
+            | ProviderKind::Pi
+            | ProviderKind::OhMyPi
+            | ProviderKind::Claude
+            | ProviderKind::OpenCode
+            | ProviderKind::OpenCode2
     ) {
         return None;
     }
-    let invocation = prompt.strip_prefix('/')?;
+    let invocation = if let Some((name, args)) = parse_skill_invocation(prompt.trim()) {
+        if args.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{name} {args}")
+        }
+    } else {
+        prompt.strip_prefix('/')?.to_owned()
+    };
     let name = invocation
         .split_once(char::is_whitespace)
-        .map_or(invocation, |(name, _)| name);
+        .map_or(invocation.as_str(), |(name, _)| name);
     if !commands
         .iter()
         .any(|command| command.name == name && command.scope == CommandScope::Skill)
@@ -267,6 +314,9 @@ pub fn resolved_skill_submission(
     Some(match provider {
         ProviderKind::Codex | ProviderKind::Fx => format!("${invocation}"),
         ProviderKind::Pi | ProviderKind::OhMyPi => format!("/skill:{invocation}"),
+        ProviderKind::Claude | ProviderKind::OpenCode | ProviderKind::OpenCode2 => {
+            format!("/skill:{invocation}")
+        }
         _ => unreachable!("non-native skill providers returned above"),
     })
 }
@@ -323,6 +373,10 @@ pub fn filter_commands(
     query: &str,
     matcher: &mut Matcher,
 ) -> Vec<Scored<SlashCommand>> {
+    let commands = commands
+        .iter()
+        .filter(|command| command.scope != CommandScope::Skill)
+        .collect::<Vec<_>>();
     let names = commands
         .iter()
         .map(|command| command.name.as_str())
@@ -330,7 +384,30 @@ pub fn filter_commands(
     filter_scored(&names, query, matcher, FILTER_CAP)
         .into_iter()
         .map(|(index, positions)| Scored {
-            item: commands[index].clone(),
+            item: (*commands[index]).clone(),
+            positions,
+        })
+        .collect()
+}
+
+/// Fuzzy-filter skills only (commands with `Skill` scope) for the `$` picker.
+pub fn filter_skills(
+    commands: &[SlashCommand],
+    query: &str,
+    matcher: &mut Matcher,
+) -> Vec<Scored<SlashCommand>> {
+    let skills = commands
+        .iter()
+        .filter(|command| command.scope == CommandScope::Skill)
+        .collect::<Vec<_>>();
+    let names = skills
+        .iter()
+        .map(|command| command.name.as_str())
+        .collect::<Vec<_>>();
+    filter_scored(&names, query, matcher, FILTER_CAP)
+        .into_iter()
+        .map(|(index, positions)| Scored {
+            item: (*skills[index]).clone(),
             positions,
         })
         .collect()
@@ -481,8 +558,9 @@ mod tests {
                 ProviderKind::Claude,
                 "/mattpocock-skills:to-spec carefully",
                 std::slice::from_ref(&skill)
-            ),
-            None
+            )
+            .as_deref(),
+            Some("/skill:mattpocock-skills:to-spec carefully")
         );
     }
 
@@ -543,6 +621,55 @@ mod tests {
         );
         assert_eq!(parse("/goals"), None);
         assert_eq!(parse("ship /goal"), None);
+    }
+
+    #[test]
+    fn dollar_trigger_opens_the_skill_picker_mid_prompt() {
+        let trigger = detect_trigger("use $cloud", 11).expect("skill trigger");
+        assert_eq!(trigger.kind, TriggerKind::Skill);
+        assert_eq!(trigger.query, "cloud");
+        assert_eq!(trigger.range, 4..11);
+
+        let trigger = detect_trigger("use $(cloud", 12).expect("parens trigger");
+        assert_eq!(trigger.kind, TriggerKind::Skill);
+        assert_eq!(trigger.query, "cloud");
+
+        // `$` mid-sentence still completes; whitespace ends the token.
+        assert!(detect_trigger("a $ b", 4).is_none());
+        // `@` mentions keep working.
+        let trigger = detect_trigger("see @src/", 9).expect("file trigger");
+        assert_eq!(trigger.kind, TriggerKind::File);
+    }
+
+    #[test]
+    fn skill_picker_filters_to_skills_and_inserts_dollar_form() {
+        let skill = command("deploy", CommandScope::Skill);
+        let project = command("deploy", CommandScope::Project);
+        let commands = [skill.clone(), project];
+        let mut matcher = matcher();
+        let rows = filter_skills(&commands, "dep", &mut matcher);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].item.name, "deploy");
+        assert_eq!(skill_composer_text(&skill), "$(deploy)");
+        assert_eq!(
+            parse_skill_invocation("$(deploy production)"),
+            Some(("deploy", "production"))
+        );
+    }
+
+    #[test]
+    fn dollar_skill_submission_resolves_like_slash() {
+        let skill = command("deploy", CommandScope::Skill);
+        let commands = std::slice::from_ref(&skill);
+        assert_eq!(
+            resolved_submission(ProviderKind::Codex, "$(deploy production)", commands).as_deref(),
+            Some("$deploy production")
+        );
+        assert_eq!(
+            resolved_submission(ProviderKind::OpenCode, "$(deploy production)", commands)
+                .as_deref(),
+            Some("/skill:deploy production")
+        );
     }
 
     #[test]

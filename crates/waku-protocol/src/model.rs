@@ -164,6 +164,15 @@ impl ProviderKind {
                 | Self::Pi
         )
     }
+
+    /// Providers shown in the picker and settings. Hidden providers keep
+    /// working for existing sessions but are not offered for new work.
+    pub fn is_user_visible(self) -> bool {
+        matches!(
+            self,
+            Self::Claude | Self::Codex | Self::OpenCode | Self::OpenCode2
+        )
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]

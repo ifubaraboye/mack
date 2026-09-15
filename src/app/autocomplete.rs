@@ -1,4 +1,5 @@
-//! The composer's autocompletion popup: slash commands and `@` file mentions.
+//! The composer's autocompletion popup: slash commands, `@` file mentions,
+//! and `$` skill picker.
 //!
 //! The popup is a pure view over prefetched data. Command and file indexes are
 //! discovered on the background executor into `QueryCache`s and mirrored into
@@ -55,6 +56,7 @@ pub fn init(cx: &mut App) {
 pub(super) enum AutocompleteRow {
     Command(Scored<SlashCommand>),
     File(Scored<FileEntry>),
+    Skill(Scored<SlashCommand>),
 }
 
 /// Filter results for one (kind, query, source index) — the popup's rows are
@@ -288,7 +290,9 @@ impl Waku {
     /// cursor and `enter` so an index always means the same row everywhere.
     fn autocomplete_rows(&self, trigger: &Trigger) -> Rc<Vec<AutocompleteRow>> {
         let source = match trigger.kind {
-            TriggerKind::Command => Rc::as_ptr(&self.slash_command_index) as usize,
+            TriggerKind::Command | TriggerKind::Skill => {
+                Rc::as_ptr(&self.slash_command_index) as usize
+            }
             TriggerKind::File => Rc::as_ptr(&self.mention_file_index) as usize,
         };
         {
@@ -308,6 +312,14 @@ impl Waku {
             )
             .into_iter()
             .map(AutocompleteRow::Command)
+            .collect::<Vec<_>>(),
+            TriggerKind::Skill => composer_complete::filter_skills(
+                &self.slash_command_index,
+                &trigger.query,
+                &mut matcher,
+            )
+            .into_iter()
+            .map(AutocompleteRow::Skill)
             .collect::<Vec<_>>(),
             TriggerKind::File => composer_complete::filter_files(
                 &self.mention_file_index,
@@ -375,6 +387,10 @@ impl Waku {
                 let composer_text = composer_complete::command_composer_text(&scored.item);
                 format!("{composer_text} ")
             }
+            AutocompleteRow::Skill(scored) => {
+                let composer_text = composer_complete::skill_composer_text(&scored.item);
+                format!("{composer_text} ")
+            }
             AutocompleteRow::File(scored) => format!("@{} ", scored.item.path),
         };
         if matches!(row, AutocompleteRow::Command(_)) {
@@ -406,7 +422,7 @@ impl Waku {
         let trigger = self.composer_trigger(window, cx)?;
         let rows = self.autocomplete_rows(&trigger);
         let loading = match trigger.kind {
-            TriggerKind::Command => self.slash_command_index_loading,
+            TriggerKind::Command | TriggerKind::Skill => self.slash_command_index_loading,
             TriggerKind::File => self.mention_file_index_loading,
         };
         if rows.is_empty() && !loading {
@@ -578,6 +594,47 @@ impl Waku {
                             .child(command.scope.label()),
                     )
                     .into_any_element()
+            }
+            AutocompleteRow::Skill(scored) => {
+                let command = &scored.item;
+                let name_ranges = highlight_byte_ranges(&command.name, &scored.positions, 0);
+                let mut name_font = font.clone();
+                name_font.weight = FontWeight::MEDIUM;
+                base.child(
+                    div()
+                        .flex_none()
+                        .max_w(px(260.0))
+                        .truncate()
+                        .text_size(sp(12.5))
+                        .child(matched_text(
+                            command.name.clone(),
+                            name_ranges,
+                            theme.text,
+                            theme.accent,
+                            name_font,
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(sp(12.5))
+                        .text_color(theme.text_tertiary)
+                        .child(SharedString::from(command.description.clone())),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .text_size(sp(12.5))
+                        .text_color(theme.text_tertiary)
+                        .child(icon("icons/package.svg", 12.0, theme.text_tertiary))
+                        .child(SharedString::from("Provider Skill")),
+                )
+                .into_any_element()
             }
             AutocompleteRow::File(scored) => {
                 let file = &scored.item;

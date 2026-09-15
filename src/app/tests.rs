@@ -1874,47 +1874,40 @@ fn settings_search_filters_pages_for_arrow_cycling() {
             .collect::<Vec<_>>()
     };
 
-    // An empty query keeps every page in sidebar order, so the arrows cycle
-    // the full navigation even before anything is typed.
-    let mut all_pages = vec![
+    // An empty query keeps every visible page in sidebar order, so the
+    // arrows cycle the full navigation even before anything is typed.
+    // Skills, Daemon and ComputerUse are hidden (skills live in the `$`
+    // composer picker instead).
+    let all_pages = vec![
         SettingsPage::General,
-        SettingsPage::Appearance,
         SettingsPage::Providers,
-        SettingsPage::Skills,
         SettingsPage::Usage,
-        SettingsPage::Daemon,
     ];
-    if cfg!(debug_assertions) {
-        all_pages.push(SettingsPage::ComputerUse);
-    }
     assert_eq!(pages(""), all_pages);
 
-    assert_eq!(pages("theme"), vec![SettingsPage::Appearance]);
-    assert_eq!(pages("skill"), vec![SettingsPage::Skills]);
+    assert_eq!(pages("theme"), vec![]);
+    assert_eq!(pages("skill"), vec![]);
 
     // A keyword shared across pages keeps them all reachable.
-    let mut codex_pages = vec![
-        SettingsPage::Providers,
-        SettingsPage::Skills,
-        SettingsPage::Usage,
-    ];
-    if cfg!(debug_assertions) {
-        codex_pages.push(SettingsPage::ComputerUse);
-    }
+    let codex_pages = vec![SettingsPage::Providers, SettingsPage::Usage];
     assert_eq!(pages("codex"), codex_pages);
 
     assert_eq!(pages("no such setting"), vec![]);
 }
 
 #[test]
-fn computer_use_navigation_is_debug_only() {
+fn hidden_settings_pages_stay_out_of_navigation() {
     use super::SettingsPage;
 
     assert!(SettingsPage::General.is_visible_in_navigation());
-    assert_eq!(
-        SettingsPage::ComputerUse.is_visible_in_navigation(),
-        cfg!(debug_assertions)
-    );
+    assert!(SettingsPage::Providers.is_visible_in_navigation());
+    assert!(SettingsPage::Usage.is_visible_in_navigation());
+    assert!(!SettingsPage::Appearance.is_visible_in_navigation());
+    // Computer Use, Daemon and Skills are hidden; skills are invoked via
+    // the `$` picker in the composer instead.
+    assert!(!SettingsPage::ComputerUse.is_visible_in_navigation());
+    assert!(!SettingsPage::Daemon.is_visible_in_navigation());
+    assert!(!SettingsPage::Skills.is_visible_in_navigation());
 }
 
 #[test]
@@ -2151,5 +2144,66 @@ fn the_rail_draws_only_installed_providers_the_settings_left_on() {
         &[ProviderKind::Claude],
         Some(ProviderKind::Claude),
         ProviderKind::Claude
+    ));
+}
+
+#[test]
+fn hidden_providers_leave_the_picker_for_new_work() {
+    use super::ModelPickerTab;
+    use super::composer::{picker_rail_shows_provider, visible_picker_models};
+    use crate::model::{FavoriteModel, ProviderModel, ProviderProbe};
+
+    // Only Codex, Claude, OpenCode and OpenCode 2 are user-visible.
+    assert!(ProviderKind::Codex.is_user_visible());
+    assert!(ProviderKind::Claude.is_user_visible());
+    assert!(ProviderKind::OpenCode.is_user_visible());
+    assert!(ProviderKind::OpenCode2.is_user_visible());
+    for hidden in [
+        ProviderKind::Amp,
+        ProviderKind::Cursor,
+        ProviderKind::DeepSeek,
+        ProviderKind::Fx,
+        ProviderKind::Grok,
+        ProviderKind::Kimi,
+        ProviderKind::OhMyPi,
+        ProviderKind::Pi,
+    ] {
+        assert!(!hidden.is_user_visible());
+    }
+
+    let probe = |provider: ProviderKind| ProviderProbe {
+        provider,
+        installed: true,
+        path: Some(std::path::PathBuf::from(format!("/bin/{}", provider.id()))),
+        models: vec![ProviderModel::new("model", "model")],
+        agent_presets: Vec::new(),
+    };
+    let probes = [probe(ProviderKind::Codex), probe(ProviderKind::Pi)];
+    let favorites: Vec<FavoriteModel> = Vec::new();
+
+    // An installed but hidden provider never joins the rail or model list
+    // for new work...
+    assert!(!picker_rail_shows_provider(
+        &probes,
+        &[],
+        None,
+        ProviderKind::Pi
+    ));
+    let models = visible_picker_models(
+        &probes,
+        &favorites,
+        &[],
+        None,
+        ModelPickerTab::Provider(ProviderKind::Pi),
+        "",
+    );
+    assert!(models.is_empty());
+
+    // ...but a session already locked to it keeps working.
+    assert!(picker_rail_shows_provider(
+        &probes,
+        &[],
+        Some(ProviderKind::Pi),
+        ProviderKind::Pi
     ));
 }

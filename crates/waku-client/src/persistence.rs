@@ -580,7 +580,7 @@ impl PersistedState {
             language: self.language,
             ui_font_size: self.ui_font_size,
             code_font_size: self.code_font_size,
-            render_math: self.render_math,
+            render_math: true,
             daemon_exposure: self.daemon_exposure.clone(),
             open_in_app: self.open_in_app.clone(),
         }
@@ -617,7 +617,9 @@ impl PersistedState {
         self.language = settings.language;
         self.ui_font_size = sanitized_ui_font_size(settings.ui_font_size);
         self.code_font_size = sanitized_code_font_size(settings.code_font_size);
-        self.render_math = settings.render_math;
+        // Math rendering is always enabled; retain the persisted field only
+        // for backwards-compatible deserialization of older settings files.
+        self.render_math = true;
         self.daemon_exposure = settings.daemon_exposure;
         self.open_in_app = settings.open_in_app;
     }

@@ -222,11 +222,15 @@ enum SettingsPage {
 }
 
 impl SettingsPage {
-    /// Computer Use is still experimental, so only development builds expose
-    /// its navigation entry points. Keeping this decision on the page itself
-    /// makes the Settings sidebar and command palette use the same gate.
+    /// Computer Use, Daemon and Skills are hidden from navigation for now.
+    /// Skills are invoked via the `$` picker in the composer instead.
+    /// Keeping this decision on the page itself makes the Settings sidebar
+    /// and command palette use the same gate.
     fn is_visible_in_navigation(self) -> bool {
-        self != Self::ComputerUse || crate::computer_use::is_available()
+        !matches!(
+            self,
+            Self::ComputerUse | Self::Daemon | Self::Skills | Self::Appearance
+        )
     }
 }
 

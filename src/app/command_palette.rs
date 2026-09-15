@@ -1004,8 +1004,9 @@ impl Waku {
         ProviderKind::ALL
             .into_iter()
             .filter(|provider| {
-                *provider == self.command_palette.resume_provider
-                    || !self.state.disabled_providers.contains(provider)
+                provider.is_user_visible()
+                    && (*provider == self.command_palette.resume_provider
+                        || !self.state.disabled_providers.contains(provider))
             })
             .enumerate()
             .map(|(order, provider)| CommandPaletteItem {
@@ -1300,9 +1301,9 @@ impl Waku {
         self.selected_session()
             .map(|session| session.provider)
             .or_else(|| {
-                ProviderKind::ALL
-                    .into_iter()
-                    .find(|provider| !self.state.disabled_providers.contains(provider))
+                ProviderKind::ALL.into_iter().find(|provider| {
+                    provider.is_user_visible() && !self.state.disabled_providers.contains(provider)
+                })
             })
             .unwrap_or_default()
     }

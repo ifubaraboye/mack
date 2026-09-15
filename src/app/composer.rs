@@ -3908,6 +3908,9 @@ pub(super) fn picker_rail_shows_provider(
     locked_provider: Option<ProviderKind>,
     kind: ProviderKind,
 ) -> bool {
+    if !kind.is_user_visible() && locked_provider != Some(kind) {
+        return false;
+    }
     let installed = probes
         .iter()
         .any(|probe| probe.provider == kind && probe.installed);
@@ -3967,6 +3970,7 @@ pub(super) fn visible_picker_models(
                 .map(move |model| (probe.provider, model))
         })
         .filter(|(kind, _)| locked_provider.is_none() || locked_provider == Some(*kind))
+        .filter(|(kind, _)| kind.is_user_visible() || locked_provider == Some(*kind))
         // Switched-off providers keep serving the session already locked to
         // them, but offer nothing to new work — including favorites.
         .filter(|(kind, _)| !disabled_providers.contains(kind) || locked_provider == Some(*kind))

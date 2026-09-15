@@ -33,6 +33,7 @@ const WALK_MAX_DEPTH: usize = 8;
 pub enum TriggerKind {
     Command,
     File,
+    Skill,
 }
 
 /// An autocompletion site under the caret: the token being typed, and the byte
@@ -74,6 +75,18 @@ pub fn detect_trigger(text: &str, cursor: usize) -> Option<Trigger> {
             index + text[index..].chars().next().unwrap().len_utf8()
         });
     let token = &text[token_start..cursor];
+    if let Some(rest) = token.strip_prefix('$') {
+        let query = rest.strip_prefix('(').unwrap_or(rest);
+        let query = query.strip_suffix(')').unwrap_or(query);
+        if !query.chars().any(char::is_whitespace) {
+            return Some(Trigger {
+                kind: TriggerKind::Skill,
+                query: query.to_owned(),
+                range: token_start..cursor,
+            });
+        }
+        return None;
+    }
     let query = token.strip_prefix('@')?;
     Some(Trigger {
         kind: TriggerKind::File,
@@ -666,7 +679,22 @@ pub fn resolved_submission(
     Some(expand_command_template(template, args))
 }
 
+/// Parse a `$(name args)` skill invocation. Returns `(name, args)`.
+pub fn parse_skill_invocation(prompt: &str) -> Option<(&str, &str)> {
+    let rest = prompt.strip_prefix("$(")?;
+    let end = rest.find(')')?;
+    let name = &rest[..end];
+    if name.is_empty() || name.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let args = rest[end + 1..].trim();
+    Some((name, args))
+}
+
 /// Resolve only provider-native skill syntax, without expanding templates.
+///
+/// Accepts both `/name args` and `$(name) args` forms; the latter is what the
+/// `$` picker inserts.
 pub fn resolved_skill_submission(
     provider: ProviderKind,
     prompt: &str,
@@ -674,14 +702,28 @@ pub fn resolved_skill_submission(
 ) -> Option<String> {
     if !matches!(
         provider,
-        ProviderKind::Codex | ProviderKind::Fx | ProviderKind::Pi | ProviderKind::OhMyPi
+        ProviderKind::Codex
+            | ProviderKind::Fx
+            | ProviderKind::Pi
+            | ProviderKind::OhMyPi
+            | ProviderKind::Claude
+            | ProviderKind::OpenCode
+            | ProviderKind::OpenCode2
     ) {
         return None;
     }
-    let invocation = prompt.strip_prefix('/')?;
+    let invocation = if let Some((name, args)) = parse_skill_invocation(prompt.trim()) {
+        if args.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{name} {args}")
+        }
+    } else {
+        prompt.strip_prefix('/')?.to_owned()
+    };
     let name = match invocation.split_once(char::is_whitespace) {
         Some((name, _)) => name,
-        None => invocation,
+        None => invocation.as_str(),
     };
     if !commands
         .iter()
@@ -692,6 +734,9 @@ pub fn resolved_skill_submission(
     Some(match provider {
         ProviderKind::Codex | ProviderKind::Fx => format!("${invocation}"),
         ProviderKind::Pi | ProviderKind::OhMyPi => format!("/skill:{invocation}"),
+        ProviderKind::Claude | ProviderKind::OpenCode | ProviderKind::OpenCode2 => {
+            format!("/skill:{invocation}")
+        }
         _ => unreachable!("non-native skill providers returned above"),
     })
 }
@@ -880,6 +925,10 @@ pub fn filter_commands(
     query: &str,
     matcher: &mut Matcher,
 ) -> Vec<Scored<SlashCommand>> {
+    let commands = commands
+        .iter()
+        .filter(|command| command.scope != CommandScope::Skill)
+        .collect::<Vec<_>>();
     let names = commands
         .iter()
         .map(|command| command.name.as_str())
@@ -887,7 +936,30 @@ pub fn filter_commands(
     filter_scored(&names, query, matcher, FILTER_CAP)
         .into_iter()
         .map(|(index, positions)| Scored {
-            item: commands[index].clone(),
+            item: (*commands[index]).clone(),
+            positions,
+        })
+        .collect()
+}
+
+/// Fuzzy-filter skills only (commands with `Skill` scope) for the `$` picker.
+pub fn filter_skills(
+    commands: &[SlashCommand],
+    query: &str,
+    matcher: &mut Matcher,
+) -> Vec<Scored<SlashCommand>> {
+    let skills = commands
+        .iter()
+        .filter(|command| command.scope == CommandScope::Skill)
+        .collect::<Vec<_>>();
+    let names = skills
+        .iter()
+        .map(|command| command.name.as_str())
+        .collect::<Vec<_>>();
+    filter_scored(&names, query, matcher, FILTER_CAP)
+        .into_iter()
+        .map(|(index, positions)| Scored {
+            item: (*skills[index]).clone(),
             positions,
         })
         .collect()
