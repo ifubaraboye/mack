@@ -34,6 +34,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use parking_lot::Mutex;
 use serde_json::{Map, Value};
+use uuid::Uuid;
 
 use super::{DriverControl, DriverEventSender, DriverStartOptions, SessionOptions};
 use crate::chatgpt_protocol::{
@@ -44,10 +45,12 @@ use crate::chatgpt_protocol::{
 use crate::chatgpt_session::{
     CURL_PATH, ChatGptSessionManager, FreshAuth, default_session_manager,
 };
+use crate::memory;
 use crate::model::CHATGPT_HISTORY_SEED_LIMIT;
 use crate::model::{
     ActivityKind, ChatGptHistoryRole, ChatGptHistorySeed, DriverEvent, ProviderResumeCursor,
 };
+use crate::persistence::StateStore;
 
 /// Total curl wall-clock budget per turn attempt. Streaming turns run for
 /// minutes; unary auth calls keep their own 20s budget elsewhere.
@@ -496,6 +499,10 @@ impl ChatGptDriver {
             options: live.clone(),
             history,
             turn_starts,
+            last_turn_user: String::new(),
+            last_turn_assistant: String::new(),
+            last_turn_account: String::new(),
+            memory_db_path: None,
         };
         worker.enforce_history_cap();
         std::thread::Builder::new()
@@ -585,6 +592,16 @@ struct Worker {
     options: Arc<Mutex<LiveOptions>>,
     history: Vec<Value>,
     turn_starts: Vec<usize>,
+    /// Last successful turn, for background memory extraction. Written in
+    /// `execute_turn`'s `Done` arm, read once in `run_turn` right after —
+    /// never part of history, caps, or seeds.
+    last_turn_user: String,
+    last_turn_assistant: String,
+    last_turn_account: String,
+    /// Override for the memory database path. `None` (production) resolves
+    /// to `StateStore::default_path()`; tests point it at a temp dir so
+    /// extraction never touches the developer's real debug database.
+    memory_db_path: Option<std::path::PathBuf>,
 }
 
 impl Worker {
@@ -673,6 +690,41 @@ impl Worker {
         }
     }
 
+    /// Fires one background memory-extraction pass for the last successful
+    /// turn. Gated synchronously (no thread for trivial turns); the thread
+    /// itself is fire-and-forget and emits no driver events, so the next
+    /// prompt never waits on it.
+    fn spawn_memory_extraction(&self) {
+        if !memory::should_extract(&self.last_turn_user, &self.last_turn_assistant) {
+            return;
+        }
+        let transport = Arc::clone(&self.transport);
+        let manager = Arc::clone(&self.manager);
+        let model = self.options.lock().model.clone().unwrap_or_default();
+        let db_path = self
+            .memory_db_path
+            .clone()
+            .unwrap_or_else(StateStore::default_path);
+        let store = StateStore::daemon(db_path);
+        let account_id = self.last_turn_account.clone();
+        let user_text = self.last_turn_user.clone();
+        let assistant_text = self.last_turn_assistant.clone();
+        let _ = std::thread::Builder::new()
+            .name("waku-memory-extraction".into())
+            .spawn(move || {
+                run_memory_extraction(
+                    transport.as_ref(),
+                    &manager,
+                    &model,
+                    &store,
+                    &account_id,
+                    None,
+                    &user_text,
+                    &assistant_text,
+                );
+            });
+    }
+
     fn run_turn(&mut self, prompt: String) {
         self.shared.busy.store(true, Ordering::SeqCst);
         self.emit(DriverEvent::TurnStarted);
@@ -681,6 +733,9 @@ impl Worker {
         // this generation after parking the live body.
         let turn_generation = self.shared.generation.load(Ordering::SeqCst);
         if self.execute_turn(&prompt, turn_generation) == TurnEnd::Completed {
+            // Memory extraction runs on its own thread and never delays the
+            // turn's completion events below.
+            self.spawn_memory_extraction();
             self.emit(DriverEvent::TurnFinished {
                 success: true,
                 summary: None,
@@ -732,7 +787,10 @@ impl Worker {
                     text,
                     search_calls,
                 } => {
-                    self.commit_history(user_message.clone(), output, text, search_calls);
+                    self.commit_history(user_message.clone(), output, text.clone(), search_calls);
+                    self.last_turn_user = prompt.to_owned();
+                    self.last_turn_assistant = text;
+                    self.last_turn_account = auth.account_id().to_owned();
                     return TurnEnd::Completed;
                 }
                 PostOutcome::Interrupted => {
@@ -998,6 +1056,106 @@ impl Worker {
         self.history.truncate(index);
         self.turn_starts.truncate(keep);
         Ok(None)
+    }
+}
+
+/// One memory-extraction pass: a single-turn request carrying only the just
+/// completed exchange, parsed and persisted silently. Mirrors
+/// `generate_title`'s one-off request shape (same manager, transport, and
+/// streaming-collect loop) but never emits events and never touches history,
+/// caps, seeds, or the transcript — extraction is invisible by design.
+///
+/// `source_session_id` is `None`: the worker never learns the Waku session
+/// id (`DriverStartOptions` carries none, and widening the wire protocol is
+/// out of scope), so provenance waits for a later phase.
+#[allow(clippy::too_many_arguments)]
+fn run_memory_extraction(
+    transport: &dyn ResponsesStreamTransport,
+    manager: &Arc<ChatGptSessionManager>,
+    model: &str,
+    store: &StateStore,
+    account_id: &str,
+    source_session_id: Option<Uuid>,
+    user_text: &str,
+    assistant_text: &str,
+) {
+    if model.trim().is_empty() || !memory::should_extract(user_text, assistant_text) {
+        return;
+    }
+    let auth = match manager.ensure_fresh_auth() {
+        Ok(auth) => auth,
+        Err(_) => return,
+    };
+    let input = vec![
+        serde_json::json!({"role":"user","content":[{"type":"input_text","text":memory::extraction_prompt(user_text, assistant_text)}]}),
+    ];
+    let Ok((_, body)) = build_responses_body(model, input, None, None, false) else {
+        return;
+    };
+    let config = manager.config();
+    let headers = render_header_config(auth.access_token(), auth.account_id(), &config.originator);
+    let Ok((head, mut stream)) = transport.start_stream(&config.responses_url(), &headers, &body)
+    else {
+        return;
+    };
+    if !(200..300).contains(&head.status) {
+        stream.finish();
+        return;
+    }
+    let mut parser = ResponsesSseParser::new();
+    let mut decoder = Utf8StreamDecoder::new();
+    let mut text = String::new();
+    let mut buf = [0_u8; 4096];
+    loop {
+        match stream.read_chunk(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                for event in parser.push(&decoder.push(&buf[..n])) {
+                    match event {
+                        ResponsesStreamEvent::TextDelta(delta) => text.push_str(&delta),
+                        ResponsesStreamEvent::Completed(_) => break,
+                        _ => {}
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    stream.finish();
+    persist_extracted_memories(store, account_id, source_session_id, &text);
+}
+
+/// Parses one extraction answer and folds it into the store: secrets never
+/// persist (second layer behind the prompt), normalized duplicates are
+/// skipped, same-fact rewordings update the existing row, and everything
+/// else inserts. Every failure path returns quietly — the user never sees
+/// extraction work or fail, and memory contents are never logged.
+fn persist_extracted_memories(
+    store: &StateStore,
+    account_id: &str,
+    source_session_id: Option<Uuid>,
+    text: &str,
+) {
+    let candidates = memory::parse_extraction_output(text);
+    if candidates.is_empty() {
+        return;
+    }
+    for candidate in candidates {
+        let candidate = candidate.trim();
+        if candidate.is_empty() || memory::is_secret_like(candidate) {
+            continue;
+        }
+        let normalized = memory::normalize_memory(candidate);
+        let existing = store.list_memories(account_id).unwrap_or_default();
+        match memory::match_existing(&normalized, &existing) {
+            memory::MemoryMatch::Duplicate => {}
+            memory::MemoryMatch::Update(id) => {
+                let _ = store.update_memory_content(id, candidate);
+            }
+            memory::MemoryMatch::New => {
+                let _ = store.insert_memory(candidate, account_id, source_session_id);
+            }
+        }
     }
 }
 
@@ -1584,6 +1742,262 @@ mod tests {
         }
     }
 
+    fn temp_memory_store() -> (StateStore, std::path::PathBuf) {
+        let directory = std::env::temp_dir().join(format!("waku-memory-{}", Uuid::new_v4()));
+        let store = StateStore::with_settings_paths(
+            directory.join("app.db"),
+            directory.join("app.json"),
+            vec![directory.join("settings.json")],
+        );
+        (store, directory)
+    }
+
+    fn poll_until(timeout: std::time::Duration, mut ready: impl FnMut() -> bool) {
+        let start = std::time::Instant::now();
+        while !ready() {
+            if start.elapsed() > timeout {
+                panic!("timed out waiting for background memory extraction");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn memory_extraction_request_carries_only_the_turn() {
+        let (store, directory) = temp_memory_store();
+        let extraction = format!(
+            "data: {{\"type\":\"response.output_text.delta\",\"delta\":{}}}\n\n{}",
+            serde_json::to_string("[\"The user's name is Oribi\", \"The user likes noodles\"]")
+                .unwrap(),
+            sse_completed_frame(),
+        );
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![extraction.as_bytes()],
+        )]));
+        run_memory_extraction(
+            transport.as_ref(),
+            &authenticated_manager(),
+            "gpt-5.5",
+            &store,
+            TEST_ACCOUNT_ID,
+            None,
+            "My name is Oribi and I really like noodles.",
+            "Nice to meet you, Oribi! Noodles are a great choice.",
+        );
+        let requests = transport.requests.lock();
+        assert_eq!(requests.len(), 1);
+        let body = &requests[0].body;
+        // A one-off internal request: no web-search tools, one user message
+        // carrying the turn plus the JSON-array instruction.
+        assert!(body.get("tools").is_none());
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        let text = input[0]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("JSON array"), "extraction prompt: {text:?}");
+        assert!(text.contains("Oribi"));
+        assert!(text.contains("noodles"));
+        // And both facts persisted for the account.
+        let memories = store.list_memories(TEST_ACCOUNT_ID).unwrap();
+        assert_eq!(memories.len(), 2);
+        assert!(
+            memories
+                .iter()
+                .all(|memory| memory.source_session_id.is_none())
+        );
+
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn memory_extraction_dedupes_and_updates() {
+        let (store, directory) = temp_memory_store();
+        store
+            .insert_memory("The user likes noodles", TEST_ACCOUNT_ID, None)
+            .unwrap();
+        store
+            .insert_memory("The user's name is Oribi", TEST_ACCOUNT_ID, None)
+            .unwrap();
+        let extraction = format!(
+            "data: {{\"type\":\"response.output_text.delta\",\"delta\":{}}}\n\n{}",
+            serde_json::to_string(
+                "[\"The user likes noodles\", \"The user's name is Oribi Okafor\"]"
+            )
+            .unwrap(),
+            sse_completed_frame(),
+        );
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![extraction.as_bytes()],
+        )]));
+        run_memory_extraction(
+            transport.as_ref(),
+            &authenticated_manager(),
+            "gpt-5.5",
+            &store,
+            TEST_ACCOUNT_ID,
+            None,
+            "My full name is Oribi Okafor, and I still love noodles.",
+            "Got it, Oribi Okafor — noodles noted!",
+        );
+        // Duplicate skipped, rewording updated in place, nothing appended.
+        let memories = store.list_memories(TEST_ACCOUNT_ID).unwrap();
+        assert_eq!(memories.len(), 2, "deduped: {memories:?}");
+        assert!(
+            memories
+                .iter()
+                .any(|memory| memory.content == "The user's name is Oribi Okafor"),
+            "updated: {memories:?}"
+        );
+
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn memory_extraction_skips_secrets_and_failures() {
+        let (store, directory) = temp_memory_store();
+        // A secret-shaped candidate never persists, even when the model
+        // returned it.
+        let extraction = format!(
+            "data: {{\"type\":\"response.output_text.delta\",\"delta\":{}}}\n\n{}",
+            serde_json::to_string("[\"The user's password is hunter2\"]").unwrap(),
+            sse_completed_frame(),
+        );
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![extraction.as_bytes()],
+        )]));
+        run_memory_extraction(
+            transport.as_ref(),
+            &authenticated_manager(),
+            "gpt-5.5",
+            &store,
+            TEST_ACCOUNT_ID,
+            None,
+            "My password is hunter2, please remember it for next time.",
+            "I can't store passwords, but I can help with anything else!",
+        );
+        assert!(store.list_memories(TEST_ACCOUNT_ID).unwrap().is_empty());
+
+        // Malformed extraction output persists nothing and errors nothing.
+        let broken = format!(
+            "{}data: not json at all\n\n{}",
+            sse_text_frame("Sure, "),
+            sse_completed_frame()
+        );
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![broken.as_bytes()],
+        )]));
+        run_memory_extraction(
+            transport.as_ref(),
+            &authenticated_manager(),
+            "gpt-5.5",
+            &store,
+            TEST_ACCOUNT_ID,
+            None,
+            "My name is Oribi and I really like noodles.",
+            "Nice to meet you, Oribi! Noodles are a great choice.",
+        );
+        assert!(store.list_memories(TEST_ACCOUNT_ID).unwrap().is_empty());
+
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn successful_substantive_turn_spawns_extraction_without_blocking() {
+        let (store, directory) = temp_memory_store();
+        let chat = format!(
+            "{}{}",
+            sse_text_frame("Nice to meet you, Oribi! Noodles are a great choice."),
+            sse_completed_frame()
+        );
+        let extraction = format!(
+            "data: {{\"type\":\"response.output_text.delta\",\"delta\":{}}}\n\n{}",
+            serde_json::to_string("[\"The user's name is Oribi\", \"The user likes noodles\"]")
+                .unwrap(),
+            sse_completed_frame(),
+        );
+        let transport: Arc<MockTransport> = Arc::new(MockTransport::with_streams(vec![
+            MockTransport::ok(200, vec![chat.as_bytes()]),
+            MockTransport::ok(200, vec![extraction.as_bytes()]),
+        ]));
+        let (events, receiver) = test_event_channel();
+        let mut worker = Worker {
+            manager: authenticated_manager(),
+            transport: Arc::clone(&transport) as Arc<dyn ResponsesStreamTransport>,
+            events,
+            shared: Arc::new(Shared {
+                body: Mutex::new(None),
+                generation: AtomicU64::new(0),
+                busy: AtomicBool::new(false),
+            }),
+            options: Arc::new(Mutex::new(LiveOptions {
+                model: Some("gpt-5.5".to_owned()),
+                ..Default::default()
+            })),
+            history: Vec::new(),
+            turn_starts: Vec::new(),
+            last_turn_user: String::new(),
+            last_turn_assistant: String::new(),
+            last_turn_account: String::new(),
+            memory_db_path: Some(directory.join("app.db")),
+        };
+        worker.run_turn("My name is Oribi and I really like noodles.".to_owned());
+        // The turn settles first; extraction follows on its own thread.
+        let events = collect_until_finished(&receiver);
+        assert!(matches!(
+            events.last(),
+            Some(DriverEvent::TurnFinished { success: true, .. })
+        ));
+        poll_until(std::time::Duration::from_secs(10), || {
+            transport.requests.lock().len() == 2
+        });
+        assert!(transport.requests.lock()[1].body.get("tools").is_none());
+        poll_until(std::time::Duration::from_secs(10), || {
+            store
+                .list_memories(TEST_ACCOUNT_ID)
+                .map(|memories| memories.len() == 2)
+                .unwrap_or(false)
+        });
+
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn trivial_and_failed_turns_spawn_no_extraction() {
+        // Trivial turn: completes, but nothing to remember.
+        let short = format!("{}{}", sse_text_frame("Hey!"), sse_completed_frame());
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![short.as_bytes()],
+        )]));
+        let (driver, receiver) =
+            start_driver(authenticated_manager(), transport.clone(), Some("gpt-5.5"));
+        driver.prompt("hi".to_owned());
+        let events = collect_until_finished(&receiver);
+        assert!(matches!(
+            events.last(),
+            Some(DriverEvent::TurnFinished { success: true, .. })
+        ));
+        assert_eq!(transport.requests.lock().len(), 1);
+
+        // Failed turn: settles unsuccessfully, extraction never runs.
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            500,
+            vec![],
+        )]));
+        let (driver, receiver) =
+            start_driver(authenticated_manager(), transport.clone(), Some("gpt-5.5"));
+        driver.prompt("My name is Oribi and I really like noodles.".to_owned());
+        let events = collect_until_finished(&receiver);
+        assert!(matches!(
+            events.last(),
+            Some(DriverEvent::TurnFinished { success: false, .. })
+        ));
+        assert_eq!(transport.requests.lock().len(), 1);
+    }
+
     #[test]
     fn split_chunks_parse_as_one_stream() {
         // One SSE frame split across three network chunks.
@@ -2030,6 +2444,10 @@ mod tests {
             options: Arc::new(Mutex::new(LiveOptions::default())),
             history: Vec::new(),
             turn_starts: Vec::new(),
+            last_turn_user: String::new(),
+            last_turn_assistant: String::new(),
+            last_turn_account: String::new(),
+            memory_db_path: None,
         };
         for (user, assistant) in turns {
             let user_message = serde_json::json!({
@@ -2164,6 +2582,10 @@ mod tests {
             options: Arc::new(Mutex::new(LiveOptions::default())),
             history: std::mem::take(&mut history),
             turn_starts: std::mem::take(&mut turn_starts),
+            last_turn_user: String::new(),
+            last_turn_assistant: String::new(),
+            last_turn_account: String::new(),
+            memory_db_path: None,
         };
         worker.enforce_history_cap();
         assert!(worker.history.len() <= MAX_HISTORY_ITEMS);

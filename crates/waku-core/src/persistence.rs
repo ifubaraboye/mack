@@ -1052,7 +1052,9 @@ impl StateStore {
         store
     }
 
-    fn with_settings_paths(
+    /// Test seam: a store rooted at an arbitrary directory, so tests never
+    /// touch the developer's real database.
+    pub(crate) fn with_settings_paths(
         path: PathBuf,
         app_settings_path: PathBuf,
         legacy_settings_paths: Vec<PathBuf>,
