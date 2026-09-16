@@ -1666,83 +1666,6 @@ impl Waku {
         ))
     }
 
-    pub(super) fn render_access_control(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::current(cx);
-        let selected_mode = self
-            .selected_session()
-            .map(|session| session.runtime_mode)
-            .unwrap_or_default();
-        let weak = cx.entity().downgrade();
-        let handle = self.menu_handle("runtime-mode", cx);
-        dropdown_menu(
-            MenuChip::new("runtime-mode")
-                .icon(selected_mode.icon(), theme.text_tertiary)
-                .label(selected_mode.label())
-                .caret(false)
-                .selected(handle.is_open()),
-            "runtime-mode-menu",
-            &handle,
-            MenuAlign::AboveLeft,
-            move |_| {
-                RuntimeMode::ACCESS_OPTIONS
-                    .into_iter()
-                    .map(|option| {
-                        let weak = weak.clone();
-                        let selected = option == selected_mode;
-                        MenuItem::custom(move |_, _| {
-                            div()
-                                .w(px(288.0))
-                                .py(px(4.0))
-                                .flex()
-                                .items_center()
-                                .gap(px(10.0))
-                                .child(icon(option.icon(), 14.0, theme.text_tertiary))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .truncate()
-                                                .text_size(sp(12.5))
-                                                .font_weight(if selected {
-                                                    FontWeight::SEMIBOLD
-                                                } else {
-                                                    FontWeight::MEDIUM
-                                                })
-                                                .text_color(theme.text)
-                                                .child(option.label()),
-                                        )
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .mt(px(2.0))
-                                                .text_size(sp(12.5))
-                                                .line_height(sp(14.0))
-                                                .whitespace_normal()
-                                                .text_color(theme.text_tertiary)
-                                                .child(option.description()),
-                                        ),
-                                )
-                                .when(selected, |element| {
-                                    element.child(icon(
-                                        "icons/check.svg",
-                                        11.0,
-                                        theme.text_tertiary,
-                                    ))
-                                })
-                                .into_any_element()
-                        })
-                        .on_click(move |_, cx| {
-                            let _ = weak.update(cx, |this, cx| this.set_runtime_mode(option, cx));
-                        })
-                    })
-                    .collect()
-            },
-        )
-    }
-
     pub(super) fn render_agent_preset_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let session = self
             .selected_session()
@@ -2786,7 +2709,6 @@ impl Waku {
                         .child(self.render_provider_model_control(cx))
                         .children(self.render_model_traits_control(cx))
                         .children(self.render_agent_preset_control(cx))
-                        .child(self.render_access_control(cx))
                         .children(self.render_goal_control(cx))
                         .child(div().flex_1())
                         .child(match submit_action {

@@ -1015,27 +1015,6 @@ impl Waku {
         cx.notify();
     }
 
-    pub(super) fn set_runtime_mode(&mut self, mode: RuntimeMode, cx: &mut Context<Self>) {
-        let Some((session_id, session_changed)) = self
-            .selected_session()
-            .map(|session| (session.id, session.runtime_mode != mode))
-        else {
-            return;
-        };
-        let remembered_changed = self.state.last_runtime_mode != mode;
-        if session_changed {
-            self.selected_session_mut()
-                .expect("selected session still exists")
-                .runtime_mode = mode;
-            self.apply_session_options(session_id, cx);
-        }
-        if session_changed || remembered_changed {
-            self.state.last_runtime_mode = mode;
-            self.save();
-            cx.notify();
-        }
-    }
-
     pub(super) fn set_reasoning_effort(&mut self, effort: String, cx: &mut Context<Self>) {
         if let Some(session) = self.selected_session_mut()
             && session.reasoning_effort.as_deref() != Some(effort.as_str())

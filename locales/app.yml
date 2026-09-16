@@ -72,6 +72,8 @@ command_palette.suggested:
   en: Suggested
 command_palette.tasks:
   en: Tasks
+command_palette.chats:
+  en: Chats
 command_palette.sessions:
   en: Terminal sessions
 command_palette.providers:

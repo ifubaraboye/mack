@@ -76,6 +76,7 @@ pub fn init(cx: &mut App) {
 enum PaletteSection {
     Suggested,
     Tasks,
+    Chats,
     Sessions,
     Providers,
     Groups,
@@ -88,6 +89,7 @@ impl PaletteSection {
         crate::i18n::translate(match self {
             Self::Suggested => "command_palette.suggested",
             Self::Tasks => "command_palette.tasks",
+            Self::Chats => "command_palette.chats",
             Self::Sessions => "command_palette.sessions",
             Self::Providers => "command_palette.providers",
             Self::Groups => "command_palette.groups",
@@ -102,7 +104,8 @@ impl PaletteSection {
             | Self::Suggested
             | Self::Sessions
             | Self::Providers
-            | Self::Groups => 0,
+            | Self::Groups
+            | Self::Chats => 0,
             Self::Tasks => 1,
             Self::Settings => 2,
         }
@@ -183,14 +186,6 @@ enum CommandPaletteView {
     ResumeProviders,
     Groups,
     GroupChats,
-}
-
-impl CommandPaletteView {
-    /// The GroupChats view is already scoped to one group, so its rows
-    /// render without a redundant section header (e.g. "Tasks").
-    fn hides_section_headers(self) -> bool {
-        matches!(self, Self::GroupChats)
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -344,11 +339,7 @@ fn same_provider_session(left: &ProviderResumeCursor, right: &ProviderResumeCurs
     left.provider() == right.provider() && left.native_id() == right.native_id()
 }
 
-fn command_palette_results_height(
-    results: &[CommandPaletteItem],
-    show_empty_state: bool,
-    hide_section_headers: bool,
-) -> f32 {
+fn command_palette_results_height(results: &[CommandPaletteItem], show_empty_state: bool) -> f32 {
     let content_height = if show_empty_state {
         EMPTY_RESULTS_HEIGHT
     } else {
@@ -357,9 +348,7 @@ fn command_palette_results_height(
             .iter()
             .map(|item| {
                 let section_leading_height = if previous_section != Some(item.section) {
-                    if hide_section_headers {
-                        0.0
-                    } else if item.section == PaletteSection::Providers {
+                    if item.section == PaletteSection::Providers {
                         PROVIDER_SECTION_TOP_MARGIN
                     } else {
                         SECTION_HEADER_HEIGHT
@@ -1222,7 +1211,7 @@ impl Waku {
     }
 
     /// The selected group's chats, reusing the task rows so a chat looks
-    /// the same here as in the Commands view.
+    /// the same here as in the Commands view, but grouped under "Chats".
     fn command_palette_group_chat_candidates(&self, group_id: Uuid) -> Vec<CommandPaletteItem> {
         self.command_palette_task_candidates()
             .into_iter()
@@ -1233,6 +1222,10 @@ impl Waku {
                     .iter()
                     .find(|session| session.id == *session_id)
                     .is_some_and(|session| session.group_id == Some(group_id)))
+            })
+            .map(|mut item| {
+                item.section = PaletteSection::Chats;
+                item
             })
             .collect()
     }
@@ -1586,9 +1579,6 @@ impl Waku {
     }
 
     fn command_palette_scroll_index(&self, selected: usize) -> usize {
-        if self.command_palette.view.hides_section_headers() {
-            return selected;
-        }
         let mut headers = 0;
         let mut previous = None;
         for item in self.command_palette.results.iter().take(selected + 1) {
@@ -1994,13 +1984,9 @@ impl Waku {
             && resume_session_count == 0
             && self.command_palette.provider_sessions_pending;
         let show_placeholder_state = show_empty_state || show_loading_state;
-        let hide_section_headers = self.command_palette.view.hides_section_headers();
-        let results_height = command_palette_results_height(
-            &self.command_palette.results,
-            show_placeholder_state,
-            hide_section_headers,
-        )
-        .min((card_max_height - SEARCH_ROW_HEIGHT).max(0.0));
+        let results_height =
+            command_palette_results_height(&self.command_palette.results, show_placeholder_state)
+                .min((card_max_height - SEARCH_ROW_HEIGHT).max(0.0));
         let card_height = SEARCH_ROW_HEIGHT + results_height;
 
         let mut results = div()
@@ -2140,7 +2126,7 @@ impl Waku {
             for (index, item) in self.command_palette.results.iter().enumerate() {
                 let starts_section = previous_section != Some(item.section);
                 if starts_section {
-                    if !hide_section_headers && item.section != PaletteSection::Providers {
+                    if item.section != PaletteSection::Providers {
                         results = results.child(
                             div()
                                 .h(px(SECTION_HEADER_HEIGHT))
@@ -2607,11 +2593,11 @@ mod tests {
             item(PaletteSection::Commands, 2),
         ];
         assert_eq!(
-            command_palette_results_height(&items, false, false),
+            command_palette_results_height(&items, false),
             SECTION_HEADER_HEIGHT * 2.0 + RESULT_ROW_HEIGHT * 3.0 + RESULTS_BOTTOM_PADDING
         );
         assert_eq!(
-            command_palette_results_height(&[], true, false),
+            command_palette_results_height(&[], true),
             EMPTY_RESULTS_HEIGHT + RESULTS_BOTTOM_PADDING
         );
         let providers = vec![
@@ -2619,14 +2605,8 @@ mod tests {
             item(PaletteSection::Providers, 1),
         ];
         assert_eq!(
-            command_palette_results_height(&providers, false, false),
+            command_palette_results_height(&providers, false),
             PROVIDER_SECTION_TOP_MARGIN + RESULT_ROW_HEIGHT * 2.0 + RESULTS_BOTTOM_PADDING
-        );
-        // The GroupChats view hides its section header, so rows hug with no
-        // leading header height.
-        assert_eq!(
-            command_palette_results_height(&items, false, true),
-            RESULT_ROW_HEIGHT * 3.0 + RESULTS_BOTTOM_PADDING
         );
     }
 

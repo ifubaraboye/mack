@@ -37,6 +37,7 @@ command_palette.resume_placeholder: ターミナルセッションを検索…
 command_palette.resume_provider_placeholder: プロバイダーを選択…
 command_palette.suggested: おすすめ
 command_palette.tasks: タスク
+command_palette.chats: チャット
 command_palette.sessions: ターミナルセッション
 command_palette.providers: プロバイダー
 command_palette.commands: コマンド
