@@ -3,12 +3,10 @@ use gpui::{KeyBinding, actions};
 
 use super::*;
 
-actions!(waku_sidebar, [CancelSessionRename, CancelGroupRename]);
+actions!(waku_sidebar, [CancelSessionRename]);
 
 const SESSION_RENAME_PARENT_CONTEXT: &str = "SessionRename";
 const SESSION_RENAME_FIELD_CONTEXT: &str = "SessionRename > TextInput";
-const GROUP_RENAME_PARENT_CONTEXT: &str = "GroupRename";
-const GROUP_RENAME_FIELD_CONTEXT: &str = "GroupRename > TextInput";
 
 /// Keep Escape inside the focused inline editor so it cancels the rename,
 /// rather than falling through to the window-wide Stop action.
@@ -18,11 +16,6 @@ pub fn init(cx: &mut App) {
             "escape",
             CancelSessionRename,
             Some(SESSION_RENAME_FIELD_CONTEXT),
-        ),
-        KeyBinding::new(
-            "escape",
-            CancelGroupRename,
-            Some(GROUP_RENAME_FIELD_CONTEXT),
         ),
     ]);
 }
@@ -249,47 +242,6 @@ fn sort_sidebar_sessions(sessions: &mut Vec<&AgentSession>, ordering: SidebarOrd
             sessions.sort_by_key(|session| sidebar_session_timestamp(session))
         }
     }
-}
-
-/// Split the sorted sessions into user-defined chat-group sections plus the
-/// remainder. Groups render ahead of the date sections in registry
-/// order; a session whose group id is missing from the registry renders
-/// ungrouped, so deleting a group entry can never strand a chat.
-fn chat_group_sections<'a>(
-    sessions: &[&'a AgentSession],
-    groups: &[ChatGroup],
-) -> (Vec<(SidebarGroup, Vec<Uuid>)>, Vec<&'a AgentSession>) {
-    if groups.is_empty() {
-        return (Vec::new(), sessions.to_vec());
-    }
-    let known: HashSet<Uuid> = groups.iter().map(|group| group.id).collect();
-    let mut sections: Vec<(SidebarGroup, Vec<Uuid>)> = Vec::new();
-    let mut indexes = HashMap::new();
-    let mut rest = Vec::with_capacity(sessions.len());
-    for session in sessions {
-        let Some(group_id) = session.group_id.filter(|id| known.contains(id)) else {
-            rest.push(*session);
-            continue;
-        };
-        let index = *indexes.entry(group_id).or_insert_with(|| {
-            let index = sections.len();
-            sections.push((SidebarGroup::ChatGroup(group_id), Vec::new()));
-            index
-        });
-        sections[index].1.push(session.id);
-    }
-    // Registry order, not first-seen order: renaming or regrouping never
-    // shuffles the sections.
-    sections.sort_by_key(|(group, _)| {
-        let SidebarGroup::ChatGroup(id) = group else {
-            return usize::MAX;
-        };
-        groups
-            .iter()
-            .position(|known| known.id == *id)
-            .unwrap_or(usize::MAX)
-    });
-    (sections, rest)
 }
 
 fn persisted_sidebar_branch_label(_workspace: &SessionWorkspace) -> Option<&str> {
@@ -1073,22 +1025,11 @@ impl Waku {
         sort_sidebar_sessions(&mut sorted_sessions, self.state.sidebar_ordering);
 
         let mut rows = vec![SidebarRow::Search, SidebarRow::Groups];
-        // User-defined groups render ahead of the date sections; the date
-        // grouping below only ever sees the remainder.
-        let (chat_sections, rest) =
-            chat_group_sections(&sorted_sessions, &self.state.chat_groups);
-        for (group, sessions) in &chat_sections {
-            append_sidebar_group_rows(
-                &mut rows,
-                *group,
-                sessions,
-                self.sidebar_collapsed_groups.contains(group),
-            );
-        }
-        // The sidebar is always date-grouped: chat groups first, then one
-        // section per recency period with the project under each chat.
+        // Every chat lists under its date, grouped or not: membership
+        // shows in the row's detail line, and groups are managed from the
+        // Groups palette view instead of folder sections here.
         let mut grouped_sessions: [Vec<Uuid>; 6] = std::array::from_fn(|_| Vec::new());
-        for session in rest {
+        for session in sorted_sessions {
             grouped_sessions
                 [session_date_group(sidebar_session_timestamp(session), today).index()]
             .push(session.id);
@@ -1203,39 +1144,6 @@ impl Waku {
                 .map(|group| group.name.clone())
                 .unwrap_or_else(|| tr!("sidebar.untitled_group")),
         };
-        // A group being renamed swaps its label for the shared inline
-        // editor, mirroring session rows. Header toggle stays off while the
-        // field owns focus so activating it cannot collapse the section.
-        let renaming = matches!(
-            group,
-            SidebarGroup::ChatGroup(group_id) if self.group_rename == Some(group_id)
-        );
-        let label_or_field = if renaming {
-            div()
-                .id(SharedString::from(format!(
-                    "group-rename-field-{group_key}"
-                )))
-                .key_context(GROUP_RENAME_PARENT_CONTEXT)
-                .on_action(cx.listener(|this, _: &CancelGroupRename, window, cx| {
-                    this.cancel_group_rename(window, cx);
-                }))
-                .h(px(18.0))
-                .flex_1()
-                .min_w_0()
-                .px(px(4.0))
-                .rounded(px(4.0))
-                .border_1()
-                .border_color(theme.accent)
-                .bg(theme.inset)
-                .flex()
-                .items_center()
-                .text_size(sp(13.0))
-                .text_color(theme.text)
-                .child(self.group_rename_input.clone())
-                .into_any_element()
-        } else {
-            div().min_w_0().truncate().child(label).into_any_element()
-        };
         let updated_chevron = matches!(group, SidebarGroup::Updated(_)).then(|| {
             icon("icons/chevron-down.svg", 14.0, theme.text_secondary)
                 .when(collapsed, |icon| {
@@ -1301,13 +1209,6 @@ impl Waku {
                 )
         });
 
-        // The header menu handle doubles as the keyboard path: Shift+F10
-        // opens the group menu for ChatGroup headers, mirroring session
-        // rows. Created up front so the key handler below can borrow it.
-        let header_menu = matches!(group, SidebarGroup::ChatGroup(_))
-            .then(|| self.menu_handle(format!("sidebar-group-menu-{group_key}"), cx));
-        let keyboard_menu = header_menu.clone();
-
         let header = session_group_header(&theme)
             .id(SharedString::from(format!(
                 "sidebar-group-toggle-{group_key}"
@@ -1341,11 +1242,7 @@ impl Waku {
                             .flex()
                             .items_center()
                             .gap(px(2.0))
-                            // The editor must fill the header like session
-                            // rows do: in a content-sized parent the field
-                            // collapses and typed text scrolls out of view.
-                            .when(renaming, |element| element.flex_1())
-                            .child(label_or_field)
+                            .child(div().min_w_0().truncate().child(label))
                             .when_some(updated_chevron, |element, chevron| element.child(chevron)),
                     )
                     .child(div().flex_1()),
@@ -1354,76 +1251,32 @@ impl Waku {
             .when(first, |element| {
                 element.child(self.render_sidebar_header_actions(cx))
             })
-            .when(!renaming, |element| {
-                element
-                    .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_sidebar_group(group, cx);
+            }))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                match event.keystroke.key.as_str() {
+                    "enter" | "space" => {
                         this.toggle_sidebar_group(group, cx);
-                    }))
-                    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                        let key = event.keystroke.key.as_str();
-                        if matches!(key, "enter" | "space") {
-                            this.toggle_sidebar_group(group, cx);
-                            cx.stop_propagation();
-                        } else if key == "left" && !collapsed {
-                            this.set_sidebar_group_collapsed(group, true, cx);
-                            cx.stop_propagation();
-                        } else if key == "right" && collapsed {
-                            this.set_sidebar_group_collapsed(group, false, cx);
-                            cx.stop_propagation();
-                        } else if key == "f10" && event.keystroke.modifiers.shift {
-                            if let Some(menu) = keyboard_menu.as_ref() {
-                                menu.open_context_menu(window, cx);
-                                cx.stop_propagation();
-                            }
-                        }
-                    }))
-            });
+                        cx.stop_propagation();
+                    }
+                    "left" if !collapsed => {
+                        this.set_sidebar_group_collapsed(group, true, cx);
+                        cx.stop_propagation();
+                    }
+                    "right" if collapsed => {
+                        this.set_sidebar_group_collapsed(group, false, cx);
+                        cx.stop_propagation();
+                    }
+                    _ => {}
+                }
+            }));
 
-        let footer = div()
+        div()
             .w_full()
             .pb(px(SIDEBAR_GROUP_HEADER_BOTTOM_GAP))
-            .child(header);
-        let SidebarGroup::ChatGroup(group_id) = group else {
-            return footer.into_any_element();
-        };
-        // Group headers carry a context menu for rename and delete. While
-        // the inline editor is open the menu stays off and losing focus
-        // commits, exactly like session rows.
-        if renaming {
-            return footer
-                .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                    if this.group_rename == Some(group_id) {
-                        this.commit_group_rename(cx);
-                    }
-                }))
-                .into_any_element();
-        }
-        let waku = cx.entity().downgrade();
-        let Some(menu) = header_menu else {
-            return footer.into_any_element();
-        };
-        context_menu(
-            footer,
-            SharedString::from(format!("sidebar-group-{group_key}")),
-            &menu,
-            move |_| {
-                let rename_waku = waku.clone();
-                let delete_waku = waku.clone();
-                vec![
-                    MenuItem::new(tr!("common.rename"), move |window, cx| {
-                        let _ = rename_waku.update(cx, |waku, cx| {
-                            waku.begin_group_rename(group_id, window, cx);
-                        });
-                    }),
-                    MenuItem::Separator,
-                    MenuItem::new(tr!("sidebar.delete_group"), move |_, cx| {
-                        let _ = delete_waku.update(cx, |waku, cx| {
-                            waku.delete_chat_group(group_id, cx);
-                        });
-                    }),
-                ]
-            },
-        )
+            .child(header)
+            .into_any_element()
     }
 
     fn open_new_task_for_sidebar_group(
@@ -1434,8 +1287,7 @@ impl Waku {
     ) {
         self.settings_page = None;
         match group {
-            SidebarGroup::ChatGroup(group_id) => self.create_session_in_group(group_id, cx),
-            SidebarGroup::Updated(_) => return,
+            SidebarGroup::ChatGroup(_) | SidebarGroup::Updated(_) => return,
         }
         let focus = self.composer_focus(cx);
         window.focus(&focus, cx);
@@ -1491,31 +1343,28 @@ impl Waku {
             .find(|group| group.id == group_id)
     }
 
-    /// Create a group holding `session_id` and open the inline rename so the
-    /// name is chosen up front. Sessions only surface their menu once they
+    /// Create a group holding `session_id`, named after the chat so it
+    /// reads sensibly with no further input; rename any time from the
+    /// Groups palette view. Sessions only surface their menu once they
     /// have started, so the member always has a row to reveal.
     pub(super) fn create_chat_group(
         &mut self,
         session_id: Uuid,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Uuid> {
-        if !self
+        let name = self
             .state
             .sessions
             .iter()
-            .any(|session| session.id == session_id)
-        {
-            return None;
-        }
-        let group = ChatGroup::new(tr!("sidebar.new_group_name"));
+            .find(|session| session.id == session_id)
+            .map(localized_session_title)
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| tr!("sidebar.new_group_name"));
+        let group = ChatGroup::new(name);
         let group_id = group.id;
         self.state.chat_groups.push(group);
         self.move_session_to_group(session_id, group_id, cx);
-        // The member moved to a brand-new section at the top: scroll it
-        // into view before handing the name editor focus.
         self.reveal_sidebar_session(session_id);
-        self.begin_group_rename(group_id, window, cx);
         Some(group_id)
     }
 
@@ -1611,9 +1460,6 @@ impl Waku {
         }
         self.sidebar_collapsed_groups
             .remove(&SidebarGroup::ChatGroup(group_id));
-        if self.group_rename == Some(group_id) {
-            self.group_rename = None;
-        }
         self.save();
         cx.notify();
     }
@@ -1717,44 +1563,6 @@ impl Waku {
 
     fn cancel_session_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.session_rename.take().is_none() {
-            return;
-        }
-        let focus = self.composer_focus(cx);
-        window.focus(&focus, cx);
-        cx.notify();
-    }
-
-    fn begin_group_rename(&mut self, group_id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(name) = self.chat_group(group_id).map(|group| group.name.clone()) else {
-            return;
-        };
-        self.group_rename = Some(group_id);
-        self.group_rename_input.update(cx, |input, cx| {
-            input.set_content(name, cx);
-            input.select_all_text(cx);
-        });
-        // Focus eagerly and on the next frame: the renamed section mounts
-        // fresh (list re-sync, shifted rows), so a single deferred focus
-        // can lose to the previously focused session row.
-        let focus = self.group_rename_input.read(cx).focus();
-        window.focus(&focus, cx);
-        window.on_next_frame(move |window, cx| window.focus(&focus, cx));
-        cx.notify();
-    }
-
-    pub(super) fn commit_group_rename(&mut self, cx: &mut Context<Self>) {
-        let Some(group_id) = self.group_rename.take() else {
-            return;
-        };
-        let name = self.group_rename_input.read(cx).content().trim().to_owned();
-        if !name.is_empty() {
-            self.rename_chat_group(group_id, name, cx);
-        }
-        cx.notify();
-    }
-
-    fn cancel_group_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.group_rename.take().is_none() {
             return;
         }
         let focus = self.composer_focus(cx);
@@ -2026,7 +1834,7 @@ impl Waku {
                                     tr!("sidebar.new_group"),
                                     move |window, cx| {
                                         let _ = new_group_waku.update(cx, |waku, cx| {
-                                            waku.create_chat_group(session_id, window, cx);
+                                            waku.create_chat_group(session_id, cx);
                                         });
                                     },
                                 )];
@@ -2387,44 +2195,6 @@ mod tests {
         assert_eq!(
             collapsed,
             vec![SidebarRow::Header(group), SidebarRow::GroupSpacer,]
-        );
-    }
-
-    #[test]
-    fn chat_group_sections_follow_registry_order_and_ignore_unknown_groups() {
-        let first = AgentSession::new(Uuid::from_u128(10), ProviderKind::ChatGpt);
-        let mut second = AgentSession::new(Uuid::from_u128(11), ProviderKind::ChatGpt);
-        let mut third = AgentSession::new(Uuid::from_u128(12), ProviderKind::ChatGpt);
-        let mut fourth = AgentSession::new(Uuid::from_u128(13), ProviderKind::ChatGpt);
-        let beta = ChatGroup {
-            id: Uuid::from_u128(2),
-            name: "Beta".into(),
-            created_at: 2,
-        };
-        let alpha = ChatGroup {
-            id: Uuid::from_u128(1),
-            name: "Alpha".into(),
-            created_at: 1,
-        };
-        second.group_id = Some(beta.id);
-        third.group_id = Some(alpha.id);
-        // A deleted group's chats fall back to the ungrouped remainder.
-        fourth.group_id = Some(Uuid::from_u128(99));
-        let sessions = [&first, &second, &third, &fourth];
-        let (sections, rest) = chat_group_sections(&sessions, &[beta.clone(), alpha.clone()]);
-        // Registry order wins even though beta's session arrived first.
-        assert_eq!(
-            sections.iter().map(|(group, _)| *group).collect::<Vec<_>>(),
-            vec![
-                SidebarGroup::ChatGroup(beta.id),
-                SidebarGroup::ChatGroup(alpha.id),
-            ]
-        );
-        assert_eq!(sections[0].1, vec![second.id]);
-        assert_eq!(sections[1].1, vec![third.id]);
-        assert_eq!(
-            rest.iter().map(|session| session.id).collect::<Vec<_>>(),
-            vec![first.id, fourth.id]
         );
     }
 

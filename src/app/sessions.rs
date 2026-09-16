@@ -280,40 +280,6 @@ impl Waku {
         self.select_session(id, cx);
     }
 
-    /// Start a chat inside a user-defined group: same project resolution as
-    /// opening a task from the current context, but the draft carries the
-    /// group from birth so it lands in the right sidebar section. Always a
-    /// fresh session — an existing draft belongs to whatever started it.
-    pub(super) fn create_session_in_group(&mut self, group_id: Uuid, cx: &mut Context<Self>) {
-        if !self
-            .state
-            .chat_groups
-            .iter()
-            .any(|group| group.id == group_id)
-        {
-            return;
-        }
-        let project_id = self
-            .selected_session()
-            .map(|session| session.project_id)
-            .or(self.state.selected_project)
-            .or_else(|| self.state.projects.first().map(|project| project.id));
-        let Some(project_id) = project_id else {
-            self.create_projectless_session(cx);
-            return;
-        };
-        let runtime_mode =
-            new_task_runtime_mode(self.selected_session(), self.state.last_runtime_mode);
-        let mut session = self.state.new_session(project_id, self.state.last_provider);
-        session.runtime_mode = runtime_mode;
-        session.group_id = Some(group_id);
-        let id = session.id;
-        self.state.push_session(session);
-        self.sidebar_collapsed_groups
-            .remove(&SidebarGroup::ChatGroup(group_id));
-        self.select_session(id, cx);
-    }
-
     pub(super) fn select_workspace(&mut self, workspace: SessionWorkspace, cx: &mut Context<Self>) {
         let Some(session) = self.selected_session_mut() else {
             return;

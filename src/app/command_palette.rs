@@ -380,6 +380,9 @@ pub(super) struct CommandPaletteUi {
     /// Group whose chats the GroupChats view lists. `None` outside that
     /// view, mirroring how `resume_provider` scopes ResumeProviders.
     group_view_group: Option<Uuid>,
+    /// Group being renamed inline: the search field holds the draft name
+    /// while set, and confirming applies it instead of running a row.
+    renaming_group: Option<Uuid>,
     provider_sessions_pending: bool,
     provider_session_import: Option<ProviderResumeCursor>,
     provider_session_error: Option<String>,
@@ -406,6 +409,7 @@ impl CommandPaletteUi {
             provider_sessions: Vec::new(),
             resume_provider: ProviderKind::default(),
             group_view_group: None,
+            renaming_group: None,
             provider_sessions_pending: false,
             provider_session_import: None,
             provider_session_error: None,
@@ -617,6 +621,10 @@ impl Waku {
     /// query keeps Delete for text editing, so this only runs on an empty
     /// query — the same guard as the keybinding comment above.
     fn delete_command_palette_group(&mut self, cx: &mut Context<Self>) {
+        if self.command_palette.renaming_group.is_some() {
+            self.cancel_palette_group_rename(cx);
+            return;
+        }
         if self.command_palette.view != CommandPaletteView::Groups {
             return;
         }
@@ -643,6 +651,56 @@ impl Waku {
         };
         self.delete_chat_group(group_id, cx);
         self.refresh_command_palette_after_group_deleted(cx);
+    }
+
+    /// Start renaming a group: the search field becomes the name
+    /// editor, prefilled with the current name. Focus already lives in
+    /// the field, so typing replaces the selection immediately.
+    fn begin_palette_group_rename(&mut self, group_id: Uuid, cx: &mut Context<Self>) {
+        let Some(name) = self.chat_group(group_id).map(|group| group.name.clone()) else {
+            return;
+        };
+        self.command_palette.renaming_group = Some(group_id);
+        self.command_palette.search.update(cx, |input, cx| {
+            input.set_content(name, cx);
+            input.select_all_text(cx);
+        });
+        self.refresh_command_palette_results("", false, cx);
+        cx.notify();
+    }
+
+    /// Apply the drafted name, keeping the old one on empty input. Runs on
+    /// Enter and on row activation while renaming.
+    fn commit_palette_group_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(group_id) = self.command_palette.renaming_group.take() else {
+            return;
+        };
+        let name = self
+            .command_palette
+            .search
+            .read(cx)
+            .content()
+            .trim()
+            .to_owned();
+        if !name.is_empty() {
+            self.rename_chat_group(group_id, name, cx);
+        }
+        self.command_palette.search.update(cx, |input, cx| {
+            input.clear(cx);
+        });
+        self.refresh_command_palette_results("", false, cx);
+        cx.notify();
+    }
+
+    fn cancel_palette_group_rename(&mut self, cx: &mut Context<Self>) {
+        if self.command_palette.renaming_group.take().is_none() {
+            return;
+        }
+        self.command_palette.search.update(cx, |input, cx| {
+            input.clear(cx);
+        });
+        self.refresh_command_palette_results("", false, cx);
+        cx.notify();
     }
 
     /// Re-list the Groups view after a deletion, falling back from a
@@ -682,6 +740,10 @@ impl Waku {
     }
 
     fn dismiss_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.command_palette.renaming_group.is_some() {
+            self.cancel_palette_group_rename(cx);
+            return;
+        }
         match self.command_palette.view {
             CommandPaletteView::Commands => self.close_command_palette(window, cx),
             CommandPaletteView::Resume => self.leave_command_palette_resume_view(cx),
@@ -1826,6 +1888,10 @@ impl Waku {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.command_palette.renaming_group.is_some() {
+            self.commit_palette_group_rename(cx);
+            return;
+        }
         let index = index.unwrap_or(self.command_palette.selected);
         let Some(action) = self
             .command_palette
@@ -2283,6 +2349,38 @@ impl Waku {
                             row.child(
                                 div()
                                     .id(SharedString::from(format!(
+                                        "palette-rename-group-{group_id}"
+                                    )))
+                                    .flex_none()
+                                    .w(px(24.0))
+                                    .h(px(24.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(6.0))
+                                    .cursor_default()
+                                    .tooltip(Tooltip::text(tr!("common.rename")))
+                                    .child(icon(
+                                        "icons/pencil.svg",
+                                        13.0,
+                                        theme.text_tertiary,
+                                    ))
+                                    .hover(|style| style.bg(theme.overlay))
+                                    .active(|style| style.bg(theme.overlay_strong))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        |_, _, cx| cx.stop_propagation(),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.begin_palette_group_rename(group_id, cx);
+                                    })),
+                            )
+                        })
+                        .when_some(deletable_group, |row, group_id| {
+                            row.child(
+                                div()
+                                    .id(SharedString::from(format!(
                                         "palette-delete-group-{group_id}"
                                     )))
                                     .flex_none()
@@ -2307,6 +2405,9 @@ impl Waku {
                                     )
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
+                                        if this.command_palette.renaming_group == Some(group_id) {
+                                            this.cancel_palette_group_rename(cx);
+                                        }
                                         this.delete_chat_group(group_id, cx);
                                         this.refresh_command_palette_after_group_deleted(cx);
                                     })),

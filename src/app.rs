@@ -1249,10 +1249,6 @@ pub struct Waku {
     /// One stable field reused across sidebar rows so virtualization never
     /// replaces the focused editor while a rename is in progress.
     session_rename_input: Entity<TextInput>,
-    /// Sidebar chat group currently showing its inline rename field, with
-    /// the same stable-field treatment as session renames.
-    group_rename: Option<Uuid>,
-    group_rename_input: Entity<TextInput>,
     /// Groups the user has folded in the sidebar. This is intentionally
     /// runtime-only, like transcript disclosure state.
     sidebar_collapsed_groups: HashSet<SidebarGroup>,
@@ -1897,7 +1893,6 @@ impl Waku {
                 .placeholder(tr!("skills.search"))
         });
         let session_rename_input = cx.new(|cx| TextInput::new(window, cx));
-        let group_rename_input = cx.new(|cx| TextInput::new(window, cx));
         let provider_path_input = cx.new(|cx| {
             TextInput::new(window, cx)
                 .select_all_on_focus_click()
@@ -2442,15 +2437,6 @@ impl Waku {
             )
             .detach();
             cx.subscribe(
-                &group_rename_input,
-                |this: &mut Self, _, event: &InputEvent, cx| match event {
-                    InputEvent::Submit(_) => this.commit_group_rename(cx),
-                    InputEvent::Edited if this.group_rename.is_some() => cx.notify(),
-                    _ => {}
-                },
-            )
-            .detach();
-            cx.subscribe(
                 &usage_project_filter,
                 |_: &mut Self, _, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Edited) {
@@ -2697,8 +2683,6 @@ impl Waku {
                 session_navigation,
                 session_rename: None,
                 session_rename_input,
-                group_rename: None,
-                group_rename_input,
                 sidebar_collapsed_groups: HashSet::new(),
                 sidebar_group_header_focuses: RefCell::new(HashMap::new()),
                 sidebar_group_compose_focuses: RefCell::new(HashMap::new()),
