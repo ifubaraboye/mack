@@ -36,7 +36,7 @@ use crate::model::{
 use crate::theme::ThemePreference;
 pub use waku_protocol::persistence::{
     ComposerDraft, ComposerDraftAttachment, ComposerDraftChange, ComposerDraftKey,
-    ComposerDraftTarget, ComposerDrafts, SessionMessageMatch,
+    ComposerDraftTarget, ComposerDrafts, SessionMessageMatch, StoredMemory,
 };
 
 const STATE_VERSION: u32 = 5;
@@ -829,6 +829,105 @@ fn search_session_messages(
     Ok(matches)
 }
 
+/// Upper bound on query tokens scored per memory search. Keeps the generated
+/// statement small; extra tokens are dropped oldest-last (front tokens carry
+/// the topic).
+const MEMORY_SEARCH_MAX_TOKENS: usize = 12;
+
+type MemoryColumns = (String, String, String, Option<String>, i64, i64);
+
+fn memory_from_row(
+    (id, content, account_id, source_session_id, created_at, updated_at): MemoryColumns,
+) -> Option<StoredMemory> {
+    Some(StoredMemory {
+        id: Uuid::parse_str(&id).ok()?,
+        content,
+        account_id,
+        source_session_id: source_session_id.and_then(|id| Uuid::parse_str(&id).ok()),
+        created_at: created_at as u64,
+        updated_at: updated_at as u64,
+    })
+}
+
+fn search_memories(
+    path: &Path,
+    query: &str,
+    account_id: &str,
+    limit: usize,
+) -> io::Result<Vec<StoredMemory>> {
+    // Keyword tokens only — the same minimal matching the transcript search
+    // uses. Single characters ("a", "I", "'s") are noise, so they are
+    // dropped; repeated tokens count once.
+    let mut tokens: Vec<String> = Vec::new();
+    for token in query
+        .to_lowercase()
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| token.len() > 1)
+    {
+        if !tokens.iter().any(|seen| seen == token) {
+            tokens.push(token.to_owned());
+        }
+        if tokens.len() >= MEMORY_SEARCH_MAX_TOKENS {
+            break;
+        }
+    }
+    if tokens.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    // The writer uses WAL, so an independent read-only connection can scan
+    // memories without taking the StateStore mutex or delaying a save.
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(to_io_error)?;
+    // One `instr` per token; the score is how many matched. Account and
+    // soft-delete filters apply before scoring.
+    let score_terms: Vec<String> = tokens
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            format!(
+                "(CASE WHEN instr(lower(content), lower(?{})) > 0 THEN 1 ELSE 0 END)",
+                index + 2
+            )
+        })
+        .collect();
+    let score = score_terms.join(" + ");
+    let statement = format!(
+        "SELECT id, content, account_id, source_session_id, created_at, updated_at
+           FROM memories
+          WHERE account_id = ?1 AND deleted_at IS NULL AND ({score}) > 0
+          ORDER BY ({score}) DESC, updated_at DESC
+          LIMIT ?{}",
+        tokens.len() + 2,
+    );
+    let mut statement = connection.prepare(&statement).map_err(to_io_error)?;
+    let mut parameters: Vec<&dyn rusqlite::ToSql> = vec![&account_id];
+    for token in &tokens {
+        parameters.push(token);
+    }
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    parameters.push(&limit);
+    let rows = statement
+        .query_map(parameters.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })
+        .map_err(to_io_error)?;
+    Ok(rows
+        .filter_map(Result::ok)
+        .filter_map(memory_from_row)
+        .collect())
+}
+
 include!(concat!(env!("OUT_DIR"), "/migrations.rs"));
 
 const MIGRATIONS_TABLE: &str = "CREATE TABLE IF NOT EXISTS migrations (
@@ -987,6 +1086,139 @@ impl StateStore {
 
     pub fn blobs(&self) -> Arc<BlobStore> {
         Arc::clone(&self.blobs)
+    }
+
+    /// Inserts one cross-chat memory and returns its id.
+    ///
+    /// Memories live outside any single conversation: they are written from a
+    /// background extraction thread (never the UI thread) on a short-lived
+    /// connection, so this never touches the long-lived `Storage` connection
+    /// or any session's messages.
+    pub fn insert_memory(
+        &self,
+        content: &str,
+        account_id: &str,
+        source_session_id: Option<Uuid>,
+    ) -> io::Result<Uuid> {
+        let content = content.trim();
+        if content.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "memory content is empty",
+            ));
+        }
+        let id = Uuid::new_v4();
+        let now = crate::model::unix_time() as i64;
+        self.open()?
+            .execute(
+                "INSERT INTO memories(
+                     id, content, account_id, source_session_id,
+                     created_at, updated_at, deleted_at
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+                rusqlite::params_from_iter([
+                    rusqlite::types::Value::Text(id.to_string()),
+                    rusqlite::types::Value::Text(content.to_owned()),
+                    rusqlite::types::Value::Text(account_id.to_owned()),
+                    source_session_id.map_or(rusqlite::types::Value::Null, |session_id| {
+                        rusqlite::types::Value::Text(session_id.to_string())
+                    }),
+                    rusqlite::types::Value::Integer(now),
+                    rusqlite::types::Value::Integer(now),
+                ]),
+            )
+            .map_err(to_io_error)?;
+        Ok(id)
+    }
+
+    /// Replaces a live memory's content (latest-wins for same-topic
+    /// conflicts). Returns whether a live row was updated.
+    pub fn update_memory_content(&self, id: Uuid, content: &str) -> io::Result<bool> {
+        let content = content.trim();
+        if content.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "memory content is empty",
+            ));
+        }
+        let updated = self
+            .open()?
+            .execute(
+                "UPDATE memories SET content = ?1, updated_at = ?2
+                  WHERE id = ?3 AND deleted_at IS NULL",
+                params![content, crate::model::unix_time() as i64, id.to_string(),],
+            )
+            .map_err(to_io_error)?;
+        Ok(updated > 0)
+    }
+
+    /// Soft-deletes one memory. The row keeps its `deleted_at` stamp so a
+    /// mistaken extraction stays recoverable.
+    pub fn delete_memory(&self, id: Uuid) -> io::Result<()> {
+        self.open()?
+            .execute(
+                "UPDATE memories SET deleted_at = ?1
+                  WHERE id = ?2 AND deleted_at IS NULL",
+                params![crate::model::unix_time() as i64, id.to_string(),],
+            )
+            .map_err(to_io_error)?;
+        Ok(())
+    }
+
+    /// Soft-deletes every live memory for an account. Returns how many rows
+    /// were cleared.
+    pub fn clear_memories(&self, account_id: &str) -> io::Result<usize> {
+        let cleared = self
+            .open()?
+            .execute(
+                "UPDATE memories SET deleted_at = ?1
+                  WHERE account_id = ?2 AND deleted_at IS NULL",
+                params![crate::model::unix_time() as i64, account_id,],
+            )
+            .map_err(to_io_error)?;
+        Ok(cleared)
+    }
+
+    /// Live memories for an account, newest first.
+    pub fn list_memories(&self, account_id: &str) -> io::Result<Vec<StoredMemory>> {
+        let connection = self.open()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, content, account_id, source_session_id, created_at, updated_at
+                   FROM memories
+                  WHERE account_id = ?1 AND deleted_at IS NULL
+                  ORDER BY updated_at DESC",
+            )
+            .map_err(to_io_error)?;
+        let rows = statement
+            .query_map(params![account_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            })
+            .map_err(to_io_error)?;
+        Ok(rows
+            .filter_map(Result::ok)
+            .filter_map(memory_from_row)
+            .collect())
+    }
+
+    /// Builds a memory-search job for the background executor, mirroring
+    /// [`StateStore::session_message_search`]: constructing the job only
+    /// clones the database path; opening SQLite and scoring matches happen
+    /// when the returned closure runs off-thread.
+    pub fn search_memories_job(
+        &self,
+        query: String,
+        account_id: String,
+        limit: usize,
+    ) -> impl FnOnce() -> io::Result<Vec<StoredMemory>> + Send + 'static {
+        let path = self.path.clone();
+        move || search_memories(&path, &query, &account_id, limit)
     }
 
     pub fn path(&self) -> &Path {
@@ -2225,6 +2457,150 @@ mod tests {
                 .iter()
                 .any(|message| message.content == "an answer")
         );
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn memories_crud_round_trips() {
+        let directory = temporary_directory();
+        let store = store_in(&directory);
+        let source = Uuid::new_v4();
+        let id = store
+            .insert_memory("User's name is Oribi.", "acct-1", Some(source))
+            .unwrap();
+        let memories = store.list_memories("acct-1").unwrap();
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].id, id);
+        assert_eq!(memories[0].content, "User's name is Oribi.");
+        assert_eq!(memories[0].account_id, "acct-1");
+        assert_eq!(memories[0].source_session_id, Some(source));
+        assert!(memories[0].created_at > 0);
+        assert!(memories[0].updated_at >= memories[0].created_at);
+
+        assert!(
+            store
+                .update_memory_content(id, "User's name is Oribi O.")
+                .unwrap()
+        );
+        let memories = store.list_memories("acct-1").unwrap();
+        assert_eq!(memories[0].content, "User's name is Oribi O.");
+        assert!(
+            !store
+                .update_memory_content(Uuid::new_v4(), "ghost")
+                .unwrap()
+        );
+
+        store.delete_memory(id).unwrap();
+        assert!(store.list_memories("acct-1").unwrap().is_empty());
+        assert!(store.insert_memory("  ", "acct-1", None).is_err());
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn memories_are_scoped_to_account() {
+        let directory = temporary_directory();
+        let store = store_in(&directory);
+        store
+            .insert_memory("Likes noodles.", "acct-1", None)
+            .unwrap();
+        store.insert_memory("Likes rice.", "acct-2", None).unwrap();
+        let first = store.list_memories("acct-1").unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].content, "Likes noodles.");
+        let second = store.list_memories("acct-2").unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].content, "Likes rice.");
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn clear_memories_soft_deletes_one_account_only() {
+        let directory = temporary_directory();
+        let store = store_in(&directory);
+        store.insert_memory("Fact one.", "acct-1", None).unwrap();
+        store.insert_memory("Fact two.", "acct-1", None).unwrap();
+        store
+            .insert_memory("Other account.", "acct-2", None)
+            .unwrap();
+        assert_eq!(store.clear_memories("acct-1").unwrap(), 2);
+        assert!(store.list_memories("acct-1").unwrap().is_empty());
+        assert_eq!(store.clear_memories("acct-1").unwrap(), 0);
+        assert_eq!(store.list_memories("acct-2").unwrap().len(), 1);
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn memory_search_matches_keywords_and_ignores_deleted() {
+        let directory = temporary_directory();
+        let store = store_in(&directory);
+        store
+            .insert_memory("User's name is Oribi.", "acct-1", None)
+            .unwrap();
+        store
+            .insert_memory("User likes noodles with chili oil.", "acct-1", None)
+            .unwrap();
+        let stale = store
+            .insert_memory("User lives in Berlin.", "acct-1", None)
+            .unwrap();
+        store.delete_memory(stale).unwrap();
+
+        // Both tokens match only the noodles row, which ranks first.
+        let matches =
+            store.search_memories_job("noodles chili".to_owned(), "acct-1".to_owned(), 10)()
+                .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].content, "User likes noodles with chili oil.");
+
+        // Single-token query; deleted rows never surface.
+        let matches =
+            store.search_memories_job("user".to_owned(), "acct-1".to_owned(), 10)().unwrap();
+        assert_eq!(matches.len(), 2);
+        assert!(
+            matches
+                .iter()
+                .all(|memory| memory.content != "User lives in Berlin.")
+        );
+
+        // Other accounts are invisible; empty queries match nothing.
+        assert!(
+            store.search_memories_job("noodles".to_owned(), "acct-2".to_owned(), 10)()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            store.search_memories_job("  ".to_owned(), "acct-1".to_owned(), 10)()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            store.search_memories_job("noodles".to_owned(), "acct-1".to_owned(), 0)()
+                .unwrap()
+                .is_empty()
+        );
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn memories_survive_reopen() {
+        let directory = temporary_directory();
+        let id = {
+            let store = store_in(&directory);
+            store
+                .insert_memory("User's name is Oribi.", "acct-1", None)
+                .unwrap()
+        };
+        // Dropping the store closes its connections; reopening the same
+        // directory must still see the row (migration + WAL reopen path).
+        let reopened = store_in(&directory);
+        let memories = reopened.list_memories("acct-1").unwrap();
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].id, id);
+        assert_eq!(memories[0].content, "User's name is Oribi.");
 
         fs::remove_dir_all(directory).ok();
     }

@@ -161,3 +161,17 @@ pub struct SessionMessageMatch {
     pub source: MessageRole,
     pub snippet: String,
 }
+
+/// One cross-chat memory: a durable user fact stored in the `memories` table
+/// and shared by every conversation for the same account. Kept out of the
+/// per-chat transcript by design — memories are global context, never
+/// conversation history.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+pub struct StoredMemory {
+    pub id: Uuid,
+    pub content: String,
+    pub account_id: String,
+    pub source_session_id: Option<Uuid>,
+    pub created_at: u64,
+    pub updated_at: u64,
+}

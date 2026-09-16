@@ -29,6 +29,13 @@
       "when": 1789579573036,
       "tag": "0003_chat_groups",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789585651751,
+      "tag": "0004_mature_night_nurse",
+      "breakpoints": true
     }
   ]
 }

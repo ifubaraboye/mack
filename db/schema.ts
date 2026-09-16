@@ -91,3 +91,32 @@ export const sessionDetails = sqliteTable("session_details", {
   sessionId: text("session_id").primaryKey(),
   data: text("data").notNull(),
 });
+
+/**
+ * Cross-chat memories: durable user facts learned in one conversation and
+ * available to every other conversation for the same ChatGPT account.
+ *
+ * Deliberately separate from `messages`: memories are global context, not
+ * conversation history, so they never enter per-chat transcripts, seeds, or
+ * history caps. Deletion is soft (`deleted_at`) so the future Settings UI
+ * can offer undo and so a mistaken extraction stays recoverable.
+ */
+export const memories = sqliteTable(
+  "memories",
+  {
+    id: text("id").primaryKey(),
+    /** One fact, e.g. "User's name is Oribi." */
+    content: text("content").notNull(),
+    /** ChatGPT account scope; "" matches the pre-account convention. */
+    accountId: text("account_id").notNull().default(""),
+    /** Chat the fact was learned in, for future UI provenance. */
+    sourceSessionId: text("source_session_id"),
+    /** Creation time, unix seconds. */
+    createdAt: integer("created_at").notNull(),
+    /** Last content update, unix seconds. */
+    updatedAt: integer("updated_at").notNull(),
+    /** Soft-delete time, unix seconds; NULL means live. */
+    deletedAt: integer("deleted_at"),
+  },
+  (table) => [index("memories_by_account").on(table.accountId, table.updatedAt)],
+);
