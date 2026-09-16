@@ -992,12 +992,21 @@ pub fn form_encode(value: &str) -> String {
 /// `response.output_text.delta` (`delta` string), `response.completed`, and
 /// `response.failed` / `response.incomplete` / `error`. Anything else is
 /// ignored — unknown events must never crash the stream.
+///
+/// The one lifecycle exception is `response.output_item.done` carrying a
+/// `web_search_call` item: the observed backend leaves
+/// `response.completed.response.output` empty (`[]`), so the streaming
+/// `done` event is the authoritative source for the provider-managed search
+/// item. The full item JSON is preserved (including its `ws_...` id) for the
+/// later activation phase; search progress events carry only `item_id` and
+/// stay ignored.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResponsesStreamEvent {
     TextDelta(String),
     ReasoningDelta(String),
     Completed(Value),
     Failed,
+    WebSearchCall(Value),
 }
 
 /// Incremental SSE frame parser. Feed network chunks to [`Self::push`] as
@@ -1085,8 +1094,15 @@ fn frame_events(frame: &str) -> Vec<ResponsesStreamEvent> {
 }
 
 /// Maps one parsed SSE JSON body onto a stream event. Only the documented
-/// Responses families produce output; everything else (item lifecycle,
-/// annotations, future additions) is ignored without failing.
+/// Responses families produce output; everything else (other item lifecycle
+/// events, annotations, future additions) is ignored without failing.
+///
+/// The single item-lifecycle exception is `response.output_item.done` with
+/// `item.type == "web_search_call"`, which yields
+/// [`ResponsesStreamEvent::WebSearchCall`] carrying the full item JSON. All
+/// other `output_item.*` events (including `added` and message-type `done`)
+/// and all `response.web_search_call.*` progress events stay ignored: the
+/// progress events carry only `item_id`, which the `done` event supersedes.
 fn stream_event(value: &Value) -> Option<ResponsesStreamEvent> {
     let event_type = value.get("type").and_then(Value::as_str)?;
     if event_type == "response.completed" {
@@ -1097,6 +1113,13 @@ fn stream_event(value: &Value) -> Option<ResponsesStreamEvent> {
         "response.failed" | "response.incomplete" | "error"
     ) {
         return Some(ResponsesStreamEvent::Failed);
+    }
+    if event_type == "response.output_item.done" {
+        let item = value.get("item")?;
+        if item.get("type").and_then(Value::as_str) == Some("web_search_call") {
+            return Some(ResponsesStreamEvent::WebSearchCall(item.clone()));
+        }
+        return None;
     }
     let delta = value
         .get("delta")
@@ -1628,6 +1651,120 @@ mod tests {
             let frame = format!("data: {{\"type\":\"{event_type}\"}}\n\n");
             assert_eq!(parser.push(&frame), vec![ResponsesStreamEvent::Failed]);
         }
+    }
+
+    #[test]
+    fn sse_web_search_call_item_survives_output_item_done() {
+        // Live-verified sequence: search item arrives via
+        // `response.output_item.done` while `response.completed` carries
+        // `output: []`. Progress events stay ignored; text flows unchanged.
+        let mut parser = ResponsesSseParser::new();
+        let events = parser.push(
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ws_live\",\"type\":\"web_search_call\",\"status\":\"in_progress\",\"action\":{\"type\":\"search\",\"queries\":[\"current president of Nigeria 2026\"]}}}\n\n\
+             data: {\"type\":\"response.web_search_call.in_progress\",\"item_id\":\"ws_live\"}\n\n\
+             data: {\"type\":\"response.web_search_call.searching\",\"item_id\":\"ws_live\"}\n\n\
+             data: {\"type\":\"response.web_search_call.completed\",\"item_id\":\"ws_live\"}\n\n\
+             data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_live\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"queries\":[\"current president of Nigeria 2026\"]}}}\n\n\
+             data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}\n\n\
+             data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_1\"}\n\n\
+             data: {\"type\":\"response.output_text.delta\",\"delta\":\"Bola \"}\n\n\
+             data: {\"type\":\"response.output_text.delta\",\"delta\":\"Tinubu\"}\n\n\
+             data: {\"type\":\"response.output_text.done\"}\n\n\
+             data: {\"type\":\"response.content_part.done\",\"item_id\":\"msg_1\"}\n\n\
+             data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}\n\n\
+             data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n",
+        );
+        assert_eq!(events.len(), 4);
+        let ResponsesStreamEvent::WebSearchCall(item) = &events[0] else {
+            panic!("expected WebSearchCall first, got {:?}", events[0]);
+        };
+        assert_eq!(item.get("id").and_then(Value::as_str), Some("ws_live"));
+        assert_eq!(
+            item.get("type").and_then(Value::as_str),
+            Some("web_search_call")
+        );
+        assert_eq!(
+            item.get("status").and_then(Value::as_str),
+            Some("completed")
+        );
+        assert_eq!(
+            item.get("action")
+                .and_then(|action| action.get("queries"))
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            events[1],
+            ResponsesStreamEvent::TextDelta("Bola ".to_owned())
+        );
+        assert_eq!(
+            events[2],
+            ResponsesStreamEvent::TextDelta("Tinubu".to_owned())
+        );
+        assert_eq!(
+            events[3],
+            ResponsesStreamEvent::Completed(
+                json!({"type":"response.completed","response":{"output":[]}})
+            )
+        );
+    }
+
+    #[test]
+    fn sse_web_search_call_preserves_ws_12345_id() {
+        // The `ws_...` id is the Phase-2 history linkage key; it must
+        // survive parsing byte-identical.
+        let mut parser = ResponsesSseParser::new();
+        let events = parser.push(
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_12345\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"queries\":[\"q\"]}}}\n\n",
+        );
+        assert_eq!(events.len(), 1);
+        let ResponsesStreamEvent::WebSearchCall(item) = &events[0] else {
+            panic!("expected WebSearchCall, got {:?}", events[0]);
+        };
+        assert_eq!(item.get("id").and_then(Value::as_str), Some("ws_12345"));
+    }
+
+    #[test]
+    fn sse_normal_response_without_search_is_unchanged() {
+        // No search events: the pre-change event vector must be exact, with
+        // zero WebSearchCall entries.
+        let mut parser = ResponsesSseParser::new();
+        let events = parser.push(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n\
+             data: {\"type\":\"response.output_text.done\"}\n\n\
+             data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n",
+        );
+        assert_eq!(
+            events,
+            vec![
+                ResponsesStreamEvent::TextDelta("hi".to_owned()),
+                ResponsesStreamEvent::Completed(
+                    json!({"type":"response.completed","response":{"output":[]}})
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn sse_search_progress_and_message_done_stay_ignored() {
+        // Progress events alone, message-type `done`, and future unknowns
+        // are ignored; the parser continues normally afterwards.
+        let mut parser = ResponsesSseParser::new();
+        let events = parser.push(
+            "data: {\"type\":\"response.web_search_call.in_progress\",\"item_id\":\"ws_x\"}\n\n\
+             data: {\"type\":\"response.web_search_call.searching\",\"item_id\":\"ws_x\"}\n\n\
+             data: {\"type\":\"response.web_search_call.completed\",\"item_id\":\"ws_x\"}\n\n\
+             data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}\n\n\
+             data: {\"type\":\"unknown.future.event\",\"foo\":1}\n\n",
+        );
+        assert!(events.is_empty());
+        let events =
+            parser.push("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n");
+        assert_eq!(
+            events,
+            vec![ResponsesStreamEvent::TextDelta("ok".to_owned())]
+        );
     }
 
     #[test]

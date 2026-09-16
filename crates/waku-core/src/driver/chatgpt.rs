@@ -845,6 +845,12 @@ impl Worker {
                             ResponsesStreamEvent::Failed => {
                                 return PostOutcome::Fatal(RESPONSE_FAILED_MESSAGE.to_owned());
                             }
+                            ResponsesStreamEvent::WebSearchCall(_) => {
+                                // Phase 1: recognized at the protocol layer so
+                                // the search item is no longer dropped.
+                                // History capture lands in the activation
+                                // phase; no behavior change yet.
+                            }
                         }
                     }
                 }
