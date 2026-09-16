@@ -2711,9 +2711,6 @@ impl Waku {
         });
         self.refresh_command_palette_localized_text(cx);
         self.refresh_transcript_search_localized_text(cx);
-        for terminal in self.right_panel_terminals.values() {
-            terminal.update(cx, |terminal, cx| terminal.refresh_localized_text(cx));
-        }
         for probe in &mut self.probes {
             probe.models = crate::model_catalog::fallback_models(probe.provider);
         }

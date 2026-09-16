@@ -11,7 +11,7 @@ menu.quit:
 menu.file:
   en: File
 menu.new_task:
-  en: New Task
+  en: New Chat
 menu.new_project:
   en: New Project…
 menu.edit:
@@ -511,7 +511,7 @@ common.rename:
   en: Rename
 
 session.new_task:
-  en: New task
+  en: New chat
 
 sidebar.today:
   en: Today
@@ -602,9 +602,9 @@ onboarding.web_description:
 onboarding.open_project_folder:
   en: Open project folder…
 onboarding.what_should_we_build:
-  en: What should we build?
+  en: What's next?
 onboarding.what_should_we_build_in:
-  en: "What should we build in "
+  en: "What's next in "
 onboarding.question_mark:
   en: "?"
 

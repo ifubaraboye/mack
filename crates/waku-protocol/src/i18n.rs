@@ -208,8 +208,8 @@ mod tests {
     }
 
     #[test]
-    fn task_creation_copy_uses_task_terminology() {
-        assert_eq!(&*rust_i18n::t!("menu.new_task", locale = "en"), "New Task");
+    fn task_creation_copy_uses_chat_terminology() {
+        assert_eq!(&*rust_i18n::t!("menu.new_task", locale = "en"), "New Chat");
         assert_eq!(
             &*rust_i18n::t!("command_palette.new_task", locale = "en"),
             "New task"
