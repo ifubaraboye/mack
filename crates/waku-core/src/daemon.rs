@@ -323,6 +323,43 @@ impl Backend for WakuBackend {
                     Err(error) => Err(chatgpt_rpc_error(error)),
                 }
             }
+            Command::ListMemories => {
+                let memories = match self.memory_account_id() {
+                    Some(account_id) => self
+                        .task_store
+                        .list_memories(&account_id)
+                        .context("could not load memories")?,
+                    // Signed out: no account, no memories — not an error.
+                    None => Vec::new(),
+                };
+                Ok(ResponsePayload::Memories { memories })
+            }
+            Command::DeleteMemory { id } => {
+                if let Some(account_id) = self.memory_account_id() {
+                    // Scope check first: a row from another account (or an
+                    // unknown id) must not be touched.
+                    let owned = self
+                        .task_store
+                        .list_memories(&account_id)
+                        .context("could not load memories")?
+                        .iter()
+                        .any(|memory| memory.id == id);
+                    if owned {
+                        self.task_store
+                            .delete_memory(id)
+                            .context("could not delete the memory")?;
+                    }
+                }
+                Ok(ResponsePayload::Ack)
+            }
+            Command::ClearMemories => {
+                if let Some(account_id) = self.memory_account_id() {
+                    self.task_store
+                        .clear_memories(&account_id)
+                        .context("could not clear memories")?;
+                }
+                Ok(ResponsePayload::Ack)
+            }
             Command::ProbeComputerPermissions { prompt } => {
                 Ok(ResponsePayload::ComputerPermissions {
                     permissions: crate::computer_use::probe_permissions(prompt)?,
@@ -668,6 +705,7 @@ impl Backend for WakuBackend {
                         .context("daemon received an invalid provider cursor")?,
                     chatgpt_history: options.chatgpt_history,
                     memory_db_path: Some(self.task_store.path().to_owned()),
+                    memory_enabled: self.settings.get().memory_enabled,
                 };
                 let (wake, _wake_events) = smol::channel::bounded(1);
                 let (event_sender, event_receiver) = driver::event_channel(wake);
@@ -1123,6 +1161,7 @@ impl WakuBackend {
                 // path from the hydrated Waku transcript.
                 chatgpt_history: None,
                 memory_db_path: Some(self.task_store.path().to_owned()),
+                memory_enabled: self.settings.get().memory_enabled,
             },
             event_sender,
         )?;
@@ -1183,6 +1222,7 @@ impl WakuBackend {
                 // rollback restarts.
                 chatgpt_history: None,
                 memory_db_path: Some(self.task_store.path().to_owned()),
+                memory_enabled: self.settings.get().memory_enabled,
             },
             event_sender,
         )?;
@@ -1206,6 +1246,14 @@ impl WakuBackend {
     fn chatgpt(&self) -> &crate::chatgpt_session::ChatGptSessionManager {
         self.chatgpt
             .get_or_init(crate::chatgpt_session::default_session_manager)
+    }
+
+    /// ChatGPT account scoping for the cross-chat memory store, read from
+    /// the stored session without touching the network. `None` when signed
+    /// out — memory RPC then sees an empty store rather than failing.
+    fn memory_account_id(&self) -> Option<String> {
+        let account_id = self.chatgpt().public_session().ok()?.user?.account_id;
+        (!account_id.is_empty()).then_some(account_id)
     }
 }
 
@@ -1358,6 +1406,7 @@ fn handle_driver_command(
                     reasoning_effort: options.reasoning_effort,
                     service_tier: options.service_tier,
                     context_window: options.context_window,
+                    memory_enabled: options.memory_enabled,
                 }),
             });
         }
@@ -1376,6 +1425,9 @@ fn handle_driver_command(
         | Command::Start { .. }
         | Command::GetSettings
         | Command::UpdateSettings { .. }
+        | Command::ListMemories
+        | Command::DeleteMemory { .. }
+        | Command::ClearMemories
         | Command::ProbeProvider { .. }
         | Command::FetchPlanUsage { .. }
         | Command::ProbeComputerPermissions { .. }
@@ -1855,6 +1907,33 @@ struct TurnFinishedWire {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unsigned_chatgpt_manager() -> crate::chatgpt_session::ChatGptSessionManager {
+        // Fresh in-memory credentials: signed out, no network, no files.
+        crate::chatgpt_session::ChatGptSessionManager::open(
+            std::sync::Arc::new(crate::chatgpt_session::MemoryStore::default()),
+            std::sync::Arc::new(crate::chatgpt_session::CurlDeviceTransport),
+            std::sync::Arc::new(crate::chatgpt_session::SystemClock),
+        )
+    }
+
+    fn temp_daemon() -> (WakuBackend, std::path::PathBuf) {
+        let directory = std::env::temp_dir().join(format!("waku-daemon-{}", Uuid::new_v4()));
+        let settings =
+            DaemonSettingsStore::open(directory.join("settings.json")).expect("temp settings");
+        let task_store = StateStore::daemon(directory.join("app.db"));
+        let daemon = WakuBackend::new(settings, task_store).expect("temp daemon");
+        (daemon, directory)
+    }
+
+    #[test]
+    fn signed_out_daemon_has_no_memory_account() {
+        let (daemon, directory) = temp_daemon();
+        assert!(daemon.chatgpt.set(unsigned_chatgpt_manager()).is_ok());
+        assert_eq!(daemon.memory_account_id(), None);
+
+        std::fs::remove_dir_all(directory).ok();
+    }
 
     #[test]
     fn stale_runtime_projection_keeps_newer_transcript_cursor() {

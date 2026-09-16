@@ -165,4 +165,5 @@ pub struct SessionOptions {
     pub reasoning_effort: Option<String>,
     pub service_tier: Option<String>,
     pub context_window: Option<String>,
+    pub memory_enabled: bool,
 }

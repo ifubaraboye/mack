@@ -429,6 +429,7 @@ struct LiveOptions {
     model: Option<String>,
     reasoning_effort: Option<String>,
     service_tier: Option<String>,
+    memory_enabled: bool,
 }
 
 /// Cross-thread interrupt state: the worker parks the live body here so
@@ -486,6 +487,7 @@ impl ChatGptDriver {
             model: options.model.filter(|model| !model.trim().is_empty()),
             reasoning_effort: options.reasoning_effort,
             service_tier: options.service_tier,
+            memory_enabled: options.memory_enabled,
         }));
         let (commands, incoming) = unbounded();
         // Restart resume: rebuild the resend-history a live worker would
@@ -556,12 +558,13 @@ impl DriverControl for ChatGptDriver {
     }
 
     fn apply_options(&self, options: SessionOptions) -> bool {
-        // Model, effort, and tier are per-turn request fields: absorb in
-        // place, no restart needed.
+        // Model, effort, tier, and the memory toggle are per-turn request
+        // fields: absorb in place, no restart needed.
         *self.options.lock() = LiveOptions {
             model: options.model.filter(|model| !model.trim().is_empty()),
             reasoning_effort: options.reasoning_effort,
             service_tier: options.service_tier,
+            memory_enabled: options.memory_enabled,
         };
         true
     }
@@ -709,10 +712,14 @@ impl Worker {
 
     /// Retrieves the current turn's memory context, if any. Runs on the
     /// worker thread (never the UI thread) over a short-lived read-only
-    /// connection. Every failure — no path, no table, no match — degrades to
-    /// `None` so the normal request proceeds exactly as without memories.
-    /// Memory contents are never logged.
+    /// connection. A disabled toggle skips the lookup entirely; every other
+    /// failure — no path, no table, no match — also degrades to `None`, so
+    /// the normal request proceeds exactly as without memories. Memory
+    /// contents are never logged.
     fn retrieve_memory_instructions(&self, prompt: &str, account_id: &str) -> Option<String> {
+        if !self.options.lock().memory_enabled {
+            return None;
+        }
         let terms = memory::memory_search_terms(prompt);
         if terms.is_empty() {
             return None;
@@ -727,6 +734,9 @@ impl Worker {
     }
 
     fn spawn_memory_extraction(&self) {
+        if !self.options.lock().memory_enabled {
+            return;
+        }
         if !memory::should_extract(&self.last_turn_user, &self.last_turn_assistant) {
             return;
         }
@@ -1541,6 +1551,7 @@ mod tests {
             provider_cursor: None,
             chatgpt_history: None,
             memory_db_path: None,
+            memory_enabled: true,
         }
     }
 
@@ -1968,6 +1979,7 @@ mod tests {
             }),
             options: Arc::new(Mutex::new(LiveOptions {
                 model: Some("gpt-5.5".to_owned()),
+                memory_enabled: true,
                 ..Default::default()
             })),
             history: Vec::new(),
@@ -2048,6 +2060,7 @@ mod tests {
             }),
             options: Arc::new(Mutex::new(LiveOptions {
                 model: Some("gpt-5.5".to_owned()),
+                memory_enabled: true,
                 ..Default::default()
             })),
             history: Vec::new(),
@@ -2084,6 +2097,90 @@ mod tests {
         assert!(!instructions_b.contains("noodles"));
 
         std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn disabled_memory_skips_retrieval_and_extraction() {
+        let (store, directory) = temp_memory_store();
+        let db_path = directory.join("app.db");
+        store
+            .insert_memory("The user likes noodles", TEST_ACCOUNT_ID, None)
+            .unwrap();
+        // A long answer keeps the turn substantive, so only the toggle can
+        // explain the missing extraction below.
+        let chat = format!(
+            "{}{}",
+            sse_text_frame("You like noodles a lot, with chili oil on top."),
+            sse_completed_frame()
+        );
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![chat.as_bytes()],
+        )]));
+        let (mut worker, receiver) = worker_with_memory_db(transport.clone(), db_path);
+        worker.options.lock().memory_enabled = false;
+
+        // Retrieval gated: default instructions despite a matching memory.
+        assert!(
+            worker
+                .retrieve_memory_instructions("What food do I like?", TEST_ACCOUNT_ID)
+                .is_none()
+        );
+        eprintln!("DBG test: direct retrieve done");
+        worker.run_turn("What food do I like?".to_owned());
+        let events = collect_until_finished(&receiver);
+        assert!(matches!(
+            events.last(),
+            Some(DriverEvent::TurnFinished { success: true, .. })
+        ));
+        // Extraction gated: no second request can arrive — no thread was
+        // spawned, so this asserts immediately and deterministically. Each
+        // lock is scoped to its statement: parking_lot mutexes are not
+        // reentrant, so a live guard must never surround another `lock()`.
+        assert_eq!(transport.requests.lock().len(), 1);
+        assert_eq!(
+            transport.requests.lock()[0].body["instructions"],
+            serde_json::json!(crate::chatgpt_protocol::DEFAULT_CODEX_INSTRUCTIONS)
+        );
+        // The stored row itself is untouched.
+        assert_eq!(store.list_memories(TEST_ACCOUNT_ID).unwrap().len(), 1);
+
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn apply_options_absorbs_the_memory_toggle_live() {
+        // Driver and worker share one LiveOptions: flipping the toggle
+        // through the driver control must be visible to the worker's next
+        // retrieval without any restart.
+        let live = Arc::new(Mutex::new(LiveOptions {
+            model: Some("gpt-5.5".to_owned()),
+            memory_enabled: true,
+            ..Default::default()
+        }));
+        let (commands, _incoming) = unbounded();
+        let driver = ChatGptDriver {
+            commands,
+            shared: Arc::new(Shared {
+                body: Mutex::new(None),
+                generation: AtomicU64::new(0),
+                busy: AtomicBool::new(false),
+            }),
+            options: live.clone(),
+        };
+        assert!(live.lock().memory_enabled);
+        assert!(DriverControl::apply_options(
+            &driver,
+            crate::driver::SessionOptions {
+                mode: crate::model::RuntimeMode::default(),
+                model: None,
+                reasoning_effort: None,
+                service_tier: None,
+                context_window: None,
+                memory_enabled: false,
+            }
+        ));
+        assert!(!live.lock().memory_enabled);
     }
 
     #[test]

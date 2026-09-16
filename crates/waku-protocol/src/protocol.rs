@@ -11,7 +11,7 @@ use crate::model::{
     AgentSession, ChatGptHistorySeed, GoalOperation, Project, ProviderKind, ProviderProbe,
     ProviderResumeCursor, ProviderSessionHistory, ProviderSessionSummary, UserInputAnswer,
 };
-use crate::persistence::{ComposerDraftChange, ComposerDrafts, SessionMessageMatch};
+use crate::persistence::{ComposerDraftChange, ComposerDrafts, SessionMessageMatch, StoredMemory};
 use crate::provider_session::{ProviderSessionFork, ProviderSessionForkRequest};
 use crate::settings::DaemonSettings;
 use crate::skills::SkillsCatalog;
@@ -277,6 +277,16 @@ pub enum Command {
     ChatGptSession,
     /// Discover the signed-in account's ChatGPT models (refreshing first).
     ChatGptDiscoverModels,
+    /// List cross-chat memories for the signed-in ChatGPT account. Empty
+    /// when signed out.
+    ListMemories,
+    /// Soft-delete one cross-chat memory by id. No-op when unknown or the
+    /// account does not match.
+    DeleteMemory {
+        id: Uuid,
+    },
+    /// Soft-delete every cross-chat memory for the signed-in account.
+    ClearMemories,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -308,6 +318,7 @@ pub struct WireSessionOptions {
     pub reasoning_effort: Option<String>,
     pub service_tier: Option<String>,
     pub context_window: Option<String>,
+    pub memory_enabled: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -441,6 +452,9 @@ pub enum ResponsePayload {
     SessionMessageMatches {
         matches: Vec<SessionMessageMatch>,
     },
+    Memories {
+        memories: Vec<StoredMemory>,
+    },
     ProviderSessions {
         sessions: Vec<ProviderSessionSummary>,
     },
@@ -522,6 +536,38 @@ mod base64_bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_commands_use_stable_camel_case_fields() {
+        let list = serde_json::to_value(Command::ListMemories).unwrap();
+        assert_eq!(list["type"], "listMemories");
+
+        let id = Uuid::new_v4();
+        let delete = serde_json::to_value(Command::DeleteMemory { id }).unwrap();
+        assert_eq!(delete["type"], "deleteMemory");
+        assert_eq!(delete["id"], id.to_string());
+        let Command::DeleteMemory { id: back } = serde_json::from_value(delete).unwrap() else {
+            panic!("unexpected command variant");
+        };
+        assert_eq!(back, id);
+
+        let clear = serde_json::to_value(Command::ClearMemories).unwrap();
+        assert_eq!(clear["type"], "clearMemories");
+
+        let payload = serde_json::to_value(ResponsePayload::Memories {
+            memories: vec![StoredMemory {
+                id,
+                content: "The user likes noodles".to_owned(),
+                account_id: "acct-1".to_owned(),
+                source_session_id: None,
+                created_at: 1,
+                updated_at: 2,
+            }],
+        })
+        .unwrap();
+        assert_eq!(payload["memories"][0]["content"], "The user likes noodles");
+        assert_eq!(payload["memories"][0]["accountId"], "acct-1");
+    }
 
     #[test]
     fn binary_payloads_use_base64_json_strings() {

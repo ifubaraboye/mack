@@ -56,6 +56,10 @@ fn default_computer_use_enabled() -> bool {
     false
 }
 
+fn default_memory_enabled() -> bool {
+    true
+}
+
 fn default_ui_font_size() -> f32 {
     DEFAULT_UI_FONT_SIZE
 }
@@ -397,6 +401,10 @@ pub struct PersistedState {
     pub window_state: Option<PersistedWindowState>,
     #[serde(default = "default_computer_use_enabled")]
     pub computer_use_enabled: bool,
+    /// Cross-chat memory extraction/retrieval. Mirrored to/from
+    /// `DaemonSettings`; defaults on so existing behavior is unchanged.
+    #[serde(default = "default_memory_enabled")]
+    pub memory_enabled: bool,
     #[serde(default)]
     pub computer_use_allowed_apps: Vec<ComputerAppGrant>,
     #[serde(default)]
@@ -458,6 +466,7 @@ impl PersistedState {
             markdown_preview: false,
             window_state: None,
             computer_use_enabled: false,
+            memory_enabled: true,
             computer_use_allowed_apps: Vec::new(),
             disabled_providers: Vec::new(),
             provider_binary_overrides: HashMap::new(),
@@ -547,6 +556,7 @@ impl PersistedState {
     pub fn daemon_settings(&self) -> DaemonSettings {
         DaemonSettings {
             computer_use_enabled: self.computer_use_enabled,
+            memory_enabled: self.memory_enabled,
             computer_use_allowed_apps: self.computer_use_allowed_apps.clone(),
             disabled_providers: self.disabled_providers.clone(),
             provider_binary_overrides: self.provider_binary_overrides.clone(),
@@ -560,6 +570,7 @@ impl PersistedState {
         // it is on.
         self.computer_use_enabled =
             crate::computer_use::resolve_enabled(settings.computer_use_enabled);
+        self.memory_enabled = settings.memory_enabled;
         self.computer_use_allowed_apps = settings.computer_use_allowed_apps;
         self.disabled_providers = settings.disabled_providers;
         self.provider_binary_overrides = settings.provider_binary_overrides;
@@ -1131,6 +1142,23 @@ fn restore_task_state_skeletons(sessions: &mut [AgentSession]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_is_enabled_by_default_and_round_trips() {
+        assert!(PersistedState::empty().memory_enabled);
+        // State written before the key existed restores to enabled.
+        let mut value = serde_json::to_value(PersistedState::empty()).unwrap();
+        value.as_object_mut().unwrap().remove("memory_enabled");
+        let restored: PersistedState = serde_json::from_value(value).unwrap();
+        assert!(restored.memory_enabled);
+
+        let mut state = PersistedState::empty();
+        state.memory_enabled = false;
+        assert!(!state.daemon_settings().memory_enabled);
+        let mut restored = PersistedState::empty();
+        restored.apply_daemon_settings(state.daemon_settings());
+        assert!(!restored.memory_enabled);
+    }
 
     #[test]
     fn math_rendering_defaults_on_and_persists_as_an_app_preference() {

@@ -1861,6 +1861,7 @@ fn settings_search_filters_pages_for_arrow_cycling() {
         SettingsPage::General,
         SettingsPage::Providers,
         SettingsPage::Usage,
+        SettingsPage::Memory,
     ];
     assert_eq!(pages(""), all_pages);
 
@@ -1875,12 +1876,57 @@ fn settings_search_filters_pages_for_arrow_cycling() {
 }
 
 #[test]
+fn memory_settings_page_is_searchable_and_localized() {
+    use super::SettingsPage;
+
+    let pages = |query: &str| {
+        visible_settings_pages(query)
+            .map(|(page, ..)| page)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(pages("memory"), vec![SettingsPage::Memory]);
+    assert_eq!(pages("forget"), vec![SettingsPage::Memory]);
+    // Every user-facing memory string resolves through the locale catalog
+    // instead of falling back to the raw key.
+    for key in [
+        "settings.memory",
+        "memory.title",
+        "memory.description",
+        "memory.toggle_title",
+        "memory.toggle_description",
+        "memory.off_title",
+        "memory.off_description",
+        "memory.empty_title",
+        "memory.empty_description",
+        "memory.loading",
+        "memory.load_error",
+        "memory.retry",
+        "memory.delete",
+        "memory.confirm_delete",
+        "memory.delete_error",
+        "memory.clear_title",
+        "memory.clear_description",
+        "memory.confirm_clear",
+        "memory.clear_error",
+        "memory.toggle_error",
+        "memory.updated_just_now",
+    ] {
+        let text = crate::i18n::translate(key);
+        assert!(
+            !text.contains(key),
+            "locale key {key} did not resolve: {text}"
+        );
+    }
+}
+
+#[test]
 fn hidden_settings_pages_stay_out_of_navigation() {
     use super::SettingsPage;
 
     assert!(SettingsPage::General.is_visible_in_navigation());
     assert!(SettingsPage::Providers.is_visible_in_navigation());
     assert!(SettingsPage::Usage.is_visible_in_navigation());
+    assert!(SettingsPage::Memory.is_visible_in_navigation());
     assert!(!SettingsPage::Appearance.is_visible_in_navigation());
     // Computer Use, Daemon and Skills are hidden; skills are invoked via
     // the `$` picker in the composer instead.

@@ -162,6 +162,8 @@ settings.daemon:
   en: Daemon
 settings.computer_use:
   en: Computer Use
+settings.memory:
+  en: Memory
 settings.general_keywords:
   en: general local projects conversations privacy analytics telemetry anonymous sharing updates automatic sparkle version math latex formula expression
 settings.appearance_keywords:
@@ -178,6 +180,48 @@ settings.daemon_keywords:
   en: daemon server remote web network expose origin token port websocket
 settings.computer_use_keywords:
   en: computer use screen recording accessibility apps control codex
+settings.memory_keywords:
+  en: memory remember memories preferences forget delete clear chats context
+memory.title:
+  en: Memory
+memory.description:
+  en: Waku can remember useful information from your conversations and use it in other chats.
+memory.toggle_title:
+  en: Memory
+memory.toggle_description:
+  en: Allow Waku to remember information from your conversations
+memory.off_title:
+  en: Memory is off
+memory.off_description:
+  en: Waku won't save or use memories until you turn it back on. Existing memories are kept.
+memory.empty_title:
+  en: No memories yet
+memory.empty_description:
+  en: As you chat, Waku may remember useful information about your preferences and interests.
+memory.loading:
+  en: Loading memories…
+memory.load_error:
+  en: Could not load memories. Please try again.
+memory.retry:
+  en: Try again
+memory.delete:
+  en: Delete
+memory.confirm_delete:
+  en: Confirm delete
+memory.delete_error:
+  en: Could not delete the memory. Please try again.
+memory.clear_title:
+  en: Clear all memories
+memory.clear_description:
+  en: Delete everything Waku has remembered about you. Your conversations will not be deleted.
+memory.confirm_clear:
+  en: Confirm clear
+memory.clear_error:
+  en: Could not clear memories. Please try again.
+memory.toggle_error:
+  en: Could not update the memory setting. Please try again.
+memory.updated_just_now:
+  en: Updated just now
 settings.back:
   en: Back
 settings.search:

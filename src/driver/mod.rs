@@ -328,6 +328,7 @@ impl DriverControl for RemoteDriverControl {
                 reasoning_effort: options.reasoning_effort,
                 service_tier: options.service_tier,
                 context_window: options.context_window,
+                memory_enabled: options.memory_enabled,
             })
         })();
         let Ok(options) = options else {

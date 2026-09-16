@@ -19,7 +19,7 @@ const SETTINGS_SEARCH_CONTEXT: &str = "SettingsSidebar > TextInput";
 
 /// The sidebar's rows in display order, each with the keyword haystack the
 /// search field filters against.
-const SETTINGS_PAGES: [(SettingsPage, &str, &str, &str); 7] = [
+const SETTINGS_PAGES: [(SettingsPage, &str, &str, &str); 8] = [
     (
         SettingsPage::General,
         "settings.general",
@@ -61,6 +61,12 @@ const SETTINGS_PAGES: [(SettingsPage, &str, &str, &str); 7] = [
         "settings.computer_use",
         "icons/cursor-spark.svg",
         "settings.computer_use_keywords",
+    ),
+    (
+        SettingsPage::Memory,
+        "settings.memory",
+        "icons/sparkle.svg",
+        "settings.memory_keywords",
     ),
 ];
 
@@ -361,6 +367,7 @@ impl Waku {
                         SettingsPage::Daemon => tr!("settings.daemon"),
                         SettingsPage::ComputerUse => tr!("settings.computer_use"),
                         SettingsPage::Appearance => tr!("settings.appearance"),
+                        SettingsPage::Memory => tr!("settings.memory"),
                     }),
             )
             .child(match page {
@@ -371,6 +378,7 @@ impl Waku {
                 SettingsPage::Daemon => self.render_daemon_settings(cx),
                 SettingsPage::ComputerUse => self.render_computer_use_settings(cx),
                 SettingsPage::Appearance => self.render_appearance_settings(cx),
+                SettingsPage::Memory => self.render_memory_settings(cx),
             });
 
         div()

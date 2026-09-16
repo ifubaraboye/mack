@@ -228,6 +228,22 @@ enum BranchPickerAction {
     Create,
 }
 
+/// Load state of the Settings → Memory page list. Memories live in the
+/// daemon-owned database, so the page fetches them over RPC instead of
+/// reading SQLite directly.
+#[derive(Clone, Debug, Default)]
+enum MemoryListState {
+    #[default]
+    NotLoaded,
+    Loading {
+        generation: u64,
+    },
+    Loaded {
+        memories: Vec<waku_protocol::persistence::StoredMemory>,
+    },
+    Failed,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SettingsPage {
     General,
@@ -237,6 +253,7 @@ enum SettingsPage {
     Daemon,
     ComputerUse,
     Appearance,
+    Memory,
 }
 
 impl SettingsPage {
@@ -1321,6 +1338,15 @@ pub struct Waku {
     /// The skill directory whose delete button is armed for its confirming
     /// second click.
     skills_delete_arming: Option<PathBuf>,
+    /// Cross-chat memories for the Settings → Memory page.
+    memory_list: MemoryListState,
+    memory_list_generation: u64,
+    /// The memory id whose delete button is armed for its confirming
+    /// second click.
+    memory_delete_arming: Option<Uuid>,
+    /// Whether the clear-all-memories button is armed for its confirming
+    /// second click.
+    memory_clear_arming: bool,
     /// Scroll position of the settings content column, tracked so the pane
     /// can draw a scrollbar and mark the titlebar boundary once content
     /// slides under it.
@@ -1490,6 +1516,7 @@ mod drafts;
 mod goal_dialog;
 mod group_dialog;
 mod image_preview;
+mod memory_page;
 mod render;
 mod right_panel;
 mod runtime;
@@ -2730,6 +2757,10 @@ impl Waku {
                 skills_detail_scrollbar: ScrollbarState::new(),
                 skills_source_filter: None,
                 skills_delete_arming: None,
+                memory_list: MemoryListState::NotLoaded,
+                memory_list_generation: 0,
+                memory_delete_arming: None,
+                memory_clear_arming: false,
                 settings_scroll: ScrollHandle::new(),
                 settings_scrollbar: ScrollbarState::new(),
                 header_drag_armed: false,

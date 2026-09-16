@@ -196,6 +196,9 @@ pub struct DriverStartOptions {
     /// the daemon at start (never sent over the wire); `None` falls back to
     /// `StateStore::default_path()`. Consumed only by the ChatGPT driver.
     pub memory_db_path: Option<PathBuf>,
+    /// Cross-chat memory extraction and retrieval. Filled by the daemon from
+    /// its settings at start and refreshed live through `apply_options`.
+    pub memory_enabled: bool,
 }
 
 /// The subset of `DriverStartOptions` a user can change without starting a new
@@ -208,6 +211,7 @@ pub struct SessionOptions {
     pub reasoning_effort: Option<String>,
     pub service_tier: Option<String>,
     pub context_window: Option<String>,
+    pub memory_enabled: bool,
 }
 
 pub(crate) fn start_local(

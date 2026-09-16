@@ -983,6 +983,12 @@ impl Waku {
                 "icons/cursor-spark.svg",
                 "settings preferences computer use accessibility screen recording",
             ),
+            (
+                SettingsPage::Memory,
+                "settings.memory",
+                "icons/sparkle.svg",
+                "settings preferences memory remember memories preferences forget delete clear",
+            ),
         ] {
             if !page.is_visible_in_navigation() {
                 continue;

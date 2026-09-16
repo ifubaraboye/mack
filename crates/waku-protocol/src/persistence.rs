@@ -167,6 +167,7 @@ pub struct SessionMessageMatch {
 /// per-chat transcript by design — memories are global context, never
 /// conversation history.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct StoredMemory {
     pub id: Uuid,
     pub content: String,

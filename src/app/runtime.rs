@@ -2410,6 +2410,7 @@ impl Waku {
             reasoning_effort,
             service_tier,
             context_window,
+            memory_enabled: self.state.memory_enabled,
         }
     }
 
@@ -2518,6 +2519,7 @@ impl Waku {
             reasoning_effort,
             service_tier,
             context_window,
+            memory_enabled: _,
         } = self.session_options(&session);
         Ok(DriverStartRequest {
             session_id: session.id,
