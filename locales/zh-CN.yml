@@ -6,7 +6,6 @@ menu.settings: 设置…
 menu.quit: 退出 %{app}
 menu.file: 文件
 menu.new_task: 新建任务
-menu.new_project: 新建项目…
 menu.edit: 编辑
 menu.undo: 撤销
 menu.redo: 重做
@@ -44,7 +43,6 @@ command_palette.new_task: 新建任务
 command_palette.resume: 恢复…
 command_palette.change_provider: 更改服务商
 command_palette.current_provider: 当前服务商
-command_palette.open_project: 打开项目…
 command_palette.choose_model: 选择模型…
 command_palette.copy_task_id: 复制任务 ID
 command_palette.copy_agent_cli_thread_id: 复制智能体 CLI 线程 ID
@@ -257,21 +255,9 @@ sidebar.status_working: 正在工作
 sidebar.status_waiting: 正在等待
 sidebar.status_background: 等待后台任务
 sidebar.status_failed: 失败
-project.new_project: 新建项目…
-project.no_project: 不使用项目
 project.no_project_name: 无项目
-project.choose_project: 选择项目
-project.default_folder: 默认文件夹
-project.project_lower: 项目
-project.without_a_project: 不使用项目
-project.your_project: 你的项目
-onboarding.open_project_to_begin: 打开一个项目即可开始
-onboarding.description: Waku 会在你选择的文件夹中运行编程智能体。代码、任务和历史记录都保留在这台电脑上
 onboarding.web_description: 请选择守护进程主机上的路径，或在不使用项目的情况下开始。
-onboarding.open_project_folder: 打开项目文件夹…
 onboarding.what_should_we_build: 想构建什么？
-onboarding.what_should_we_build_in: "想在 "
-onboarding.question_mark: " 中构建什么？"
 common.copied: 已复制
 common.copy_message: 复制消息
 common.copy_message_title: 复制消息
@@ -585,8 +571,6 @@ composer.loading_suggestions: 正在加载建议…
 composer.remove_attachment: 移除 %{name}
 composer.queued_message_actions: 后续消息操作
 terminal.starting: 正在启动终端…
-project.add_project: 添加项目
-errors.remote_project_picker: 添加守护进程主机上的项目需要远程路径选择器，但该功能尚不可用
 session.stopped: 已停止
 session.turn_completed: 本轮已完成
 session.turn_waiting_background: 正在等待后台任务

@@ -19,7 +19,7 @@ use waku_protocol::computer_use::ComputerAppGrant;
 use waku_protocol::i18n::AppLanguage;
 use waku_protocol::identity::DATA_DIRECTORY_NAME;
 use waku_protocol::model::{
-    AgentSession, FavoriteModel, Project, ProviderKind, ProviderResumeCursor,
+    AgentSession, ChatGroup, FavoriteModel, Project, ProviderKind, ProviderResumeCursor,
     ProviderSessionHistory, ProviderSessionSummary, RuntimeMode,
 };
 use waku_protocol::theme::ThemePreference;
@@ -82,7 +82,7 @@ fn default_analytics_enabled() -> bool {
 }
 
 fn default_provider() -> ProviderKind {
-    ProviderKind::Codex
+    ProviderKind::ChatGpt
 }
 
 fn default_sidebar_width() -> f32 {
@@ -333,6 +333,8 @@ struct AppState {
     sidebar_grouping: SidebarGrouping,
     #[serde(default)]
     sidebar_ordering: SidebarOrdering,
+    #[serde(default)]
+    chat_groups: Vec<ChatGroup>,
     #[serde(default = "default_right_panel_width")]
     right_panel_width: f32,
     /// Whether markdown files in the right panel open as a rendered preview
@@ -352,6 +354,11 @@ pub struct PersistedState {
     pub analytics_enabled: bool,
     pub projects: Vec<Project>,
     pub sessions: Vec<AgentSession>,
+    /// User-defined chat groups, in creation order. Sidebar sections render
+    /// in this order; sessions point at them via [`AgentSession::group_id`].
+    /// A session whose id is missing here renders ungrouped.
+    #[serde(default)]
+    pub chat_groups: Vec<ChatGroup>,
     pub selected_project: Option<Uuid>,
     pub selected_session: Option<Uuid>,
     pub last_provider: ProviderKind,
@@ -438,9 +445,10 @@ impl PersistedState {
             analytics_enabled: true,
             projects: Vec::new(),
             sessions: Vec::new(),
+            chat_groups: Vec::new(),
             selected_project: None,
             selected_session: None,
-            last_provider: ProviderKind::Codex,
+            last_provider: ProviderKind::ChatGpt,
             last_runtime_mode: RuntimeMode::default(),
             last_model: None,
             last_reasoning_effort: None,
@@ -474,7 +482,7 @@ impl PersistedState {
 
     pub fn fresh(cwd: PathBuf) -> Self {
         let project = Project::from_path(cwd);
-        let session = AgentSession::new(project.id, ProviderKind::Codex);
+        let session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         Self {
             selected_project: Some(project.id),
             selected_session: Some(session.id),
@@ -604,6 +612,7 @@ impl PersistedState {
             sidebar_width: self.sidebar_width,
             sidebar_grouping: self.sidebar_grouping,
             sidebar_ordering: self.sidebar_ordering,
+            chat_groups: self.chat_groups.clone(),
             right_panel_width: self.right_panel_width,
             markdown_preview: self.markdown_preview,
             window_state: self.window_state,
@@ -640,6 +649,7 @@ impl PersistedState {
         self.sidebar_width = app_state.sidebar_width;
         self.sidebar_grouping = app_state.sidebar_grouping;
         self.sidebar_ordering = app_state.sidebar_ordering;
+        self.chat_groups = app_state.chat_groups;
         self.right_panel_width = app_state.right_panel_width;
         self.markdown_preview = app_state.markdown_preview;
         self.window_state = app_state.window_state;
@@ -1200,7 +1210,7 @@ mod tests {
         let mut state = PersistedState::fresh(PathBuf::from("/tmp/project"));
         state.last_runtime_mode = RuntimeMode::Ask;
 
-        let session = state.new_session(state.projects[0].id, ProviderKind::OpenCode);
+        let session = state.new_session(state.projects[0].id, ProviderKind::ChatGpt);
 
         assert_eq!(session.runtime_mode, RuntimeMode::Ask);
         assert_eq!(state.app_state().last_runtime_mode, RuntimeMode::Ask);
@@ -1208,7 +1218,7 @@ mod tests {
 
     #[test]
     fn daemon_task_state_becomes_list_only_after_crossing_the_client_boundary() {
-        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         session.detail_loaded = false;
         assert!(
             session.has_started(),

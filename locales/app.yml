@@ -12,8 +12,6 @@ menu.file:
   en: File
 menu.new_task:
   en: New Chat
-menu.new_project:
-  en: New Project…
 menu.edit:
   en: Edit
 menu.undo:
@@ -90,8 +88,6 @@ command_palette.change_provider:
   en: Change provider
 command_palette.current_provider:
   en: Current provider
-command_palette.open_project:
-  en: Open project…
 command_palette.choose_model:
   en: Choose model…
 command_palette.copy_task_id:
@@ -555,6 +551,18 @@ sidebar.days_ago:
   en: "%{count}d"
 sidebar.unknown_project:
   en: Unknown project
+sidebar.move_to_group:
+  en: Move to group
+sidebar.new_group:
+  en: New group
+sidebar.new_group_name:
+  en: New group
+sidebar.remove_from_group:
+  en: Remove from group
+sidebar.delete_group:
+  en: Delete group
+sidebar.untitled_group:
+  en: Untitled group
 sidebar.close:
   en: Close sidebar
 sidebar.hide:
@@ -576,38 +584,12 @@ sidebar.status_background:
 sidebar.status_failed:
   en: Failed
 
-project.new_project:
-  en: New project…
-project.no_project:
-  en: Don't work in a project
 project.no_project_name:
   en: No project
-project.choose_project:
-  en: choose a project
-project.default_folder:
-  en: Default folder
-project.project_lower:
-  en: project
-project.without_a_project:
-  en: without a project
-project.your_project:
-  en: your project
-
-onboarding.open_project_to_begin:
-  en: Open a project to begin
-onboarding.description:
-  en: Waku runs coding agents in folders you choose. Your code, sessions, and history stay on this computer
 onboarding.web_description:
   en: Choose a path on the daemon host, or start without a project.
-onboarding.open_project_folder:
-  en: Open project folder…
 onboarding.what_should_we_build:
-  en: What's next?
-onboarding.what_should_we_build_in:
-  en: "What's next in "
-onboarding.question_mark:
-  en: "?"
-
+  en: What's on your mind?
 common.copied:
   en: Copied
 common.copy_message:
@@ -1257,11 +1239,6 @@ composer.remove_attachment:
 
 terminal.starting:
   en: Starting terminal…
-
-project.add_project:
-  en: Add project
-errors.remote_project_picker:
-  en: Adding a daemon-host project needs a remote path picker, which is not available yet
 
 session.stopped:
   en: Stopped

@@ -1,21 +1,10 @@
 //! Local provider runtime owned by `waku-daemon`.
 
-mod acp;
 mod activity;
-mod amp;
 mod chatgpt;
-mod claude;
-mod codex;
 mod computer_use;
-mod deepseek;
-mod opencode;
-mod opencode2;
-mod opencode2_computer_use;
-mod pi;
 mod support;
 mod title_refresh;
-
-pub(crate) use acp::catalog_agent;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -90,6 +79,10 @@ impl DriverHandle {
         self.inner.prompt(prompt);
     }
 
+    pub fn generate_title(&self, prompt: String) {
+        self.inner.generate_title(prompt);
+    }
+
     /// Whether this transport can inject a user message into the currently
     /// running turn (steering) instead of starting a new one.
     pub fn supports_steer(&self) -> bool {
@@ -153,6 +146,7 @@ impl DriverHandle {
 
 pub trait DriverControl: Send + Sync {
     fn prompt(&self, prompt: String);
+    fn generate_title(&self, _prompt: String) {}
     fn supports_steer(&self) -> bool {
         false
     }
@@ -224,35 +218,7 @@ pub(crate) fn start_local(
     options.computer_use_enabled =
         crate::computer_use::resolve_enabled(options.computer_use_enabled);
     let inner: Arc<dyn DriverControl> = match provider {
-        ProviderKind::Codex => Arc::new(codex::CodexDriver::start(options, events)?),
-        // Daemon-owned `/responses` driver: device-flow auth plus model
-        // discovery from Stage 2, streaming text turns over HTTPS.
         ProviderKind::ChatGpt => Arc::new(chatgpt::ChatGptDriver::start(options, events)?),
-        ProviderKind::Pi => Arc::new(pi::PiDriver::start(pi::PiFlavor::Pi, options, events)?),
-        ProviderKind::OhMyPi => {
-            Arc::new(pi::PiDriver::start(pi::PiFlavor::OhMyPi, options, events)?)
-        }
-        // Cursor, Fx, Grok, and Kimi Code all serve a long-lived ACP session,
-        // which is the only way their Supervised mode can actually ask the user
-        // rather than silently forcing or denying.
-        ProviderKind::Cursor | ProviderKind::Fx | ProviderKind::Grok | ProviderKind::Kimi => {
-            Arc::new(acp::AcpDriver::start(provider, options, events)?)
-        }
-        ProviderKind::DeepSeek => Arc::new(deepseek::DeepSeekDriver::start(options, events)?),
-        // OpenCode's own server is its real API, and it is what exposes
-        // interactive permission requests.
-        ProviderKind::OpenCode => Arc::new(opencode::OpenCodeDriver::start(options, events)?),
-        // OpenCode 2 is not a per-workspace server: one adopted background
-        // service carries every workspace, and every Waku task rides its one
-        // event stream.
-        ProviderKind::OpenCode2 => Arc::new(opencode2::OpenCode2Driver::start(options, events)?),
-        // Claude serves a realtime stream of user messages on stdin — the same
-        // transport the Agent SDK drives — which is what lets its Supervised
-        // mode ask rather than decide alone.
-        ProviderKind::Claude => Arc::new(claude::ClaudeDriver::start(options, events)?),
-        // Amp reads newline-delimited user messages on stdin and stays alive
-        // until stdin closes, so it too serves the whole conversation.
-        ProviderKind::Amp => Arc::new(amp::AmpDriver::start(options, events)?),
     };
     Ok(DriverHandle { inner })
 }

@@ -32,12 +32,12 @@ use crate::input::{ComposerAttachmentPaste, ComposerEvent, ComposerInput, InputE
 use crate::md;
 use crate::model::{
     ActivityItem, ActivityKind, AgentSession, BackgroundWorkEvent, BackgroundWorkItem,
-    BackgroundWorkKey, BackgroundWorkKind, BackgroundWorkStatus, ChatGptHistorySeed, Checkpoint,
-    CheckpointStatus, ContextUsage, DriverEvent, FavoriteModel, Message, MessageAttachment,
-    MessageRole, PendingPermission, Project, ProviderKind, ProviderModel, ProviderProbe,
-    ProviderResumeCursor, ProviderSessionHistory, ProviderSessionSummary, QueuedMessage,
-    ReasoningBlock, RuntimeMode, SessionStatus, SessionWorkspace, TranscriptBlock, TurnStatus,
-    UserInputAnswer, UserInputQuestion, compact_path, unix_time, unix_time_millis,
+    BackgroundWorkKey, BackgroundWorkKind, BackgroundWorkStatus, ChatGptHistorySeed, ChatGroup,
+    Checkpoint, CheckpointStatus, ContextUsage, DriverEvent, FavoriteModel, Message,
+    MessageAttachment, MessageRole, PendingPermission, Project, ProviderKind, ProviderModel,
+    ProviderProbe, ProviderResumeCursor, ProviderSessionHistory, ProviderSessionSummary,
+    QueuedMessage, ReasoningBlock, RuntimeMode, SessionStatus, SessionWorkspace, TranscriptBlock,
+    TurnStatus, UserInputAnswer, UserInputQuestion, compact_path, unix_time, unix_time_millis,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -61,15 +61,15 @@ use crate::terminal::TerminalView;
 use crate::theme::{Theme, ThemePreference, sp};
 use crate::ui::text_field::TextField;
 use crate::ui::{
-    MenuChip, ProjectNameSelector, activity_icon, activity_noun, contain_scroll, icon, icon_button,
-    motion, provider_color, provider_mark, status_color, toggle_switch,
+    MenuChip, activity_icon, activity_noun, contain_scroll, icon, icon_button, motion,
+    provider_color, provider_mark, status_color, toggle_switch,
 };
 use crate::{
     CancelTaskSwitch, CancelTurn, CloseFind, CloseWindow, ConfirmTaskSwitch, CopySelection,
-    FindNext, FindPrevious, FocusComposer, NavigateBack, NavigateForward, NewProject, NewSession,
-    OpenFind, OpenResumePicker, OpenSettings, SelectFirstTask, SelectLastTask, SwitchTaskBackward,
+    FindNext, FindPrevious, FocusComposer, NavigateBack, NavigateForward, NewSession, OpenFind,
+    OpenResumePicker, OpenSettings, SelectFirstTask, SelectLastTask, SwitchTaskBackward,
     SwitchTaskForward, ToggleCommandPalette, ToggleFpsCounter, ToggleModelPicker, ToggleRightPanel,
-    ToggleSidebar, ToggleUsagePanel,
+    ToggleSidebar,
 };
 
 #[cfg(target_os = "macos")]
@@ -116,7 +116,6 @@ const IDLE_SESSION_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const IDLE_SESSION_SWEEP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const BACKGROUND_WORK_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const BACKGROUND_WORK_TICK_INTERVAL: Duration = Duration::from_secs(1);
-const PLAN_USAGE_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 const STREAM_SAVE_INTERVAL: Duration = Duration::from_secs(1);
 /// Zed keeps status toasts on screen for ten seconds, pausing the countdown
 /// while the pointer is over the toast so a long message remains readable.
@@ -1022,7 +1021,6 @@ pub struct Waku {
     daemon_reconfigure_pending: bool,
     daemon_token_revealed: bool,
     settings_focus: FocusHandle,
-    onboarding_add_project_focus: FocusHandle,
     onboarding_projectless_focus: FocusHandle,
     /// Mirror of Sparkle's persisted automatic-check setting. Refreshed when
     /// settings opens and on toggle, so frames never read user defaults —
@@ -1076,32 +1074,6 @@ pub struct Waku {
     computer_permission_tx: Sender<Result<ComputerPermissions, String>>,
     computer_permission_events: Receiver<Result<ComputerPermissions, String>>,
     computer_permission_request_pending: bool,
-    /// Account rate-limit meters per provider, fetched off-thread (Claude,
-    /// Codex, and OpenCode Go over HTTPS; Grok through a stdio probe) and
-    /// refreshed live by Codex's own stream. Frames read only this snapshot.
-    plan_usage: HashMap<ProviderKind, crate::usage::PlanUsage>,
-    /// Why a provider's last fetch failed, kept alongside stale data for the
-    /// meter's tooltip. Cleared by that provider's next success.
-    plan_usage_error: HashMap<ProviderKind, String>,
-    plan_usage_tx: Sender<(
-        ProviderKind,
-        Result<Option<crate::usage::PlanUsage>, String>,
-    )>,
-    plan_usage_events: Receiver<(
-        ProviderKind,
-        Result<Option<crate::usage::PlanUsage>, String>,
-    )>,
-    plan_usage_pending: HashSet<ProviderKind>,
-    /// Fetchable providers with no matching account credential. Unlike a
-    /// request failure, this hides the plan section until a later refresh
-    /// discovers a newly configured account.
-    plan_usage_unconfigured: HashSet<ProviderKind>,
-    /// When each provider's last fetch settled, successful or not — the
-    /// refresh backoff measures from here.
-    plan_usage_checked_at: HashMap<ProviderKind, Instant>,
-    /// Providers whose turn settled since the last fetch, so the meters have
-    /// moved.
-    plan_usage_stale: HashSet<ProviderKind>,
     /// The settings Usage page's snapshot: historical token/cost usage
     /// scanned from provider transcripts off-thread. Frames read only this.
     usage_history: Option<crate::usage_history::UsageHistory>,
@@ -1277,6 +1249,10 @@ pub struct Waku {
     /// One stable field reused across sidebar rows so virtualization never
     /// replaces the focused editor while a rename is in progress.
     session_rename_input: Entity<TextInput>,
+    /// Sidebar chat group currently showing its inline rename field, with
+    /// the same stable-field treatment as session renames.
+    group_rename: Option<Uuid>,
+    group_rename_input: Entity<TextInput>,
     /// Groups the user has folded in either sidebar view. This is
     /// intentionally runtime-only, like transcript disclosure state.
     sidebar_collapsed_groups: HashSet<SidebarGroup>,
@@ -1533,7 +1509,6 @@ mod task_switcher;
 mod transcript;
 mod transcript_search;
 mod transcript_view;
-mod usage_meter;
 mod usage_page;
 mod window_chrome;
 
@@ -1927,6 +1902,7 @@ impl Waku {
                 .placeholder(tr!("skills.search"))
         });
         let session_rename_input = cx.new(|cx| TextInput::new(window, cx));
+        let group_rename_input = cx.new(|cx| TextInput::new(window, cx));
         let provider_path_input = cx.new(|cx| {
             TextInput::new(window, cx)
                 .select_all_on_focus_click()
@@ -2090,7 +2066,6 @@ impl Waku {
         let (provider_version_tx, provider_version_events) = unbounded();
         let (provider_detection_tx, provider_detection_events) = unbounded();
         let (computer_permission_tx, computer_permission_events) = unbounded();
-        let (plan_usage_tx, plan_usage_events) = unbounded();
         let (chatgpt_tx, chatgpt_events) = unbounded();
         let (event_wake_tx, event_wake_events) = smol::channel::bounded(1);
         let (task_state_sync_tx, task_state_sync_events) = unbounded();
@@ -2184,7 +2159,6 @@ impl Waku {
             .unwrap_or_default();
         let entity = cx.new(|cx| {
             let settings_focus = cx.focus_handle();
-            let onboarding_add_project_focus = cx.focus_handle();
             let onboarding_projectless_focus = cx.focus_handle();
             let updater_button_focus = cx.focus_handle();
             let model_picker_empty_focus = cx.focus_handle();
@@ -2473,6 +2447,15 @@ impl Waku {
             )
             .detach();
             cx.subscribe(
+                &group_rename_input,
+                |this: &mut Self, _, event: &InputEvent, cx| match event {
+                    InputEvent::Submit(_) => this.commit_group_rename(cx),
+                    InputEvent::Edited if this.group_rename.is_some() => cx.notify(),
+                    _ => {}
+                },
+            )
+            .detach();
+            cx.subscribe(
                 &usage_project_filter,
                 |_: &mut Self, _, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Edited) {
@@ -2555,21 +2538,6 @@ impl Waku {
 
             cx.spawn(async move |this, cx| {
                 loop {
-                    if this
-                        .update(cx, |this, cx| this.maybe_refresh_plan_usage(cx))
-                        .is_err()
-                    {
-                        break;
-                    }
-                    cx.background_executor()
-                        .timer(PLAN_USAGE_MAINTENANCE_INTERVAL)
-                        .await;
-                }
-            })
-            .detach();
-
-            cx.spawn(async move |this, cx| {
-                loop {
                     cx.background_executor()
                         .timer(IDLE_SESSION_SWEEP_INTERVAL)
                         .await;
@@ -2620,7 +2588,6 @@ impl Waku {
                 daemon_reconfigure_pending: false,
                 daemon_token_revealed: false,
                 settings_focus,
-                onboarding_add_project_focus,
                 onboarding_projectless_focus,
                 automatic_updates_enabled: cx
                     .try_global::<crate::updater::UpdaterState>()
@@ -2658,14 +2625,6 @@ impl Waku {
                 computer_permission_tx,
                 computer_permission_events,
                 computer_permission_request_pending: false,
-                plan_usage: HashMap::new(),
-                plan_usage_error: HashMap::new(),
-                plan_usage_tx,
-                plan_usage_events,
-                plan_usage_pending: HashSet::new(),
-                plan_usage_unconfigured: HashSet::new(),
-                plan_usage_checked_at: HashMap::new(),
-                plan_usage_stale: HashSet::new(),
                 usage_history: None,
                 usage_history_pending_for: None,
                 usage_history_generation: 0,
@@ -2743,6 +2702,8 @@ impl Waku {
                 session_navigation,
                 session_rename: None,
                 session_rename_input,
+                group_rename: None,
+                group_rename_input,
                 sidebar_collapsed_groups: HashSet::new(),
                 sidebar_project_reveal_counts: HashMap::new(),
                 sidebar_group_header_focuses: RefCell::new(HashMap::new()),

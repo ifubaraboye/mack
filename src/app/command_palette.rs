@@ -151,11 +151,9 @@ enum PaletteAction {
     ChooseResumeProvider,
     SelectResumeProvider(ProviderKind),
     ResumeProviderSession(ProviderSessionSummary),
-    OpenProject,
     FocusComposer,
     CopyIdentifier(PaletteIdentifier),
     ChooseModel,
-    ToggleUsage,
     CollapseSidebarGroups,
     ToggleSidebar,
     ToggleRightPanel,
@@ -711,17 +709,7 @@ impl Waku {
                 "resume continue restore import external terminal cli session conversation",
                 next(),
             ),
-            CommandPaletteItem::command(
-                display_section(PaletteSection::Suggested),
-                tr!("command_palette.open_project"),
-                "icons/folder.svg",
-                Some(crate::platform::primary_shortcut("⌘O", "Ctrl+O")),
-                PaletteAction::OpenProject,
-                "open add folder project workspace repository repo",
-                next(),
-            ),
         ];
-
         let can_choose_model = self
             .selected_session()
             .is_some_and(|session| session.can_choose_model(session.provider));
@@ -758,17 +746,6 @@ impl Waku {
                     next(),
                 ));
             }
-        }
-        if self.usage_meter_available() {
-            commands.push(CommandPaletteItem::command(
-                PaletteSection::Commands,
-                tr!("menu.toggle_usage_panel"),
-                "icons/command.svg",
-                Some(crate::platform::primary_shortcut("⌘U", "Ctrl+U")),
-                PaletteAction::ToggleUsage,
-                "toggle usage limits rate quota panel",
-                next(),
-            ));
         }
         commands.push(CommandPaletteItem::command(
             PaletteSection::Commands,
@@ -1289,12 +1266,7 @@ impl Waku {
     fn default_resume_provider(&self) -> ProviderKind {
         self.selected_session()
             .map(|session| session.provider)
-            .or_else(|| {
-                ProviderKind::ALL.into_iter().find(|provider| {
-                    provider.is_user_visible() && !self.state.disabled_providers.contains(provider)
-                })
-            })
-            .unwrap_or_default()
+            .unwrap_or(ProviderKind::ChatGpt)
     }
 
     fn open_command_palette_resume_provider_view(&mut self, cx: &mut Context<Self>) {
@@ -1562,7 +1534,6 @@ impl Waku {
         self.close_command_palette(window, cx);
         match action {
             PaletteAction::NewTask => self.new_session_action(&NewSession, window, cx),
-            PaletteAction::OpenProject => self.new_project_action(&NewProject, window, cx),
             PaletteAction::FocusComposer => self.focus_composer_action(&FocusComposer, window, cx),
             PaletteAction::CopyIdentifier(identifier) => {
                 if let Some(value) = identifier.value(self.selected_session()) {
@@ -1586,22 +1557,18 @@ impl Waku {
                 let focus = self.composer_focus(cx);
                 window.focus(&focus, cx);
             }
-            PaletteAction::ChooseModel | PaletteAction::ToggleUsage => {
-                // These popovers are rendered by the composer. If the command
-                // came from Settings, reveal one normal app frame first so its
-                // persistent menu handle and anchor bounds are current.
+            PaletteAction::ChooseModel => {
+                // The model picker popover is rendered by the composer. If the
+                // command came from Settings, reveal one normal app frame
+                // first so its persistent menu handle and anchor bounds are
+                // current.
                 self.settings_page = None;
                 let focus = self.composer_focus(cx);
                 window.focus(&focus, cx);
                 let weak = cx.entity().downgrade();
-                let choose_model = matches!(action, PaletteAction::ChooseModel);
                 window.on_next_frame(move |window, cx| {
                     let _ = weak.update(cx, |this, cx| {
-                        if choose_model {
-                            this.toggle_model_picker_action(&ToggleModelPicker, window, cx)
-                        } else {
-                            this.toggle_usage_panel_action(&ToggleUsagePanel, window, cx)
-                        }
+                        this.toggle_model_picker_action(&ToggleModelPicker, window, cx)
                     });
                 });
             }
@@ -2074,7 +2041,7 @@ mod tests {
 
     #[test]
     fn copy_identifier_commands_use_the_selected_tasks_live_ids() {
-        let mut session = AgentSession::new(Uuid::nil(), ProviderKind::Codex);
+        let mut session = AgentSession::new(Uuid::nil(), ProviderKind::ChatGpt);
         session.id = Uuid::parse_str("ed28ee51-43cf-4a83-a52f-04c509ca2c09").unwrap();
 
         assert_eq!(
@@ -2086,8 +2053,8 @@ mod tests {
             None
         );
 
-        session.provider_cursor = Some(ProviderResumeCursor::Codex {
-            thread_id: "019cfd7a-6942-78b1-9d47-30576c562321".into(),
+        session.provider_cursor = Some(ProviderResumeCursor::ChatGpt {
+            session_id: "019cfd7a-6942-78b1-9d47-30576c562321".into(),
         });
         assert_eq!(
             PaletteIdentifier::AgentCliThreadId
@@ -2099,16 +2066,14 @@ mod tests {
 
     #[test]
     fn provider_session_identity_uses_provider_and_native_id() {
-        let listed = ProviderResumeCursor::Claude {
+        let listed = ProviderResumeCursor::ChatGpt {
             session_id: "11111111-1111-4111-8111-111111111111".into(),
-            resume_at: None,
         };
-        let imported = ProviderResumeCursor::Claude {
+        let imported = ProviderResumeCursor::ChatGpt {
             session_id: "11111111-1111-4111-8111-111111111111".into(),
-            resume_at: Some("native-message".into()),
         };
-        let other = ProviderResumeCursor::Codex {
-            thread_id: "11111111-1111-4111-8111-111111111111".into(),
+        let other = ProviderResumeCursor::ChatGpt {
+            session_id: "22222222-2222-4222-8222-222222222222".into(),
         };
 
         assert!(same_provider_session(&listed, &imported));

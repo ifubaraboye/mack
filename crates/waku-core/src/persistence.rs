@@ -67,7 +67,7 @@ fn default_analytics_enabled() -> bool {
 }
 
 fn default_provider() -> ProviderKind {
-    ProviderKind::Codex
+    ProviderKind::ChatGpt
 }
 
 fn default_sidebar_width() -> f32 {
@@ -374,7 +374,7 @@ impl PersistedState {
             sessions: Vec::new(),
             selected_project: None,
             selected_session: None,
-            last_provider: ProviderKind::Codex,
+            last_provider: ProviderKind::ChatGpt,
             last_model: None,
             last_reasoning_effort: None,
             last_service_tier: None,
@@ -398,7 +398,7 @@ impl PersistedState {
 
     pub fn fresh(cwd: PathBuf) -> Self {
         let project = Project::from_path(cwd);
-        let session = AgentSession::new(project.id, ProviderKind::Codex);
+        let session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         Self {
             selected_project: Some(project.id),
             selected_session: Some(session.id),
@@ -1256,6 +1256,7 @@ impl StateStore {
         session.turns = stored.turns;
         session.queued_messages = stored.queued_messages;
         session.workspace = stored.workspace;
+        session.group_id = stored.group_id;
         session.provider_cursor = stored.provider_cursor;
         session.runtime_mode = stored.runtime_mode;
         session.reasoning_effort = stored.reasoning_effort;
@@ -1531,13 +1532,20 @@ fn session_skeleton(row: SessionColumns) -> Option<AgentSession> {
         updated_at,
         last_reply_at,
     ) = row;
+    let provider: ProviderKind =
+        serde_json::from_value(serde_json::Value::String(provider)).ok()?;
+    // ChatGPT-only: drop rows persisted by removed providers.
+    if provider != ProviderKind::ChatGpt {
+        return None;
+    }
     Some(AgentSession {
         id: Uuid::parse_str(&id).ok()?,
         title,
         auto_title,
         project_id: Uuid::parse_str(&project_id).ok()?,
+        group_id: None,
         workspace: SessionWorkspace::Local,
-        provider: serde_json::from_value(serde_json::Value::String(provider)).ok()?,
+        provider,
         model,
         // Hydration replaces these; the list never reads them.
         runtime_mode: RuntimeMode::default(),
@@ -1986,8 +1994,8 @@ mod tests {
     #[test]
     fn new_session_drafts_follow_the_project_across_runtime_session_ids() {
         let project_id = Uuid::new_v4();
-        let first_runtime_session = AgentSession::new(project_id, ProviderKind::Codex);
-        let relaunched_runtime_session = AgentSession::new(project_id, ProviderKind::Codex);
+        let first_runtime_session = AgentSession::new(project_id, ProviderKind::ChatGpt);
+        let relaunched_runtime_session = AgentSession::new(project_id, ProviderKind::ChatGpt);
         assert_ne!(first_runtime_session.id, relaunched_runtime_session.id);
 
         let mut drafts = ComposerDrafts::default();
@@ -2006,8 +2014,8 @@ mod tests {
     #[test]
     fn existing_session_drafts_are_isolated_by_session_id() {
         let project_id = Uuid::new_v4();
-        let mut first = AgentSession::new(project_id, ProviderKind::Codex);
-        let mut second = AgentSession::new(project_id, ProviderKind::Codex);
+        let mut first = AgentSession::new(project_id, ProviderKind::ChatGpt);
+        let mut second = AgentSession::new(project_id, ProviderKind::ChatGpt);
         first.begin_turn("first task");
         second.begin_turn("second task");
 
@@ -2220,7 +2228,7 @@ mod tests {
         let started = 1_700_000_000_u64;
         let ids = (0..5)
             .map(|index| {
-                let mut session = AgentSession::new(project_id, ProviderKind::Codex);
+                let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
                 session.updated_at = started + index;
                 session.begin_turn(format!("prompt {index}"));
                 session.push_message(
@@ -2585,7 +2593,7 @@ mod tests {
         state.sessions[0].context_window = Some("1m".into());
         state.last_context_window = Some("1m".into());
         state.remember_model_traits(
-            ProviderKind::Codex,
+            ProviderKind::ChatGpt,
             "gpt-5.6-luna",
             Some("xhigh".into()),
             Some("fast".into()),
@@ -2593,7 +2601,7 @@ mod tests {
         );
         state.sessions[0].runtime_mode = crate::model::RuntimeMode::Auto;
         state.favorite_models.push(FavoriteModel {
-            provider: ProviderKind::Codex,
+            provider: ProviderKind::ChatGpt,
             model: "gpt-5.6-luna".into(),
         });
         state.theme = ThemePreference::Light;
@@ -2649,7 +2657,7 @@ mod tests {
         assert_eq!(restored.last_context_window.as_deref(), Some("1m"));
         assert_eq!(restored.sessions[0].context_window.as_deref(), Some("1m"));
         assert_eq!(
-            restored.model_traits_for(ProviderKind::Codex, "gpt-5.6-luna"),
+            restored.model_traits_for(ProviderKind::ChatGpt, "gpt-5.6-luna"),
             (Some("xhigh".into()), Some("fast".into()), Some("1m".into()))
         );
         assert_eq!(
@@ -2691,7 +2699,7 @@ mod tests {
         state.sessions[0].begin_turn("First");
         state.sessions[0].finish_active_turn(crate::model::TurnStatus::Completed);
         let quiet = {
-            let mut session = state.new_session(state.projects[0].id, ProviderKind::Codex);
+            let mut session = state.new_session(state.projects[0].id, ProviderKind::ChatGpt);
             session.begin_turn("Quiet");
             session.finish_active_turn(crate::model::TurnStatus::Completed);
             session
@@ -3083,7 +3091,7 @@ mod tests {
         state.sessions[0].push_message(MessageRole::Assistant, "Newer assistant needle");
         state.sessions[0].finish_active_turn(crate::model::TurnStatus::Completed);
 
-        let mut assistant_match = AgentSession::new(project_id, ProviderKind::Codex);
+        let mut assistant_match = AgentSession::new(project_id, ProviderKind::ChatGpt);
         let assistant_match_id = assistant_match.id;
         assistant_match.begin_turn("Ordinary prompt");
         assistant_match.push_message(MessageRole::System, "System needle is private");
@@ -3186,7 +3194,7 @@ mod tests {
         state.sessions[0].begin_turn("Keep");
         state.sessions[0].push_message(MessageRole::User, "keep me");
         state.sessions[0].finish_active_turn(crate::model::TurnStatus::Completed);
-        let mut extra = state.new_session(state.projects[0].id, ProviderKind::Codex);
+        let mut extra = state.new_session(state.projects[0].id, ProviderKind::ChatGpt);
         extra.begin_turn("Remove");
         extra.push_message(MessageRole::User, "delete me");
         extra.finish_active_turn(crate::model::TurnStatus::Completed);
@@ -3284,7 +3292,7 @@ mod tests {
 
     #[test]
     fn last_reply_at_tracks_turn_activity_not_every_edit() {
-        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         assert!(session.last_reply_at.is_none(), "no turn yet");
 
         session.begin_turn("Ask");
@@ -3308,7 +3316,7 @@ mod tests {
 
     #[test]
     fn last_reply_at_is_derived_for_sessions_stored_without_it() {
-        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         session.begin_turn("Ask");
         session.finish_active_turn(crate::model::TurnStatus::Completed);
         let completed_at = session.turns.last().unwrap().completed_at.unwrap();
@@ -3319,7 +3327,7 @@ mod tests {
         assert_eq!(session.last_reply_at, Some(completed_at));
 
         // A session that never ran has nothing to derive.
-        let mut fresh = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let mut fresh = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         fresh.backfill_last_reply_at();
         assert!(fresh.last_reply_at.is_none());
 
@@ -3338,7 +3346,7 @@ mod tests {
         let mut state = PersistedState::fresh(PathBuf::from("/tmp/project"));
         state.sessions[0].begin_turn("First");
         state.sessions[0].finish_active_turn(crate::model::TurnStatus::Completed);
-        let mut second = state.new_session(state.projects[0].id, ProviderKind::Codex);
+        let mut second = state.new_session(state.projects[0].id, ProviderKind::ChatGpt);
         second.title = "Newer".into();
         second.begin_turn("Second");
         second.finish_active_turn(crate::model::TurnStatus::Completed);
@@ -3490,7 +3498,7 @@ mod tests {
         let started_id = state.sessions[0].id;
         state.sessions[0].begin_turn("Persist this session");
         state.sessions[0].finish_active_turn(crate::model::TurnStatus::Completed);
-        let draft = state.new_session(state.projects[0].id, ProviderKind::Codex);
+        let draft = state.new_session(state.projects[0].id, ProviderKind::ChatGpt);
         state.selected_session = Some(draft.id);
         state.sessions.push(draft);
 
@@ -3523,7 +3531,7 @@ mod tests {
         let mut state = PersistedState::fresh(PathBuf::from("/tmp/project"));
         state.sessions[0].begin_turn("Keep");
         state.sessions[0].finish_active_turn(crate::model::TurnStatus::Completed);
-        let mut extra = state.new_session(state.projects[0].id, ProviderKind::Codex);
+        let mut extra = state.new_session(state.projects[0].id, ProviderKind::ChatGpt);
         extra.begin_turn("Remove");
         extra.finish_active_turn(crate::model::TurnStatus::Completed);
         let removed_id = extra.id;
@@ -3541,7 +3549,7 @@ mod tests {
 
     #[test]
     fn sessions_without_transcript_blocks_remain_compatible() {
-        let session = AgentSession::new(Uuid::new_v4(), ProviderKind::Grok);
+        let session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         let mut value = serde_json::to_value(session).unwrap();
         value.as_object_mut().unwrap().remove("transcript_blocks");
 
@@ -3552,27 +3560,24 @@ mod tests {
     #[test]
     fn selected_model_and_traits_are_used_for_new_sessions() {
         let mut state = PersistedState::fresh(PathBuf::from("/tmp/project"));
-        state.last_provider = ProviderKind::Grok;
+        state.last_provider = ProviderKind::ChatGpt;
         state.last_model = Some("grok-code-fast-1".into());
         state.last_reasoning_effort = Some("high".into());
         state.last_service_tier = Some("fast".into());
 
-        let remembered = state.new_session(state.projects[0].id, ProviderKind::Grok);
-        let other_provider = state.new_session(state.projects[0].id, ProviderKind::Codex);
+        // ChatGPT-only: the remembered selection applies to the same provider.
+        let remembered = state.new_session(state.projects[0].id, ProviderKind::ChatGpt);
 
         assert_eq!(remembered.model.as_deref(), Some("grok-code-fast-1"));
         assert_eq!(remembered.reasoning_effort.as_deref(), Some("high"));
         assert_eq!(remembered.service_tier.as_deref(), Some("fast"));
-        assert!(other_provider.model.is_none());
-        assert!(other_provider.reasoning_effort.is_none());
-        assert!(other_provider.service_tier.is_none());
     }
 
     #[test]
     fn model_traits_are_remembered_by_provider_and_model() {
         let mut state = PersistedState::fresh(PathBuf::from("/tmp/project"));
         state.remember_model_traits(
-            ProviderKind::Codex,
+            ProviderKind::ChatGpt,
             "gpt-5.6-sol",
             Some("max".into()),
             Some("fast".into()),
@@ -3580,17 +3585,12 @@ mod tests {
         );
 
         assert_eq!(
-            state.model_traits_for(ProviderKind::Claude, "claude-opus-5"),
-            (None, None, None),
-            "a different provider starts from its own defaults"
-        );
-        assert_eq!(
-            state.model_traits_for(ProviderKind::Codex, "gpt-5.6-terra"),
+            state.model_traits_for(ProviderKind::ChatGpt, "gpt-5.6-terra"),
             (None, None, None),
             "a different model starts from its own defaults"
         );
         assert_eq!(
-            state.model_traits_for(ProviderKind::Codex, "gpt-5.6-sol"),
+            state.model_traits_for(ProviderKind::ChatGpt, "gpt-5.6-sol"),
             (Some("max".into()), Some("fast".into()), None),
             "switching back restores both explicit choices"
         );

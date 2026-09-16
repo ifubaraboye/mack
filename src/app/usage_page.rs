@@ -30,8 +30,8 @@ const USAGE_PROJECT_ROW_HEIGHT: f32 = 96.0;
 const USAGE_RESCAN_AFTER: Duration = Duration::from_secs(120);
 fn provider_kind(provider: UsageProvider) -> ProviderKind {
     match provider {
-        UsageProvider::Claude => ProviderKind::Claude,
-        UsageProvider::Codex => ProviderKind::Codex,
+        UsageProvider::Claude => ProviderKind::ChatGpt,
+        UsageProvider::Codex => ProviderKind::ChatGpt,
     }
 }
 
@@ -766,8 +766,8 @@ impl Waku {
 
         let hover = self.usage_chart_hover.filter(|index| *index < day_count);
         let colors = [
-            provider_color(theme, ProviderKind::Claude),
-            provider_color(theme, ProviderKind::Codex),
+            provider_color(theme, ProviderKind::ChatGpt),
+            provider_color(theme, ProviderKind::ChatGpt),
         ];
         let bounds_cell = self.usage_chart_bounds.clone();
         let paint_series = series.clone();
@@ -2077,8 +2077,8 @@ fn rank_by_cost(history: &UsageHistory) -> bool {
 
 fn usage_provider_colors(theme: &Theme) -> [Hsla; 2] {
     [
-        provider_color(theme, ProviderKind::Claude),
-        provider_color(theme, ProviderKind::Codex),
+        provider_color(theme, ProviderKind::ChatGpt),
+        provider_color(theme, ProviderKind::ChatGpt),
     ]
 }
 

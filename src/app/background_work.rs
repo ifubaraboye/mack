@@ -482,16 +482,7 @@ impl Waku {
         session_id: Uuid,
         activity: &ActivityItem,
     ) {
-        if activity.kind != crate::model::ActivityKind::Command
-            || self
-                .state
-                .sessions
-                .iter()
-                .find(|session| session.id == session_id)
-                .is_some_and(|session| {
-                    matches!(session.provider, ProviderKind::Codex | ProviderKind::Claude)
-                })
-        {
+        if activity.kind != crate::model::ActivityKind::Command {
             return;
         }
         let provider_id = activity

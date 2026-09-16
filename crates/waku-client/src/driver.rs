@@ -49,6 +49,10 @@ impl DriverHandle {
         self.inner.prompt(prompt, turn_id, message_id);
     }
 
+    pub fn generate_title(&self, prompt: String) {
+        self.inner.generate_title(prompt);
+    }
+
     pub fn supports_steer(&self) -> bool {
         self.inner.supports_steer()
     }
@@ -114,6 +118,7 @@ impl DriverHandle {
 
 pub trait DriverControl: Send + Sync {
     fn prompt(&self, prompt: String, turn_id: Option<Uuid>, message_id: Option<Uuid>);
+    fn generate_title(&self, _prompt: String) {}
     fn supports_steer(&self) -> bool {
         false
     }

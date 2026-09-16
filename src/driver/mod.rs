@@ -242,6 +242,10 @@ impl DriverControl for RemoteDriverControl {
         });
     }
 
+    fn generate_title(&self, prompt: String) {
+        self.notify(waku_client::Command::GenerateTitle { prompt });
+    }
+
     fn supports_steer(&self) -> bool {
         self.supports_steer
     }

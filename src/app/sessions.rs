@@ -1,10 +1,9 @@
 use super::*;
 
-fn retain_runtime_after_cancel(provider: ProviderKind) -> bool {
-    // Codex's app-server owns the Computer Use process tree, and Amp offers no
-    // interrupt on its stream — stopping it means ending the process. Both
-    // resume their native thread on the next prompt.
-    !matches!(provider, ProviderKind::Codex | ProviderKind::Amp)
+fn retain_runtime_after_cancel(_provider: ProviderKind) -> bool {
+    // ChatGPT-only: the daemon stream interrupts in place, so the runtime is
+    // always retained across a cancel.
+    true
 }
 
 fn new_task_runtime_mode(current: Option<&AgentSession>, remembered: RuntimeMode) -> RuntimeMode {
@@ -281,6 +280,40 @@ impl Waku {
         self.select_session(id, cx);
     }
 
+    /// Start a chat inside a user-defined group: same project resolution as
+    /// opening a task from the current context, but the draft carries the
+    /// group from birth so it lands in the right sidebar section. Always a
+    /// fresh session — an existing draft belongs to whatever started it.
+    pub(super) fn create_session_in_group(&mut self, group_id: Uuid, cx: &mut Context<Self>) {
+        if !self
+            .state
+            .chat_groups
+            .iter()
+            .any(|group| group.id == group_id)
+        {
+            return;
+        }
+        let project_id = self
+            .selected_session()
+            .map(|session| session.project_id)
+            .or(self.state.selected_project)
+            .or_else(|| self.state.projects.first().map(|project| project.id));
+        let Some(project_id) = project_id else {
+            self.create_projectless_session(cx);
+            return;
+        };
+        let runtime_mode =
+            new_task_runtime_mode(self.selected_session(), self.state.last_runtime_mode);
+        let mut session = self.state.new_session(project_id, self.state.last_provider);
+        session.runtime_mode = runtime_mode;
+        session.group_id = Some(group_id);
+        let id = session.id;
+        self.state.push_session(session);
+        self.sidebar_collapsed_groups
+            .remove(&SidebarGroup::ChatGroup(group_id));
+        self.select_session(id, cx);
+    }
+
     pub(super) fn select_workspace(&mut self, workspace: SessionWorkspace, cx: &mut Context<Self>) {
         let Some(session) = self.selected_session_mut() else {
             return;
@@ -407,34 +440,10 @@ impl Waku {
         cx: &mut Context<Self>,
     ) {
         self.settings_page = None;
-        let current_project = self
-            .selected_project()
-            .map(|project| (project.id, project.is_projectless()));
-        match current_project {
-            Some((_, true)) => self.create_projectless_session(cx),
-            Some((project_id, false)) => {
-                if let Some(session_id) = self
-                    .session_navigation
-                    .remembered_new_task(&self.state.sessions, project_id)
-                {
-                    self.select_session(session_id, cx);
-                } else {
-                    self.create_session_for(project_id, self.state.last_provider, cx);
-                }
-            }
-            None => self.create_projectless_session(cx),
-        }
+        // Chats are project-free: starting one never asks for a folder.
+        self.create_projectless_session(cx);
         let focus_handle = self.composer_focus(cx);
         window.focus(&focus_handle, cx);
-    }
-
-    pub(super) fn new_project_action(
-        &mut self,
-        _: &NewProject,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.add_project(cx);
     }
 
     pub(super) fn open_settings_action(
@@ -1105,7 +1114,7 @@ impl Waku {
 
     pub(super) fn set_agent_preset(&mut self, agent_preset: String, cx: &mut Context<Self>) {
         let selectable = self
-            .provider_probe(ProviderKind::DeepSeek)
+            .provider_probe(ProviderKind::ChatGpt)
             .is_some_and(|probe| {
                 probe
                     .agent_presets
@@ -1116,7 +1125,7 @@ impl Waku {
             return;
         }
         if let Some(session) = self.selected_session_mut()
-            && session.provider == ProviderKind::DeepSeek
+            && session.provider == ProviderKind::ChatGpt
             && !session.has_started()
             && !session.is_busy()
             && session.agent_preset.as_deref() != Some(agent_preset.as_str())
@@ -1563,38 +1572,6 @@ impl Waku {
         cx.notify();
     }
 
-    pub(super) fn add_project(&mut self, cx: &mut Context<Self>) {
-        if self.daemon.is_remote() {
-            self.show_toast(tr!("errors.remote_project_picker"));
-            cx.notify();
-            return;
-        }
-        let receiver = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some(tr!("project.add_project").into()),
-        });
-        cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = receiver.await
-                && let Some(path) = paths.into_iter().next()
-            {
-                let _ = this.update(cx, |this, cx| {
-                    if let Some(existing) = this.state.projects.iter().find(|p| p.path == path) {
-                        this.select_project(existing.id, cx);
-                        return;
-                    }
-                    let project = Project::from_path(path);
-                    let project_id = project.id;
-                    this.state.projects.push(project);
-                    this.analytics.track(crate::analytics::Event::ProjectAdded);
-                    this.create_session_for(project_id, this.state.last_provider, cx);
-                });
-            }
-        })
-        .detach();
-    }
-
     pub(super) fn create_projectless_session(&mut self, cx: &mut Context<Self>) {
         if let Some(draft_id) = self
             .state
@@ -1653,7 +1630,7 @@ mod tests {
 
     #[test]
     fn new_task_carries_the_current_tasks_access_mode() {
-        let mut current = AgentSession::new(Uuid::new_v4(), ProviderKind::OpenCode);
+        let mut current = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         current.runtime_mode = RuntimeMode::Ask;
 
         assert_eq!(
@@ -1669,8 +1646,8 @@ mod tests {
     #[test]
     fn new_task_navigation_reuses_a_draft_from_the_current_project() {
         let project_id = Uuid::new_v4();
-        let draft = AgentSession::new(project_id, ProviderKind::Codex);
-        let mut started = AgentSession::new(project_id, ProviderKind::Claude);
+        let draft = AgentSession::new(project_id, ProviderKind::ChatGpt);
+        let mut started = AgentSession::new(project_id, ProviderKind::ChatGpt);
         started.begin_turn("Existing task");
         let mut navigation = SessionNavigation::default();
 
@@ -1685,7 +1662,7 @@ mod tests {
 
     #[test]
     fn new_task_navigation_does_not_reopen_a_draft_from_another_project() {
-        let draft = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let draft = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         let current_project_id = Uuid::new_v4();
         let mut navigation = SessionNavigation::default();
 
@@ -1700,7 +1677,7 @@ mod tests {
     #[test]
     fn new_task_navigation_does_not_reopen_a_started_or_removed_draft() {
         let project_id = Uuid::new_v4();
-        let mut draft = AgentSession::new(project_id, ProviderKind::Codex);
+        let mut draft = AgentSession::new(project_id, ProviderKind::ChatGpt);
         let mut navigation = SessionNavigation::default();
         navigation.remember_new_task(draft.id);
 
@@ -1716,13 +1693,7 @@ mod tests {
 
     #[test]
     fn stopping_releases_the_runtimes_that_cannot_be_interrupted_in_place() {
-        // Codex owns a Computer Use process tree; Amp has no stream interrupt.
-        assert!(!retain_runtime_after_cancel(ProviderKind::Codex));
-        assert!(!retain_runtime_after_cancel(ProviderKind::Amp));
-        for provider in ProviderKind::ALL {
-            if !matches!(provider, ProviderKind::Codex | ProviderKind::Amp) {
-                assert!(retain_runtime_after_cancel(provider));
-            }
-        }
+        // ChatGPT-only: the runtime always survives a cancel.
+        assert!(retain_runtime_after_cancel(ProviderKind::ChatGpt));
     }
 }

@@ -251,13 +251,11 @@ impl Backend for WakuBackend {
                 self.settings.replace(settings)?;
                 Ok(ResponsePayload::Ack)
             }
-            Command::ProbeProvider {
-                provider: ProviderKind::ChatGpt,
-                ..
-            } => {
-                // ChatGPT needs no CLI: it is always "installed", and its
-                // models come from the last authenticated discovery (cached
-                // daemon-side) rather than a subprocess probe.
+            Command::ProbeProvider { provider, .. } => {
+                // ChatGPT-only: no CLI to probe. It is always "installed",
+                // and its models come from the last authenticated discovery
+                // (cached daemon-side) rather than a subprocess probe.
+                let _ = provider;
                 Ok(ResponsePayload::ProviderProbe {
                     probe: crate::model::ProviderProbe {
                         provider: ProviderKind::ChatGpt,
@@ -270,60 +268,13 @@ impl Backend for WakuBackend {
                     version: None,
                 })
             }
-            Command::ProbeProvider {
-                provider,
-                binary_override,
-                discover_models,
-                probe_version,
-            } => {
-                ensure_shell_environment();
-                let mut probe = match binary_override.as_deref() {
-                    override_value if discover_models || probe_version => {
-                        crate::model::provider_probe(provider, override_value)
-                    }
-                    override_value => crate::model::cached_provider_probe(provider, override_value),
-                };
-                let version = probe_version
-                    .then(|| {
-                        probe
-                            .path
-                            .as_deref()
-                            .and_then(crate::model::probe_provider_version)
-                    })
-                    .flatten();
-                if discover_models {
-                    probe = crate::model::discover_provider_models(probe);
-                }
-                Ok(ResponsePayload::ProviderProbe { probe, version })
-            }
             Command::FetchPlanUsage {
                 provider,
                 binary_override,
                 cli_version,
             } => {
-                let usage = match provider {
-                    crate::model::ProviderKind::Claude => Some(
-                        crate::usage::fetch_claude_plan_usage(cli_version.as_deref())?,
-                    ),
-                    crate::model::ProviderKind::Codex => {
-                        Some(crate::usage::fetch_codex_plan_usage()?)
-                    }
-                    crate::model::ProviderKind::OpenCode => {
-                        crate::usage::fetch_opencode_go_plan_usage()?
-                    }
-                    crate::model::ProviderKind::Grok => {
-                        ensure_shell_environment();
-                        let probe = match binary_override.as_deref() {
-                            override_value => {
-                                crate::model::provider_probe(provider, override_value)
-                            }
-                        };
-                        let binary = probe.path.ok_or_else(|| anyhow!("grok is not installed"))?;
-                        Some(crate::usage::fetch_grok_plan_usage(&binary)?)
-                    }
-                    _ => bail!("provider has no plan usage fetcher"),
-                };
-                Ok(ResponsePayload::PlanUsage { usage })
+                let _ = (provider, binary_override, cli_version);
+                bail!("provider has no plan usage fetcher")
             }
             Command::ChatGptConnect => {
                 let manager = self.chatgpt();
@@ -554,172 +505,16 @@ impl Backend for WakuBackend {
                 Ok(ResponsePayload::SessionMessageMatches { matches })
             }
             Command::ListProviderSessions { provider, limit } => {
-                const MAX_PROVIDER_SESSIONS: usize = 500;
-                let limit = limit.min(MAX_PROVIDER_SESSIONS);
-                if limit == 0 {
-                    return Ok(ResponsePayload::ProviderSessions {
-                        sessions: Vec::new(),
-                    });
-                }
-                ensure_shell_environment();
-                let settings = self.settings.get();
-                if settings.disabled_providers.contains(&provider) {
-                    return Ok(ResponsePayload::ProviderSessions {
-                        sessions: Vec::new(),
-                    });
-                }
-                let binary_override = settings
-                    .provider_binary_overrides
-                    .get(&provider)
-                    .map(String::as_str);
-                let Some(binary) = crate::model::provider_probe(provider, binary_override).path
-                else {
-                    return Ok(ResponsePayload::ProviderSessions {
-                        sessions: Vec::new(),
-                    });
-                };
-                // Discovery is deliberately provider-scoped. Opening Resume
-                // must not start every installed agent CLI, and another
-                // provider is queried only after the user explicitly picks it.
-                let mut sessions = match provider {
-                    ProviderKind::Amp => {
-                        crate::amp_session::list_provider_sessions(&binary, limit)?
-                    }
-                    ProviderKind::Claude => crate::claude_session::list_provider_sessions(limit)?,
-                    ProviderKind::Codex => {
-                        crate::codex_session::list_provider_sessions(&binary, limit)?
-                    }
-                    ProviderKind::Cursor | ProviderKind::Fx => {
-                        crate::acp_session::list_provider_sessions(provider, &binary, &[], limit)?
-                    }
-                    ProviderKind::OpenCode => {
-                        crate::opencode_session::list_provider_sessions(&binary, limit)?
-                    }
-                    ProviderKind::OpenCode2 => {
-                        crate::opencode2_session::list_provider_sessions(&binary, limit)?
-                    }
-                    ProviderKind::DeepSeek => {
-                        crate::deepseek_session::list_provider_sessions(&binary, limit)?
-                    }
-                    ProviderKind::Grok => crate::grok_session::list_provider_sessions(limit)?,
-                    ProviderKind::Kimi => crate::kimi_session::list_provider_sessions(limit)?,
-                    ProviderKind::OhMyPi | ProviderKind::Pi => {
-                        crate::pi_session::list_provider_sessions(provider, limit)?
-                    }
-                    // ChatGPT conversations live in Waku's own store from
-                    // Stage 3; there are no CLI sessions to list.
-                    ProviderKind::ChatGpt => Vec::new(),
-                };
-                sessions.sort_by(|a, b| {
-                    b.updated_at
-                        .cmp(&a.updated_at)
-                        .then_with(|| a.title.cmp(&b.title))
-                });
-                let imported = {
-                    let state = self.task_state.lock();
-                    state
-                        .sessions
-                        .iter()
-                        .filter_map(|session| session.provider_cursor.as_ref())
-                        .map(|cursor| (cursor.provider(), cursor.native_id().to_owned()))
-                        .collect::<HashSet<_>>()
-                };
-                sessions.retain(|session| {
-                    !imported.contains(&(session.provider(), session.cursor.native_id().to_owned()))
-                });
-                sessions.truncate(limit);
-                Ok(ResponsePayload::ProviderSessions { sessions })
+                let _ = (provider, limit);
+                // ChatGPT-only: conversations live in Waku's own store;
+                // there are no CLI sessions to list.
+                Ok(ResponsePayload::ProviderSessions {
+                    sessions: Vec::new(),
+                })
             }
             Command::LoadProviderSession { cursor, cwd } => {
-                // Preserve every native turn shell for exact provider turn
-                // numbering, but bound imported display text to recent turns.
-                const VISIBLE_TURN_LIMIT: usize = 100;
-                let history = match &cursor {
-                    ProviderResumeCursor::Amp { thread_id, .. } => {
-                        let binary = self.provider_binary(ProviderKind::Amp)?;
-                        crate::amp_session::provider_session_history(
-                            &binary,
-                            &cwd,
-                            thread_id,
-                            VISIBLE_TURN_LIMIT,
-                        )?
-                    }
-                    ProviderResumeCursor::Claude { session_id, .. } => {
-                        self.provider_binary(ProviderKind::Claude)?;
-                        crate::claude_session::provider_session_history(
-                            session_id,
-                            VISIBLE_TURN_LIMIT,
-                        )?
-                    }
-                    ProviderResumeCursor::Codex { thread_id } => {
-                        let binary = self.provider_binary(ProviderKind::Codex)?;
-                        crate::codex_session::provider_session_history(
-                            &binary,
-                            thread_id,
-                            VISIBLE_TURN_LIMIT,
-                        )?
-                    }
-                    // OpenCode 2 is not an ACP provider: its history comes
-                    // from the adopted v2 service's own export route.
-                    ProviderResumeCursor::OpenCode2 { session_id, .. } => {
-                        let binary = self.provider_binary(ProviderKind::OpenCode2)?;
-                        crate::opencode2_session::provider_session_history(
-                            &binary,
-                            session_id,
-                            VISIBLE_TURN_LIMIT,
-                        )?
-                    }
-                    ProviderResumeCursor::Cursor { session_id, .. }
-                    | ProviderResumeCursor::Fx { session_id }
-                    | ProviderResumeCursor::OpenCode { session_id }
-                    | ProviderResumeCursor::Grok { session_id }
-                    | ProviderResumeCursor::Kimi { session_id } => {
-                        let provider = cursor.provider();
-                        let binary = self.provider_binary(provider)?;
-                        crate::acp_session::provider_session_history(
-                            provider,
-                            &binary,
-                            &cwd,
-                            session_id,
-                            VISIBLE_TURN_LIMIT,
-                        )?
-                    }
-                    ProviderResumeCursor::DeepSeek { session_id } => {
-                        let binary = self.provider_binary(ProviderKind::DeepSeek)?;
-                        crate::deepseek_session::provider_session_history(
-                            &binary,
-                            session_id,
-                            VISIBLE_TURN_LIMIT,
-                        )?
-                    }
-                    // ChatGPT conversation import arrives with Stage 3.
-                    ProviderResumeCursor::ChatGpt { .. } => {
-                        bail!("ChatGPT conversation import is not supported yet")
-                    }
-                    ProviderResumeCursor::OhMyPi {
-                        session_id,
-                        session_file,
-                    }
-                    | ProviderResumeCursor::Pi {
-                        session_id,
-                        session_file,
-                    } => {
-                        self.provider_binary(cursor.provider())?;
-                        let session_file = session_file.as_deref().ok_or_else(|| {
-                            anyhow!(
-                                "{} did not report its native session file",
-                                cursor.provider().display_name()
-                            )
-                        })?;
-                        crate::pi_session::provider_session_history(
-                            cursor.provider(),
-                            session_id,
-                            session_file,
-                            VISIBLE_TURN_LIMIT,
-                        )?
-                    }
-                };
-                Ok(ResponsePayload::ProviderSessionHistory { history })
+                let _ = (cursor, cwd);
+                bail!("ChatGPT conversation import is not supported yet")
             }
             Command::LoadComposerDrafts => Ok(ResponsePayload::ComposerDrafts {
                 drafts: self.composer_drafts.load()?,
@@ -1273,117 +1068,19 @@ impl WakuBackend {
     fn fork_provider_response(
         &self,
         source: &AgentSession,
-        cwd: &Path,
-        fork_title: &str,
-        turn_count: usize,
-        provider_turn_count: usize,
-        turns_to_remove: usize,
+        _cwd: &Path,
+        _fork_title: &str,
+        _turn_count: usize,
+        _provider_turn_count: usize,
+        _turns_to_remove: usize,
     ) -> anyhow::Result<(ProviderResumeCursor, HashMap<String, String>)> {
-        match source.provider {
-            ProviderKind::Claude => {
-                let Some(ProviderResumeCursor::Claude { session_id, .. }) =
-                    source.provider_cursor.as_ref()
-                else {
-                    bail!("Claude's native session is unavailable");
-                };
-                let resume_at = source
-                    .turns
-                    .get(turn_count.saturating_sub(1))
-                    .and_then(|turn| turn.provider_resume_at.clone());
-                let fork = fork_provider_session(ProviderSessionForkRequest::Claude {
-                    session_id: session_id.clone(),
-                    resume_at,
-                    turn_count: provider_turn_count,
-                    title: fork_title.to_owned(),
-                })?;
-                Ok((fork.cursor, fork.message_ids))
-            }
-            ProviderKind::Codex
-            | ProviderKind::DeepSeek
-            | ProviderKind::OhMyPi
-            | ProviderKind::Pi => Ok((
-                self.fork_response_with_driver(source, cwd, turns_to_remove)?,
-                HashMap::new(),
-            )),
-            ProviderKind::Cursor => {
-                let fork = fork_provider_session(ProviderSessionForkRequest::Cursor {
-                    source: source.clone(),
-                    turn_count,
-                })?;
-                Ok((fork.cursor, HashMap::new()))
-            }
-            ProviderKind::Amp => {
-                let Some(ProviderResumeCursor::Amp {
-                    thread_id,
-                    fork_context,
-                }) = source.provider_cursor.as_ref()
-                else {
-                    bail!("Amp's native thread is unavailable");
-                };
-                let fork = fork_provider_session(ProviderSessionForkRequest::Amp {
-                    binary: self.provider_binary(ProviderKind::Amp)?,
-                    cwd: cwd.to_owned(),
-                    thread_id: thread_id.clone(),
-                    fork_context: fork_context.clone(),
-                    turn_count: provider_turn_count,
-                })?;
-                Ok((fork.cursor, HashMap::new()))
-            }
-            ProviderKind::OpenCode => {
-                let Some(ProviderResumeCursor::OpenCode { session_id }) =
-                    source.provider_cursor.as_ref()
-                else {
-                    bail!("OpenCode's native session is unavailable");
-                };
-                let fork = fork_provider_session(ProviderSessionForkRequest::OpenCode {
-                    binary: self.provider_binary(ProviderKind::OpenCode)?,
-                    cwd: cwd.to_owned(),
-                    session_id: session_id.clone(),
-                    turn_count: provider_turn_count,
-                })?;
-                Ok((fork.cursor, HashMap::new()))
-            }
-            ProviderKind::OpenCode2 => {
-                let Some(ProviderResumeCursor::OpenCode2 { session_id, .. }) =
-                    source.provider_cursor.as_ref()
-                else {
-                    bail!("OpenCode 2's native session is unavailable");
-                };
-                // No cwd: a v2 session carries its own `location`, so there is
-                // no server working directory to fork against.
-                let fork = fork_provider_session(ProviderSessionForkRequest::OpenCode2 {
-                    binary: self.provider_binary(ProviderKind::OpenCode2)?,
-                    session_id: session_id.clone(),
-                    turn_count: provider_turn_count,
-                })?;
-                Ok((fork.cursor, HashMap::new()))
-            }
-            ProviderKind::Grok => {
-                let Some(ProviderResumeCursor::Grok { session_id }) =
-                    source.provider_cursor.as_ref()
-                else {
-                    bail!("Grok Build's native session is unavailable");
-                };
-                let fork = fork_provider_session(ProviderSessionForkRequest::Grok {
-                    binary: self.provider_binary(ProviderKind::Grok)?,
-                    cwd: cwd.to_owned(),
-                    session_id: session_id.clone(),
-                    turn_count: provider_turn_count,
-                })?;
-                Ok((fork.cursor, HashMap::new()))
-            }
-            // Unreachable through the UI, which hides branching for providers
-            // that answer `supports_conversation_fork` with false. ChatGPT
-            // joins them: no conversations exist before Stage 3.
-            ProviderKind::Fx | ProviderKind::Kimi | ProviderKind::ChatGpt => {
-                bail!(
-                    "{} cannot branch a conversation at a turn",
-                    source.provider.display_name()
-                )
-            }
-        }
+        // ChatGPT-only: ChatGPT answers `supports_conversation_fork` with
+        // false, so branching is unreachable through the UI.
+        bail!(
+            "{} cannot branch a conversation at a turn",
+            source.provider.display_name()
+        )
     }
-
     fn fork_response_with_driver(
         &self,
         source: &AgentSession,
@@ -1397,48 +1094,6 @@ impl WakuBackend {
             .map(|(_, driver)| driver.clone())
         {
             return driver.fork(turns_to_remove);
-        }
-
-        match source.provider {
-            ProviderKind::Codex
-                if !matches!(
-                    source.provider_cursor.as_ref(),
-                    Some(ProviderResumeCursor::Codex { .. })
-                ) =>
-            {
-                bail!("Codex's native thread is unavailable");
-            }
-            ProviderKind::DeepSeek
-                if !matches!(
-                    source.provider_cursor.as_ref(),
-                    Some(ProviderResumeCursor::DeepSeek { .. })
-                ) =>
-            {
-                bail!("DeepSeek Harness's native session is unavailable");
-            }
-            ProviderKind::Pi
-                if !matches!(
-                    source.provider_cursor.as_ref(),
-                    Some(ProviderResumeCursor::Pi {
-                        session_file: Some(_),
-                        ..
-                    })
-                ) =>
-            {
-                bail!("Pi's native session file is unavailable");
-            }
-            ProviderKind::OhMyPi
-                if !matches!(
-                    source.provider_cursor.as_ref(),
-                    Some(ProviderResumeCursor::OhMyPi {
-                        session_file: Some(_),
-                        ..
-                    })
-                ) =>
-            {
-                bail!("Oh My Pi's native session file is unavailable");
-            }
-            _ => {}
         }
 
         let (wake, _wake_events) = smol::channel::bounded(1);
@@ -1471,150 +1126,19 @@ impl WakuBackend {
     fn rewind_provider_response(
         &self,
         source: &AgentSession,
-        cwd: &Path,
-        binary: &Path,
-        retained_turn_count: usize,
-        rollback_turns: usize,
-        provider_turn_count: usize,
-        provider_resume_at: Option<String>,
+        _cwd: &Path,
+        _binary: &Path,
+        _retained_turn_count: usize,
+        _rollback_turns: usize,
+        _provider_turn_count: usize,
+        _provider_resume_at: Option<String>,
     ) -> anyhow::Result<(Option<ProviderResumeCursor>, HashMap<String, String>, bool)> {
-        if rollback_turns == 0 {
-            return Ok((None, HashMap::new(), false));
-        }
-        let reset_native_session = retained_turn_count == 0
-            && matches!(
-                source.provider,
-                ProviderKind::Claude | ProviderKind::Cursor | ProviderKind::Grok
-            );
-        if reset_native_session {
-            return Ok((None, HashMap::new(), true));
-        }
-
-        match source.provider {
-            ProviderKind::Claude => {
-                let Some(ProviderResumeCursor::Claude { session_id, .. }) =
-                    source.provider_cursor.as_ref()
-                else {
-                    bail!("Claude's native session is unavailable");
-                };
-                let fork = fork_provider_session(ProviderSessionForkRequest::Claude {
-                    session_id: session_id.clone(),
-                    resume_at: provider_resume_at,
-                    turn_count: provider_turn_count,
-                    title: format!("{} (rewind)", source.display_title()),
-                })?;
-                Ok((Some(fork.cursor), fork.message_ids, false))
-            }
-            ProviderKind::OpenCode => {
-                let cursor = if let Some(driver) = self
-                    .sessions
-                    .lock()
-                    .get(&source.id)
-                    .map(|(_, driver)| driver.clone())
-                {
-                    driver
-                        .rollback(rollback_turns)?
-                        .ok_or_else(|| anyhow!("OpenCode returned no rewound-session cursor"))?
-                } else {
-                    let Some(ProviderResumeCursor::OpenCode { session_id }) =
-                        source.provider_cursor.as_ref()
-                    else {
-                        bail!("OpenCode's native session is unavailable");
-                    };
-                    fork_provider_session(ProviderSessionForkRequest::OpenCode {
-                        binary: binary.to_owned(),
-                        cwd: cwd.to_owned(),
-                        session_id: session_id.clone(),
-                        turn_count: provider_turn_count,
-                    })?
-                    .cursor
-                };
-                Ok((Some(cursor), HashMap::new(), false))
-            }
-            ProviderKind::OpenCode2 => {
-                let cursor = if let Some(driver) = self
-                    .sessions
-                    .lock()
-                    .get(&source.id)
-                    .map(|(_, driver)| driver.clone())
-                {
-                    driver
-                        .rollback(rollback_turns)?
-                        .ok_or_else(|| anyhow!("OpenCode 2 returned no rewound-session cursor"))?
-                } else {
-                    let Some(ProviderResumeCursor::OpenCode2 { session_id, .. }) =
-                        source.provider_cursor.as_ref()
-                    else {
-                        bail!("OpenCode 2's native session is unavailable");
-                    };
-                    fork_provider_session(ProviderSessionForkRequest::OpenCode2 {
-                        binary: binary.to_owned(),
-                        session_id: session_id.clone(),
-                        turn_count: provider_turn_count,
-                    })?
-                    .cursor
-                };
-                Ok((Some(cursor), HashMap::new(), false))
-            }
-            ProviderKind::Amp => {
-                let Some(ProviderResumeCursor::Amp {
-                    thread_id,
-                    fork_context,
-                }) = source.provider_cursor.as_ref()
-                else {
-                    bail!("Amp's native thread is unavailable");
-                };
-                let cursor = fork_provider_session(ProviderSessionForkRequest::Amp {
-                    binary: binary.to_owned(),
-                    cwd: cwd.to_owned(),
-                    thread_id: thread_id.clone(),
-                    fork_context: fork_context.clone(),
-                    turn_count: provider_turn_count,
-                })?
-                .cursor;
-                Ok((Some(cursor), HashMap::new(), false))
-            }
-            ProviderKind::Cursor => {
-                let cursor = fork_provider_session(ProviderSessionForkRequest::Cursor {
-                    source: source.clone(),
-                    turn_count: retained_turn_count,
-                })?
-                .cursor;
-                Ok((Some(cursor), HashMap::new(), false))
-            }
-            ProviderKind::Grok => {
-                let Some(ProviderResumeCursor::Grok { session_id }) =
-                    source.provider_cursor.as_ref()
-                else {
-                    bail!("Grok Build's native session is unavailable");
-                };
-                let cursor = fork_provider_session(ProviderSessionForkRequest::Grok {
-                    binary: binary.to_owned(),
-                    cwd: cwd.to_owned(),
-                    session_id: session_id.clone(),
-                    turn_count: provider_turn_count,
-                })?
-                .cursor;
-                Ok((Some(cursor), HashMap::new(), false))
-            }
-            ProviderKind::Codex
-            | ProviderKind::DeepSeek
-            | ProviderKind::OhMyPi
-            | ProviderKind::Pi => Ok((
-                self.rollback_response_with_driver(source, cwd, binary, rollback_turns)?,
-                HashMap::new(),
-                false,
-            )),
-            // Unreachable through the UI, which hides rewinding for providers
-            // that answer `supports_conversation_rollback` with false.
-            // ChatGPT joins them: no conversations exist before Stage 3.
-            ProviderKind::Fx | ProviderKind::Kimi | ProviderKind::ChatGpt => {
-                bail!(
-                    "{} cannot rewind a conversation to a turn",
-                    source.provider.display_name()
-                )
-            }
-        }
+        // ChatGPT-only: ChatGPT answers `supports_conversation_rollback`
+        // with false, so rewinding is unreachable through the UI.
+        bail!(
+            "{} cannot rewind a conversation to a turn",
+            source.provider.display_name()
+        )
     }
 
     fn rollback_response_with_driver(
@@ -1769,93 +1293,10 @@ fn next_response_fork_title<'a>(
 }
 
 fn fork_provider_session(
-    request: ProviderSessionForkRequest,
+    _request: ProviderSessionForkRequest,
 ) -> anyhow::Result<ProviderSessionFork> {
-    use crate::model::ProviderResumeCursor;
-
-    let (cursor, message_ids, source_resume_at) = match request {
-        ProviderSessionForkRequest::Claude {
-            session_id,
-            resume_at,
-            turn_count,
-            title,
-        } => {
-            let source_resume_at = resume_at.map(Ok).unwrap_or_else(|| {
-                crate::claude_session::message_id_for_turn(&session_id, turn_count)
-            })?;
-            let fork =
-                crate::claude_session::fork_session_at(&session_id, &source_resume_at, &title)?;
-            let fork_resume_at = fork
-                .message_ids
-                .get(&source_resume_at)
-                .cloned()
-                .ok_or_else(|| anyhow!("Claude fork did not include its target message"))?;
-            (
-                ProviderResumeCursor::Claude {
-                    session_id: fork.session_id,
-                    resume_at: Some(fork_resume_at),
-                },
-                fork.message_ids,
-                Some(source_resume_at),
-            )
-        }
-        ProviderSessionForkRequest::Amp {
-            binary,
-            cwd,
-            thread_id,
-            fork_context,
-            turn_count,
-        } => (
-            crate::amp_session::fork_session_at_turn(
-                &binary,
-                &cwd,
-                &thread_id,
-                fork_context.as_deref(),
-                turn_count,
-            )?,
-            HashMap::new(),
-            None,
-        ),
-        ProviderSessionForkRequest::Cursor { source, turn_count } => (
-            crate::cursor_session::fork_session_at_turn(&source, turn_count)?,
-            HashMap::new(),
-            None,
-        ),
-        ProviderSessionForkRequest::OpenCode {
-            binary,
-            cwd,
-            session_id,
-            turn_count,
-        } => (
-            crate::opencode_session::fork_session_at_turn(&binary, &cwd, &session_id, turn_count)?,
-            HashMap::new(),
-            None,
-        ),
-        ProviderSessionForkRequest::OpenCode2 {
-            binary,
-            session_id,
-            turn_count,
-        } => (
-            crate::opencode2_session::fork_session_at_turn(&binary, &session_id, turn_count)?,
-            HashMap::new(),
-            None,
-        ),
-        ProviderSessionForkRequest::Grok {
-            binary,
-            cwd,
-            session_id,
-            turn_count,
-        } => (
-            crate::grok_session::fork_session_at_turn(&binary, &cwd, &session_id, turn_count)?,
-            HashMap::new(),
-            None,
-        ),
-    };
-    Ok(ProviderSessionFork {
-        cursor,
-        message_ids,
-        source_resume_at,
-    })
+    // ChatGPT-only: native session forking belonged to removed CLI providers.
+    bail!("this provider cannot branch a conversation at a turn")
 }
 
 fn handle_driver_command(
@@ -1864,6 +1305,7 @@ fn handle_driver_command(
 ) -> anyhow::Result<ResponsePayload> {
     match command {
         Command::Prompt { prompt, .. } => driver.prompt(prompt),
+        Command::GenerateTitle { prompt } => driver.generate_title(prompt),
         Command::Steer { prompt } => driver.steer(prompt),
         Command::Cancel => driver.cancel(),
         Command::CancelComputerUse => driver.cancel_computer_use(),
@@ -2410,7 +1852,7 @@ mod tests {
     fn stale_runtime_projection_keeps_newer_transcript_cursor() {
         let runtime_id = Uuid::new_v4();
         let epoch = Uuid::new_v4();
-        let mut existing = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let mut existing = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         existing.status = SessionStatus::Working;
         existing.runtime_event_cursor = Some(crate::model::RuntimeEventCursor {
             runtime_id,
@@ -2441,7 +1883,7 @@ mod tests {
 
     #[test]
     fn client_projection_cannot_replace_a_daemon_checkpoint() {
-        let mut existing = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let mut existing = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         existing.begin_turn("change it");
         existing.finish_active_turn(crate::model::TurnStatus::Completed);
         let checkpoint = Checkpoint {
@@ -2486,11 +1928,11 @@ mod tests {
 
     #[test]
     fn message_rewind_requires_a_settled_user_turn_and_provider_cursor() {
-        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         session.begin_turn("change it");
         session.mark_active_turn_provider_started();
-        session.provider_cursor = Some(ProviderResumeCursor::Codex {
-            thread_id: "thread".into(),
+        session.provider_cursor = Some(ProviderResumeCursor::ChatGpt {
+            session_id: "session".into(),
         });
         session.finish_active_turn(crate::model::TurnStatus::Completed);
 

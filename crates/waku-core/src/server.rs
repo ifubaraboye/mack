@@ -1209,7 +1209,7 @@ mod tests {
                 .unwrap(),
             ResponsePayload::TaskState { .. }
         ));
-        let session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         let session_id = session.id;
 
         assert!(matches!(
@@ -1265,7 +1265,7 @@ mod tests {
         // Desktop persistence uses fire-and-forget notifications, while Web
         // uses requests. Both directions must wake the other application's
         // catalog without echoing back to the source connection.
-        let second = AgentSession::new(Uuid::new_v4(), ProviderKind::Claude);
+        let second = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         let second_id = second.id;
         observer
             .notify(
@@ -1324,7 +1324,7 @@ mod tests {
         let stale_client = DaemonClient::connect(&address.to_string(), "secret".into()).unwrap();
         let remover = DaemonClient::connect(&address.to_string(), "secret".into()).unwrap();
         let project = Project::from_path(root.join("repo"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.begin_turn("persist me");
         stale_client
             .request(
@@ -2044,7 +2044,7 @@ mod tests {
                 session_id: Uuid::nil(),
                 runtime_id: Uuid::nil(),
                 command: Command::ProbeProvider {
-                    provider: crate::model::ProviderKind::Codex,
+                    provider: crate::model::ProviderKind::ChatGpt,
                     binary_override: None,
                     discover_models: false,
                     probe_version: false,

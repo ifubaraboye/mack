@@ -63,7 +63,6 @@ actions!(
         About,
         CloseWindow,
         NewSession,
-        NewProject,
         OpenSettings,
         CheckForUpdates,
         ToggleSidebar,
@@ -81,7 +80,6 @@ actions!(
         CancelTaskSwitch,
         FocusComposer,
         ToggleModelPicker,
-        ToggleUsagePanel,
         CancelTurn,
         CopySelection,
         OpenFind,
@@ -215,7 +213,6 @@ pub fn run() {
                 KeyBinding::new("secondary-q", Quit, None),
                 KeyBinding::new("secondary-w", CloseWindow, None),
                 KeyBinding::new("secondary-n", NewSession, None),
-                KeyBinding::new("secondary-o", NewProject, None),
                 KeyBinding::new("secondary-,", OpenSettings, None),
                 KeyBinding::new("secondary-b", ToggleSidebar, None),
                 KeyBinding::new("secondary-shift-b", ToggleRightPanel, None),
@@ -237,7 +234,6 @@ pub fn run() {
                 KeyBinding::new("escape", CancelTaskSwitch, Some("TaskSwitcher")),
                 KeyBinding::new("secondary-l", FocusComposer, None),
                 KeyBinding::new("secondary-/", ToggleModelPicker, None),
-                KeyBinding::new("secondary-u", ToggleUsagePanel, None),
                 KeyBinding::new("escape", CancelTurn, Some("Waku")),
                 KeyBinding::new("secondary-c", CopySelection, Some("Waku")),
                 // Find in the transcript, on the conventional VS Code
@@ -381,10 +377,7 @@ pub(crate) fn set_app_menus(cx: &mut App, updater_available: bool) {
         Menu {
             name: tr!("menu.file").into(),
             disabled: false,
-            items: vec![
-                MenuItem::action(tr!("menu.new_task"), NewSession),
-                MenuItem::action(tr!("menu.new_project"), NewProject),
-            ],
+            items: vec![MenuItem::action(tr!("menu.new_task"), NewSession)],
         },
         Menu {
             name: tr!("menu.edit").into(),
@@ -409,7 +402,6 @@ pub(crate) fn set_app_menus(cx: &mut App, updater_available: bool) {
                 MenuItem::action(tr!("menu.toggle_right_panel"), ToggleRightPanel),
                 MenuItem::action(tr!("menu.focus_composer"), FocusComposer),
                 MenuItem::action(tr!("menu.toggle_model_picker"), ToggleModelPicker),
-                MenuItem::action(tr!("menu.toggle_usage_panel"), ToggleUsagePanel),
             ],
         },
         Menu {

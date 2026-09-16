@@ -395,6 +395,7 @@ fn is_model_unavailable_body(body: &str) -> bool {
 
 enum CommandMessage {
     Prompt(String),
+    GenerateTitle(String),
     Cancel,
     Rollback {
         turns: usize,
@@ -517,6 +518,10 @@ impl DriverControl for ChatGptDriver {
         self.send(CommandMessage::Prompt(prompt));
     }
 
+    fn generate_title(&self, prompt: String) {
+        self.send(CommandMessage::GenerateTitle(prompt));
+    }
+
     fn cancel(&self) {
         self.shared.abort_active_stream();
         self.send(CommandMessage::Cancel);
@@ -573,6 +578,7 @@ impl Worker {
         while let Ok(message) = incoming.recv() {
             match message {
                 CommandMessage::Prompt(prompt) => self.run_turn(prompt),
+                CommandMessage::GenerateTitle(prompt) => self.generate_title(prompt),
                 CommandMessage::Cancel => {
                     // The abort already settled (or will settle) the turn via
                     // the interrupted read; nothing more to do.
@@ -595,6 +601,62 @@ impl Worker {
             success: false,
             summary: None,
         });
+    }
+
+    fn generate_title(&mut self, prompt: String) {
+        let options = self.options.lock().clone();
+        let Some(model) = options.model.filter(|model| !model.is_empty()) else {
+            return;
+        };
+        let Ok(auth) = self.manager.ensure_fresh_auth() else {
+            return;
+        };
+        let title_prompt = format!(
+            "Create a concise chat title for this request. Return only the title, no quotes or markdown, at most 6 words.\n\n{prompt}"
+        );
+        let input = vec![
+            serde_json::json!({"role":"user","content":[{"type":"input_text","text":title_prompt}]}),
+        ];
+        let Ok((_, body)) = build_responses_body(&model, input, None, None) else {
+            return;
+        };
+        let config = self.manager.config();
+        let headers =
+            render_header_config(auth.access_token(), auth.account_id(), &config.originator);
+        let Ok((head, mut stream)) =
+            self.transport
+                .start_stream(&config.responses_url(), &headers, &body)
+        else {
+            return;
+        };
+        if !(200..300).contains(&head.status) {
+            stream.finish();
+            return;
+        }
+        let mut parser = ResponsesSseParser::new();
+        let mut decoder = Utf8StreamDecoder::new();
+        let mut title = String::new();
+        let mut buf = [0_u8; 4096];
+        loop {
+            match stream.read_chunk(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    for event in parser.push(&decoder.push(&buf[..n])) {
+                        match event {
+                            ResponsesStreamEvent::TextDelta(delta) => title.push_str(&delta),
+                            ResponsesStreamEvent::Completed(_) => break,
+                            _ => {}
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        stream.finish();
+        let title = title.trim().trim_matches('"').trim().to_owned();
+        if !title.is_empty() && title.chars().count() <= 80 {
+            self.emit(DriverEvent::AutoTitleUpdated(Some(title)));
+        }
     }
 
     fn run_turn(&mut self, prompt: String) {

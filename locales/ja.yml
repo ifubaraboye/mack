@@ -6,7 +6,6 @@ menu.settings: 設定…
 menu.quit: "%{app} を終了"
 menu.file: ファイル
 menu.new_task: 新規タスク
-menu.new_project: 新規プロジェクト…
 menu.edit: 編集
 menu.undo: 取り消す
 menu.redo: やり直す
@@ -46,7 +45,6 @@ command_palette.new_task: 新規タスク
 command_palette.resume: 再開…
 command_palette.change_provider: プロバイダーを変更
 command_palette.current_provider: 現在のプロバイダー
-command_palette.open_project: プロジェクトを開く…
 command_palette.choose_model: モデルを選択…
 command_palette.copy_task_id: タスク ID をコピー
 command_palette.copy_agent_cli_thread_id: エージェント CLI スレッド ID をコピー
@@ -270,22 +268,10 @@ sidebar.status_waiting: 待機中
 sidebar.status_background: バックグラウンドタスク待ち
 sidebar.status_failed: 失敗
 
-project.new_project: 新規プロジェクト…
-project.no_project: プロジェクトを使用しない
 project.no_project_name: プロジェクトなし
-project.choose_project: プロジェクトを選択
-project.default_folder: デフォルトフォルダ
-project.project_lower: プロジェクト
-project.without_a_project: プロジェクトなし
-project.your_project: あなたのプロジェクト
 
-onboarding.open_project_to_begin: プロジェクトを開いて始めましょう
-onboarding.description: Waku は選択したフォルダでコーディングエージェントを実行します。コード、タスク、履歴はこのコンピュータに保存されます
 onboarding.web_description: デーモンホスト上のパスを選ぶか、プロジェクトなしで開始してください。
-onboarding.open_project_folder: プロジェクトフォルダを開く…
 onboarding.what_should_we_build: 何を作りましょうか？
-onboarding.what_should_we_build_in: ""
-onboarding.question_mark: " で何を作りましょうか？"
 
 common.copied: コピーしました
 common.copy_message: メッセージをコピー
@@ -618,8 +604,6 @@ composer.queued_message_actions: フォローアップの操作
 
 terminal.starting: ターミナルを起動中…
 
-project.add_project: プロジェクトを追加
-errors.remote_project_picker: デーモンホスト上のプロジェクトを追加するにはリモートパス選択が必要ですが、まだ利用できません
 
 session.stopped: 停止しました
 session.turn_completed: ターンが完了しました

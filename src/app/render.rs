@@ -277,7 +277,6 @@ impl Render for Waku {
             .key_context("Waku")
             .on_action(cx.listener(Self::close_window_or_right_panel_tab_action))
             .on_action(cx.listener(Self::new_session_action))
-            .on_action(cx.listener(Self::new_project_action))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::toggle_sidebar_action))
             .on_action(cx.listener(Self::toggle_right_panel_action))
@@ -294,7 +293,6 @@ impl Render for Waku {
             .on_action(cx.listener(Self::cancel_task_switch_action))
             .on_action(cx.listener(Self::focus_composer_action))
             .on_action(cx.listener(Self::toggle_model_picker_action))
-            .on_action(cx.listener(Self::toggle_usage_panel_action))
             .on_action(cx.listener(Self::cancel_turn_action))
             .on_action(cx.listener(Self::copy_selection_action))
             .on_action(cx.listener(Self::open_find_action))
@@ -352,11 +350,10 @@ impl Render for Waku {
                             .into_any_element()
                     })
                     .children(permission)
-                    .when(self.selected_project().is_some(), |element| {
+                    .when(self.selected_session().is_some(), |element| {
                         element
                             .children(self.render_queued_messages(cx))
                             .child(self.render_composer(window, cx))
-                            .child(self.render_workspace_footer(cx))
                     })
                     .relative()
                     .children(toast)
@@ -411,12 +408,12 @@ mod tests {
 
     #[test]
     fn unloaded_history_never_renders_the_new_task_prompt() {
-        let mut stored = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let mut stored = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         stored.detail_loaded = false;
 
         assert!(!should_render_empty_state(Some(&stored)));
 
-        let draft = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let draft = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         assert!(should_render_empty_state(Some(&draft)));
         assert!(should_render_empty_state(None));
     }

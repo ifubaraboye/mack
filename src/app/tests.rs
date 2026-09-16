@@ -94,7 +94,7 @@ fn attach_changed_files(session: &mut AgentSession, files: Vec<CheckpointFile>) 
 #[test]
 fn remote_task_catalog_adds_web_tasks_without_replacing_hydrated_detail() {
     let project_id = Uuid::new_v4();
-    let mut local = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut local = AgentSession::new(project_id, ProviderKind::ChatGpt);
     local.title = "Local title".into();
     local
         .messages
@@ -106,7 +106,7 @@ fn remote_task_catalog_adds_web_tasks_without_replacing_hydrated_detail() {
     local_projection.status = SessionStatus::Waiting;
     local_projection.updated_at += 10;
 
-    let mut web_task = AgentSession::new(project_id, ProviderKind::Claude).list_projection();
+    let mut web_task = AgentSession::new(project_id, ProviderKind::ChatGpt).list_projection();
     web_task.title = "Created in Web".into();
     let web_task_id = web_task.id;
 
@@ -153,7 +153,7 @@ fn composer_only_offers_stop_after_submission_preparation() {
 
 #[test]
 fn connecting_status_does_not_hide_a_started_provider_turn_from_steering() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     session.begin_turn("inspect the project");
     session.mark_active_turn_provider_started();
     session.status = SessionStatus::Connecting;
@@ -163,7 +163,7 @@ fn connecting_status_does_not_hide_a_started_provider_turn_from_steering() {
 
 #[test]
 fn foreground_output_recovers_a_missed_provider_turn_start_for_steering() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     session.begin_turn("inspect the project");
     session.status = SessionStatus::Connecting;
 
@@ -450,7 +450,7 @@ fn conversation_navigation_active_turn_follows_the_scroll_top_and_tail() {
 #[test]
 fn conversation_navigation_preview_uses_each_prompt_and_latest_response() {
     let project_id = Uuid::new_v4();
-    let mut session = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
     session.begin_turn("  First\n\nprompt  ");
     session.push_message(MessageRole::Assistant, "Interim update");
     session.push_message(MessageRole::Assistant, "Final answer");
@@ -475,7 +475,7 @@ fn conversation_navigation_preview_uses_each_prompt_and_latest_response() {
 #[test]
 fn conversation_navigation_preview_does_not_change_during_a_running_turn() {
     let project_id = Uuid::new_v4();
-    let mut session = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
     let session_id = session.id;
     session.begin_turn("Streaming prompt");
     append_text_delta_to_session(
@@ -638,7 +638,7 @@ fn pending_expansion_reasserts_the_user_message_anchor() {
 
 #[test]
 fn settling_an_anchored_turn_splices_without_resetting_its_prompt() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     session.begin_turn("hi");
     session.push_message(MessageRole::Assistant, "Hello.");
     session.finish_active_turn(TurnStatus::Completed);
@@ -706,7 +706,7 @@ fn only_later_user_messages_start_followup_turns() {
 
 #[test]
 fn only_the_turn_opening_prompt_is_a_rewind_boundary() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     session.begin_turn("first prompt");
     session.push_message(MessageRole::Assistant, "working on it");
     // A steer the provider folded into the live turn.
@@ -780,11 +780,11 @@ fn stream_batches_commit_full_adjacent_text_and_preserve_event_order() {
 #[test]
 fn stream_parts_keep_targeting_the_running_session_after_selection_changes() {
     let project_id = uuid::Uuid::new_v4();
-    let mut running = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut running = AgentSession::new(project_id, ProviderKind::ChatGpt);
     running.begin_turn("background task");
     running.status = SessionStatus::Working;
     let running_id = running.id;
-    let visible = AgentSession::new(project_id, ProviderKind::Claude);
+    let visible = AgentSession::new(project_id, ProviderKind::ChatGpt);
     let visible_id = visible.id;
     let mut sessions = vec![running, visible];
 
@@ -802,7 +802,7 @@ fn stream_parts_keep_targeting_the_running_session_after_selection_changes() {
 
 #[test]
 fn reasoning_and_tools_share_one_ordered_activity_block() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     session.begin_turn("Build it");
 
     push_transcript_activity(
@@ -860,24 +860,24 @@ fn idle_reaping_releases_finished_sessions_but_never_a_running_turn() {
     let fresh = Duration::from_secs(60);
     let stale = Duration::from_secs(60 * 60);
 
-    let idle = AgentSession::new(project_id, ProviderKind::Codex);
+    let idle = AgentSession::new(project_id, ProviderKind::ChatGpt);
     assert!(session_is_reapable(Some(&idle), stale, false));
     assert!(!session_is_reapable(Some(&idle), fresh, false));
     assert!(!session_is_reapable(Some(&idle), stale, true));
 
-    let mut working = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut working = AgentSession::new(project_id, ProviderKind::ChatGpt);
     working.begin_turn("a long tool call");
     working.status = SessionStatus::Working;
     assert!(!session_is_reapable(Some(&working), stale, false));
 
     // An approval can sit unanswered far longer than the idle window; its agent
     // is blocked on the user, not abandoned.
-    let mut waiting = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut waiting = AgentSession::new(project_id, ProviderKind::ChatGpt);
     waiting.begin_turn("needs approval");
     waiting.status = SessionStatus::Waiting;
     assert!(!session_is_reapable(Some(&waiting), stale, false));
 
-    let mut failed = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut failed = AgentSession::new(project_id, ProviderKind::ChatGpt);
     failed.begin_turn("failed turn");
     failed.finish_active_turn(TurnStatus::Failed);
     failed.status = SessionStatus::Failed;
@@ -983,7 +983,7 @@ fn splicing_one_row_in_place_preserves_the_list() {
 #[test]
 fn row_kinds_and_row_count_describe_the_same_rows() {
     let project_id = Uuid::new_v4();
-    let mut session = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Build it");
     session.transcript_blocks.push(TranscriptBlock {
         after_message: 1,
@@ -1035,7 +1035,7 @@ fn row_kinds_and_row_count_describe_the_same_rows() {
 
 #[test]
 fn changed_files_attach_to_the_response_footer() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     let first_turn = session.begin_turn("Build it");
     session.push_message(MessageRole::Assistant, "Done.");
     session.finish_active_turn(TurnStatus::Completed);
@@ -1067,7 +1067,7 @@ fn changed_files_attach_to_the_response_footer() {
 
 #[test]
 fn response_hover_owns_every_response_row_but_not_the_prompt() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Build it");
     session.transcript_blocks.push(TranscriptBlock {
         after_message: 1,
@@ -1098,7 +1098,7 @@ fn response_hover_owns_every_response_row_but_not_the_prompt() {
 
 #[test]
 fn changed_files_remain_visible_when_an_interrupted_turn_has_no_answer() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Make the change");
     session.transcript_blocks.push(TranscriptBlock {
         after_message: 1,
@@ -1141,7 +1141,7 @@ fn changed_files_remain_visible_when_an_interrupted_turn_has_no_answer() {
 
 #[test]
 fn changed_files_surface_appears_only_for_a_ready_nonempty_checkpoint() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Build it");
     session.push_message(MessageRole::Assistant, "Done.");
     session.finish_active_turn(TurnStatus::Completed);
@@ -1177,7 +1177,7 @@ fn changed_files_surface_appears_only_for_a_ready_nonempty_checkpoint() {
 
 #[test]
 fn checkpoint_completion_invalidates_the_cached_transcript_rows() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Build it");
     session.push_message(MessageRole::Assistant, "Done.");
     session.finish_active_turn(TurnStatus::Completed);
@@ -1228,7 +1228,7 @@ fn an_inline_checkpoint_keeps_followup_row_identity() {
 /// reasoning block and tool activity from the session.
 #[test]
 fn the_row_fingerprint_moves_whenever_the_fold_does() {
-    let mut base = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut base = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     let turn_id = base.begin_turn("Build it");
     base.transcript_blocks.push(TranscriptBlock {
         after_message: 1,
@@ -1341,7 +1341,7 @@ fn the_row_fingerprint_moves_whenever_the_fold_does() {
 #[test]
 fn a_settled_turn_folds_all_of_its_work_above_the_answer() {
     let project_id = Uuid::new_v4();
-    let mut session = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Build it");
     session.transcript_blocks.push(TranscriptBlock {
         after_message: 1,
@@ -1402,7 +1402,7 @@ fn a_settled_turn_folds_all_of_its_work_above_the_answer() {
 /// work between them, so they are all answer and none of them folds.
 #[test]
 fn consecutive_trailing_text_parts_all_stay_out_of_the_fold() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Build it");
     session.transcript_blocks.push(TranscriptBlock {
         after_message: 1,
@@ -1436,7 +1436,7 @@ fn consecutive_trailing_text_parts_all_stay_out_of_the_fold() {
 /// so the whole turn folds behind its summary rather than spilling raw work.
 #[test]
 fn a_turn_without_an_answer_folds_completely() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Build it");
     session.transcript_blocks.push(TranscriptBlock {
         after_message: 1,
@@ -1466,7 +1466,7 @@ fn a_turn_without_an_answer_folds_completely() {
 #[test]
 fn assistant_response_footer_is_owned_by_the_terminal_part_and_copies_the_visible_answer() {
     let project_id = Uuid::new_v4();
-    let mut session = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Build it");
     session.transcript_blocks.push(TranscriptBlock {
         after_message: 1,
@@ -1518,7 +1518,7 @@ fn assistant_response_footer_is_owned_by_the_terminal_part_and_copies_the_visibl
 
 #[test]
 fn response_footer_follows_trailing_tool_activity() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Inspect it");
     session.push_message(MessageRole::Assistant, "I’ll inspect the implementation.");
     session.transcript_blocks.push(TranscriptBlock {
@@ -1549,7 +1549,7 @@ fn response_footer_follows_trailing_tool_activity() {
 /// the text before it, so the copied message must leave that text out too.
 #[test]
 fn assistant_response_footer_treats_a_blank_part_as_work() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Build it");
     session.push_message(MessageRole::Assistant, "First text part.");
     session.push_message(MessageRole::Assistant, "  ");
@@ -1574,7 +1574,7 @@ fn assistant_response_footer_treats_a_blank_part_as_work() {
 #[test]
 fn running_assistant_response_withholds_its_footer() {
     let project_id = Uuid::new_v4();
-    let mut session = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
     session.begin_turn("Keep going");
     session.push_message(MessageRole::Assistant, "Interim text.");
 
@@ -1585,7 +1585,7 @@ fn running_assistant_response_withholds_its_footer() {
 #[test]
 fn unkeyed_assistant_message_keeps_a_standalone_footer() {
     let project_id = Uuid::new_v4();
-    let mut session = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
     session
         .messages
         .push(Message::new(MessageRole::Assistant, "Standalone response."));
@@ -1630,7 +1630,7 @@ fn turn_fold_visibility_splice_preserves_surrounding_message_rows() {
 #[test]
 fn running_turn_keeps_its_ordered_work_visible() {
     let project_id = Uuid::new_v4();
-    let mut session = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Keep going");
     session.transcript_blocks.push(TranscriptBlock {
         after_message: 1,
@@ -1655,7 +1655,7 @@ fn running_turn_keeps_its_ordered_work_visible() {
 #[test]
 fn plain_settled_response_does_not_add_an_empty_work_fold() {
     let project_id = Uuid::new_v4();
-    let mut session = AgentSession::new(project_id, ProviderKind::Codex);
+    let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Answer directly");
     session.push_message(MessageRole::Assistant, "The answer.");
     session.finish_active_turn(TurnStatus::Completed);
@@ -1686,7 +1686,7 @@ fn sidebar_time_labels_prefer_the_live_turn_over_the_last_reply() {
     assert_eq!(format_time_ago(420 * 86_400), "420d");
 
     // Never replied, nothing running: the row stays quiet.
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     assert_eq!(session_time_label(&session, 1_000), None);
 
     // A live turn counts up instead of showing the previous reply's age.
@@ -1716,7 +1716,7 @@ fn time_label_wakes_land_exactly_on_label_boundaries() {
 
     // Nothing on the clock: no sessions, or none that ever replied.
     assert_eq!(next_time_label_change(&[], 1_000), None);
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     assert_eq!(
         next_time_label_change(std::slice::from_ref(&session), 1_000),
         None
@@ -1740,7 +1740,7 @@ fn time_label_wakes_land_exactly_on_label_boundaries() {
     );
 
     // The earliest boundary across sessions wins.
-    let mut fresher = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut fresher = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     fresher.last_reply_at = Some(1_000 + 2 * 86_400 + 3_550);
     let sessions = [&sessions[0], &fresher]
         .into_iter()
@@ -1752,7 +1752,7 @@ fn time_label_wakes_land_exactly_on_label_boundaries() {
     );
 
     // A live turn pins the chain to seconds for its elapsed counter.
-    let mut busy = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut busy = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     busy.begin_turn("go");
     busy.status = SessionStatus::Working;
     let sessions = [busy];
@@ -1775,7 +1775,7 @@ fn working_elapsed_stays_compact() {
 /// permission pause — and gone the moment the session stops being busy.
 #[test]
 fn a_busy_turn_pins_the_working_indicator_after_the_last_row() {
-    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+    let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
     let turn_id = session.begin_turn("Build it");
     session.status = SessionStatus::Working;
 
@@ -1902,15 +1902,13 @@ fn switched_off_providers_leave_the_picker_except_for_their_locked_session() {
         models: vec![ProviderModel::new(model, model)],
         agent_presets: Vec::new(),
     };
-    let probes = [
-        probe(ProviderKind::Claude, "claude-sonnet-5"),
-        probe(ProviderKind::Codex, "gpt-5.6-sol"),
-    ];
+    // ChatGPT-only: a single provider backs the picker.
+    let probes = [probe(ProviderKind::ChatGpt, "gpt-5.6")];
     let favorites = [FavoriteModel {
-        provider: ProviderKind::Claude,
-        model: "claude-sonnet-5".into(),
+        provider: ProviderKind::ChatGpt,
+        model: "gpt-5.6".into(),
     }];
-    let disabled = [ProviderKind::Claude];
+    let disabled = [ProviderKind::ChatGpt];
 
     // Provider tab and favorites both stop offering the switched-off provider.
     let models = visible_picker_models(
@@ -1918,7 +1916,7 @@ fn switched_off_providers_leave_the_picker_except_for_their_locked_session() {
         &favorites,
         &disabled,
         None,
-        ModelPickerTab::Provider(ProviderKind::Claude),
+        ModelPickerTab::Provider(ProviderKind::ChatGpt),
         "",
     );
     assert!(models.is_empty());
@@ -1931,15 +1929,6 @@ fn switched_off_providers_leave_the_picker_except_for_their_locked_session() {
         "",
     );
     assert!(models.is_empty());
-    let models = visible_picker_models(
-        &probes,
-        &favorites,
-        &disabled,
-        None,
-        ModelPickerTab::Provider(ProviderKind::Codex),
-        "",
-    );
-    assert_eq!(models.len(), 1);
 
     // Search cannot resurface it either.
     let models = visible_picker_models(
@@ -1947,8 +1936,8 @@ fn switched_off_providers_leave_the_picker_except_for_their_locked_session() {
         &favorites,
         &disabled,
         None,
-        ModelPickerTab::Provider(ProviderKind::Codex),
-        "claude",
+        ModelPickerTab::Provider(ProviderKind::ChatGpt),
+        "gpt",
     );
     assert!(models.is_empty());
 
@@ -1957,8 +1946,8 @@ fn switched_off_providers_leave_the_picker_except_for_their_locked_session() {
         &probes,
         &favorites,
         &disabled,
-        Some(ProviderKind::Claude),
-        ModelPickerTab::Provider(ProviderKind::Claude),
+        Some(ProviderKind::ChatGpt),
+        ModelPickerTab::Provider(ProviderKind::ChatGpt),
         "",
     );
     assert_eq!(models.len(), 1);
@@ -1969,12 +1958,12 @@ fn model_picker_subtitle_deduplicates_the_provider_name() {
     use super::composer::model_picker_subtitle;
 
     assert_eq!(
-        model_picker_subtitle(ProviderKind::DeepSeek, Some("DeepSeek")),
-        "DeepSeek"
+        model_picker_subtitle(ProviderKind::ChatGpt, Some("ChatGPT")),
+        "ChatGPT"
     );
     assert_eq!(
-        model_picker_subtitle(ProviderKind::DeepSeek, Some("OpenAI")),
-        "OpenAI · DeepSeek"
+        model_picker_subtitle(ProviderKind::ChatGpt, Some("OpenAI")),
+        "OpenAI · ChatGPT"
     );
 }
 
@@ -1991,38 +1980,35 @@ fn tab_cycle_walks_favorites_then_usable_providers_in_rail_order() {
         models: vec![ProviderModel::new("model", "model")],
         agent_presets: Vec::new(),
     };
-    let probes = [
-        probe(ProviderKind::Claude, true),
-        probe(ProviderKind::Codex, true),
-        probe(ProviderKind::Cursor, false),
-    ];
+    // ChatGPT-only: the cycle holds favorites plus the single provider tab.
+    let probes = [probe(ProviderKind::ChatGpt, true)];
 
     // Uninstalled providers never join the cycle; favorites leads.
     assert_eq!(
         visible_picker_tabs(&probes, &[], None),
         vec![
             ModelPickerTab::Favorites,
-            ModelPickerTab::Provider(ProviderKind::Claude),
-            ModelPickerTab::Provider(ProviderKind::Codex),
+            ModelPickerTab::Provider(ProviderKind::ChatGpt),
         ]
     );
 
-    // Switched-off providers leave the cycle like they leave the rail.
+    // A switched-off provider leaves the cycle like it leaves the rail.
     assert_eq!(
-        visible_picker_tabs(&probes, &[ProviderKind::Claude], None),
-        vec![
-            ModelPickerTab::Favorites,
-            ModelPickerTab::Provider(ProviderKind::Codex),
-        ]
+        visible_picker_tabs(&probes, &[ProviderKind::ChatGpt], None),
+        vec![ModelPickerTab::Favorites,]
     );
 
     // A locked session cycles between favorites and its own provider only,
     // even when that provider was switched off after the session started.
     assert_eq!(
-        visible_picker_tabs(&probes, &[ProviderKind::Claude], Some(ProviderKind::Claude)),
+        visible_picker_tabs(
+            &probes,
+            &[ProviderKind::ChatGpt],
+            Some(ProviderKind::ChatGpt)
+        ),
         vec![
             ModelPickerTab::Favorites,
-            ModelPickerTab::Provider(ProviderKind::Claude),
+            ModelPickerTab::Provider(ProviderKind::ChatGpt),
         ]
     );
 }
@@ -2041,35 +2027,29 @@ fn the_picker_is_empty_only_once_detection_has_answered() {
     };
     // What every probe looks like before detection answers: seeded with a
     // fallback catalog and not yet installed.
-    let undetected = [
-        probe(ProviderKind::Claude, false),
-        probe(ProviderKind::Codex, false),
-    ];
-    let detected = [
-        probe(ProviderKind::Claude, true),
-        probe(ProviderKind::Codex, false),
-    ];
+    let undetected = [probe(ProviderKind::ChatGpt, false)];
+    let detected = [probe(ProviderKind::ChatGpt, true)];
 
     // An unsettled first pass reads as "not known yet", so the composer keeps
     // showing the remembered model instead of flashing an empty state.
     assert!(!picker_has_no_providers(&undetected, &[], None, false));
     // Once it settles, the same probes really do mean nothing is installed.
     assert!(picker_has_no_providers(&undetected, &[], None, true));
-    // One detected CLI is enough to keep the picker populated...
+    // One detected provider is enough to keep the picker populated...
     assert!(!picker_has_no_providers(&detected, &[], None, true));
     // ...until it is switched off, which empties the picker just as surely as
     // never having been installed.
     assert!(picker_has_no_providers(
         &detected,
-        &[ProviderKind::Claude],
+        &[ProviderKind::ChatGpt],
         None,
         true
     ));
     // A session already locked to that provider keeps it, switched off or not.
     assert!(!picker_has_no_providers(
         &detected,
-        &[ProviderKind::Claude],
-        Some(ProviderKind::Claude),
+        &[ProviderKind::ChatGpt],
+        Some(ProviderKind::ChatGpt),
         true
     ));
 }
@@ -2086,43 +2066,24 @@ fn the_rail_draws_only_installed_providers_the_settings_left_on() {
         models: vec![ProviderModel::new("model", "model")],
         agent_presets: Vec::new(),
     };
-    let probes = [
-        probe(ProviderKind::Claude, true),
-        probe(ProviderKind::Codex, true),
-        probe(ProviderKind::Cursor, false),
-    ];
+    let probes = [probe(ProviderKind::ChatGpt, true)];
 
-    // An undetected CLI and a switched-off provider both leave the rail
-    // outright, rather than sitting in it dimmed.
+    // A switched-off provider leaves the rail outright, rather than sitting
+    // in it dimmed.
     assert!(!picker_rail_shows_provider(
         &probes,
-        &[],
+        &[ProviderKind::ChatGpt],
         None,
-        ProviderKind::Cursor
-    ));
-    assert!(!picker_rail_shows_provider(
-        &probes,
-        &[ProviderKind::Claude],
-        None,
-        ProviderKind::Claude
-    ));
-
-    // A provider only the *current* session locks out stays drawn: that is a
-    // fact about this session, not about what the user configured.
-    assert!(picker_rail_shows_provider(
-        &probes,
-        &[],
-        Some(ProviderKind::Codex),
-        ProviderKind::Claude
+        ProviderKind::ChatGpt
     ));
 
     // ...and the locked session keeps its own tab even once it is switched
     // off, since the picker is its only route to another model.
     assert!(picker_rail_shows_provider(
         &probes,
-        &[ProviderKind::Claude],
-        Some(ProviderKind::Claude),
-        ProviderKind::Claude
+        &[ProviderKind::ChatGpt],
+        Some(ProviderKind::ChatGpt),
+        ProviderKind::ChatGpt
     ));
 }
 
@@ -2132,23 +2093,8 @@ fn hidden_providers_leave_the_picker_for_new_work() {
     use super::composer::{picker_rail_shows_provider, visible_picker_models};
     use crate::model::{FavoriteModel, ProviderModel, ProviderProbe};
 
-    // Only Codex, Claude, OpenCode and OpenCode 2 are user-visible.
-    assert!(ProviderKind::Codex.is_user_visible());
-    assert!(ProviderKind::Claude.is_user_visible());
-    assert!(ProviderKind::OpenCode.is_user_visible());
-    assert!(ProviderKind::OpenCode2.is_user_visible());
-    for hidden in [
-        ProviderKind::Amp,
-        ProviderKind::Cursor,
-        ProviderKind::DeepSeek,
-        ProviderKind::Fx,
-        ProviderKind::Grok,
-        ProviderKind::Kimi,
-        ProviderKind::OhMyPi,
-        ProviderKind::Pi,
-    ] {
-        assert!(!hidden.is_user_visible());
-    }
+    // Only ChatGPT is user-visible; every CLI provider was removed.
+    assert!(ProviderKind::ChatGpt.is_user_visible());
 
     let probe = |provider: ProviderKind| ProviderProbe {
         provider,
@@ -2157,23 +2103,23 @@ fn hidden_providers_leave_the_picker_for_new_work() {
         models: vec![ProviderModel::new("model", "model")],
         agent_presets: Vec::new(),
     };
-    let probes = [probe(ProviderKind::Codex), probe(ProviderKind::Pi)];
+    let probes = [probe(ProviderKind::ChatGpt)];
     let favorites: Vec<FavoriteModel> = Vec::new();
 
-    // An installed but hidden provider never joins the rail or model list
-    // for new work...
+    // A switched-off ChatGPT never joins the rail or model list for new
+    // work...
     assert!(!picker_rail_shows_provider(
         &probes,
-        &[],
+        &[ProviderKind::ChatGpt],
         None,
-        ProviderKind::Pi
+        ProviderKind::ChatGpt
     ));
     let models = visible_picker_models(
         &probes,
         &favorites,
-        &[],
+        &[ProviderKind::ChatGpt],
         None,
-        ModelPickerTab::Provider(ProviderKind::Pi),
+        ModelPickerTab::Provider(ProviderKind::ChatGpt),
         "",
     );
     assert!(models.is_empty());
@@ -2181,9 +2127,9 @@ fn hidden_providers_leave_the_picker_for_new_work() {
     // ...but a session already locked to it keeps working.
     assert!(picker_rail_shows_provider(
         &probes,
-        &[],
-        Some(ProviderKind::Pi),
-        ProviderKind::Pi
+        &[ProviderKind::ChatGpt],
+        Some(ProviderKind::ChatGpt),
+        ProviderKind::ChatGpt
     ));
 }
 
@@ -2345,33 +2291,18 @@ fn chatgpt_failure_preserves_last_session_and_reports_inline() {
 }
 
 #[test]
-fn chatgpt_probe_merge_replaces_only_chatgpt_models() {
+fn chatgpt_probe_merge_replaces_chatgpt_models() {
     use crate::model::{ProviderModel, ProviderProbe};
 
-    let mut probes = vec![
-        ProviderProbe {
-            provider: ProviderKind::Codex,
-            installed: true,
-            path: Some(PathBuf::from("/usr/bin/codex")),
-            models: vec![ProviderModel::new("gpt-5.6-sol", "GPT-5.6-Sol")],
-            agent_presets: Vec::new(),
-        },
-        ProviderProbe {
-            provider: ProviderKind::ChatGpt,
-            installed: true,
-            path: None,
-            models: vec![ProviderModel::new("old", "Old")],
-            agent_presets: Vec::new(),
-        },
-    ];
+    let mut probes = vec![ProviderProbe {
+        provider: ProviderKind::ChatGpt,
+        installed: true,
+        path: None,
+        models: vec![ProviderModel::new("old", "Old")],
+        agent_presets: Vec::new(),
+    }];
     Waku::merge_chatgpt_probe_models(&mut probes, vec![ProviderModel::new("gpt-5.5", "GPT-5.5")]);
-    assert_eq!(probes.len(), 2);
-    let codex = probes
-        .iter()
-        .find(|probe| probe.provider == ProviderKind::Codex)
-        .unwrap();
-    assert_eq!(codex.models.len(), 1);
-    assert_eq!(codex.models[0].id, "gpt-5.6-sol");
+    assert_eq!(probes.len(), 1);
     let chatgpt = probes
         .iter()
         .find(|probe| probe.provider == ProviderKind::ChatGpt)
@@ -2390,26 +2321,9 @@ fn chatgpt_probe_merge_replaces_only_chatgpt_models() {
 #[test]
 fn chatgpt_starts_without_a_cli_binary() {
     use super::runtime::start_binary_for_provider;
-    use crate::model::ProviderProbe;
 
     // ChatGPT is a native daemon driver: no probe path, no error.
     let probes = Vec::new();
     let binary = start_binary_for_provider(&probes, ProviderKind::ChatGpt).unwrap();
     assert!(binary.as_os_str().is_empty());
-
-    // Every other provider keeps the exact previous behavior: missing
-    // binary is the `provider_not_found` error, present binary passes.
-    let error = start_binary_for_provider(&probes, ProviderKind::Codex).unwrap_err();
-    assert!(error.to_string().contains("Codex"));
-    let probes = vec![ProviderProbe {
-        provider: ProviderKind::Codex,
-        installed: true,
-        path: Some(PathBuf::from("/usr/bin/codex")),
-        models: Vec::new(),
-        agent_presets: Vec::new(),
-    }];
-    assert_eq!(
-        start_binary_for_provider(&probes, ProviderKind::Codex).unwrap(),
-        PathBuf::from("/usr/bin/codex")
-    );
 }

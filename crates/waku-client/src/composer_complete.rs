@@ -123,7 +123,7 @@ pub fn is_resume_submission(prompt: &str) -> bool {
     prompt.trim() == "/resume"
 }
 
-/// Whether the submitted text resolves to Codex's native fast-mode command,
+/// Whether the submitted text resolves to ChatGPT's native fast-mode command,
 /// which Waku bridges to the provider's service-tier control. Checking the
 /// resolved entry preserves project/user command precedence when one of them
 /// intentionally owns `/fast`.
@@ -132,7 +132,7 @@ pub fn is_fast_mode_toggle_submission(
     prompt: &str,
     commands: &[SlashCommand],
 ) -> bool {
-    provider == ProviderKind::Codex
+    provider == ProviderKind::ChatGpt
         && prompt.trim() == "/fast"
         && commands.iter().any(|command| {
             command.name == "fast"
@@ -171,7 +171,7 @@ pub enum GoalCommand {
     Set(String),
 }
 
-/// Parse the submitted text as Codex's native `/goal` command, which Waku
+/// Parse the submitted text as ChatGPT's native `/goal` command, which Waku
 /// bridges to `thread/goal/*`. `None` when it is not one — wrong provider,
 /// other text, or a project/user command that deliberately owns `/goal`
 /// (resolution precedence stands).
@@ -180,7 +180,7 @@ pub fn parse_goal_submission(
     prompt: &str,
     commands: &[SlashCommand],
 ) -> Option<GoalCommand> {
-    if provider != ProviderKind::Codex {
+    if provider != ProviderKind::ChatGpt {
         return None;
     }
     let invocation = prompt.trim().strip_prefix('/')?;
@@ -281,16 +281,7 @@ pub fn resolved_skill_submission(
     prompt: &str,
     commands: &[SlashCommand],
 ) -> Option<String> {
-    if !matches!(
-        provider,
-        ProviderKind::Codex
-            | ProviderKind::Fx
-            | ProviderKind::Pi
-            | ProviderKind::OhMyPi
-            | ProviderKind::Claude
-            | ProviderKind::OpenCode
-            | ProviderKind::OpenCode2
-    ) {
+    if provider != ProviderKind::ChatGpt {
         return None;
     }
     let invocation = if let Some((name, args)) = parse_skill_invocation(prompt.trim()) {
@@ -312,12 +303,7 @@ pub fn resolved_skill_submission(
         return None;
     }
     Some(match provider {
-        ProviderKind::Codex | ProviderKind::Fx => format!("${invocation}"),
-        ProviderKind::Pi | ProviderKind::OhMyPi => format!("/skill:{invocation}"),
-        ProviderKind::Claude | ProviderKind::OpenCode | ProviderKind::OpenCode2 => {
-            format!("/skill:{invocation}")
-        }
-        _ => unreachable!("non-native skill providers returned above"),
+        ProviderKind::ChatGpt => format!("${invocation}"),
     })
 }
 
@@ -488,22 +474,17 @@ mod tests {
     fn fast_toggle_is_codex_only_and_respects_command_overrides() {
         let builtin = command("fast", CommandScope::Builtin);
         assert!(is_fast_mode_toggle_submission(
-            ProviderKind::Codex,
+            ProviderKind::ChatGpt,
             "/fast ",
             std::slice::from_ref(&builtin),
         ));
         assert!(!is_fast_mode_toggle_submission(
-            ProviderKind::Claude,
-            "/fast",
-            std::slice::from_ref(&builtin),
-        ));
-        assert!(!is_fast_mode_toggle_submission(
-            ProviderKind::Codex,
+            ProviderKind::ChatGpt,
             "/fast now",
             std::slice::from_ref(&builtin),
         ));
         assert!(!is_fast_mode_toggle_submission(
-            ProviderKind::Codex,
+            ProviderKind::ChatGpt,
             "/fast",
             &[command("fast", CommandScope::Project)],
         ));
@@ -546,51 +527,27 @@ mod tests {
         let skill = command("mattpocock-skills:to-spec", CommandScope::Skill);
         assert_eq!(
             resolved_submission(
-                ProviderKind::Codex,
+                ProviderKind::ChatGpt,
                 "/mattpocock-skills:to-spec carefully",
                 std::slice::from_ref(&skill)
             )
             .as_deref(),
             Some("$mattpocock-skills:to-spec carefully")
         );
-        assert_eq!(
-            resolved_submission(
-                ProviderKind::Claude,
-                "/mattpocock-skills:to-spec carefully",
-                std::slice::from_ref(&skill)
-            )
-            .as_deref(),
-            Some("/skill:mattpocock-skills:to-spec carefully")
-        );
     }
 
     #[test]
-    fn fx_skill_submission_uses_the_catalog_invocation() {
+    fn chatgpt_skill_submission_uses_dollar_invocation() {
         let skill = command("deploy", CommandScope::Skill);
         assert_eq!(
             resolved_submission(
-                ProviderKind::Fx,
+                ProviderKind::ChatGpt,
                 "/deploy production",
                 std::slice::from_ref(&skill)
             )
             .as_deref(),
             Some("$deploy production")
         );
-    }
-
-    #[test]
-    fn pi_skill_submission_uses_the_skill_command() {
-        for provider in [ProviderKind::Pi, ProviderKind::OhMyPi] {
-            for name in ["to-spec", "to-tickets"] {
-                let skill = command(name, CommandScope::Skill);
-                let expected = format!("/skill:{name} carefully");
-                assert_eq!(
-                    resolved_skill_submission(provider, &format!("/{name} carefully"), &[skill])
-                        .as_deref(),
-                    Some(expected.as_str())
-                );
-            }
-        }
     }
 
     fn command(name: &str, scope: CommandScope) -> SlashCommand {
@@ -607,7 +564,7 @@ mod tests {
     fn goal_submissions_parse_into_their_intent() {
         let builtin = command("goal", CommandScope::Builtin);
         let commands = std::slice::from_ref(&builtin);
-        let parse = |prompt: &str| parse_goal_submission(ProviderKind::Codex, prompt, commands);
+        let parse = |prompt: &str| parse_goal_submission(ProviderKind::ChatGpt, prompt, commands);
 
         assert_eq!(parse("/goal"), Some(GoalCommand::Show));
         assert_eq!(parse("/goal "), Some(GoalCommand::Show));
@@ -662,32 +619,31 @@ mod tests {
         let skill = command("deploy", CommandScope::Skill);
         let commands = std::slice::from_ref(&skill);
         assert_eq!(
-            resolved_submission(ProviderKind::Codex, "$(deploy production)", commands).as_deref(),
+            resolved_submission(ProviderKind::ChatGpt, "$(deploy production)", commands).as_deref(),
             Some("$deploy production")
-        );
-        assert_eq!(
-            resolved_submission(ProviderKind::OpenCode, "$(deploy production)", commands)
-                .as_deref(),
-            Some("/skill:deploy production")
         );
     }
 
     #[test]
-    fn goal_command_is_codex_only_and_respects_overrides() {
+    fn goal_command_is_chatgpt_only_and_respects_overrides() {
         let builtin = command("goal", CommandScope::Builtin);
         assert_eq!(
             parse_goal_submission(
-                ProviderKind::Claude,
+                ProviderKind::ChatGpt,
                 "/goal",
                 std::slice::from_ref(&builtin)
             ),
-            None
+            Some(GoalCommand::Show)
         );
         // A project command deliberately owning /goal wins the collision.
         let mut project = command("goal", CommandScope::Project);
         project.template = Some("do project things".into());
         assert_eq!(
-            parse_goal_submission(ProviderKind::Codex, "/goal", std::slice::from_ref(&project)),
+            parse_goal_submission(
+                ProviderKind::ChatGpt,
+                "/goal",
+                std::slice::from_ref(&project)
+            ),
             None
         );
     }

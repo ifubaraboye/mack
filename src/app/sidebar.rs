@@ -3,19 +3,28 @@ use gpui::{KeyBinding, actions};
 
 use super::*;
 
-actions!(waku_sidebar, [CancelSessionRename]);
+actions!(waku_sidebar, [CancelSessionRename, CancelGroupRename]);
 
 const SESSION_RENAME_PARENT_CONTEXT: &str = "SessionRename";
 const SESSION_RENAME_FIELD_CONTEXT: &str = "SessionRename > TextInput";
+const GROUP_RENAME_PARENT_CONTEXT: &str = "GroupRename";
+const GROUP_RENAME_FIELD_CONTEXT: &str = "GroupRename > TextInput";
 
 /// Keep Escape inside the focused inline editor so it cancels the rename,
 /// rather than falling through to the window-wide Stop action.
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new(
-        "escape",
-        CancelSessionRename,
-        Some(SESSION_RENAME_FIELD_CONTEXT),
-    )]);
+    cx.bind_keys([
+        KeyBinding::new(
+            "escape",
+            CancelSessionRename,
+            Some(SESSION_RENAME_FIELD_CONTEXT),
+        ),
+        KeyBinding::new(
+            "escape",
+            CancelGroupRename,
+            Some(GROUP_RENAME_FIELD_CONTEXT),
+        ),
+    ]);
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -69,6 +78,10 @@ pub(super) enum SidebarGroup {
     Updated(SessionDateGroup),
     Project(Uuid),
     Projectless,
+    /// A user-defined chat group. Renders like a project section — folder
+    /// icon plus the group name — ahead of the date/project sections, in
+    /// registry order.
+    ChatGroup(Uuid),
 }
 
 impl SidebarGroup {
@@ -77,6 +90,7 @@ impl SidebarGroup {
             Self::Updated(group) => format!("updated-{}", group.index()).into(),
             Self::Project(project_id) => format!("project-{project_id}").into(),
             Self::Projectless => "projectless".into(),
+            Self::ChatGroup(group_id) => format!("group-{group_id}").into(),
         }
     }
 
@@ -85,6 +99,7 @@ impl SidebarGroup {
             Self::Updated(group) => mix(fingerprint, group.index() as u64 + 1),
             Self::Project(project_id) => mix_uuid(mix(fingerprint, 0x100), project_id),
             Self::Projectless => mix(fingerprint, 0x200),
+            Self::ChatGroup(group_id) => mix_uuid(mix(fingerprint, 0x300), group_id),
         }
     }
 }
@@ -283,6 +298,47 @@ fn project_sidebar_groups(
         groups.push((SidebarGroup::Projectless, projectless_sessions));
     }
     groups
+}
+
+/// Split the sorted sessions into user-defined chat-group sections plus the
+/// remainder. Groups render ahead of the date/project sections in registry
+/// order; a session whose group id is missing from the registry renders
+/// ungrouped, so deleting a group entry can never strand a chat.
+fn chat_group_sections<'a>(
+    sessions: &[&'a AgentSession],
+    groups: &[ChatGroup],
+) -> (Vec<(SidebarGroup, Vec<Uuid>)>, Vec<&'a AgentSession>) {
+    if groups.is_empty() {
+        return (Vec::new(), sessions.to_vec());
+    }
+    let known: HashSet<Uuid> = groups.iter().map(|group| group.id).collect();
+    let mut sections: Vec<(SidebarGroup, Vec<Uuid>)> = Vec::new();
+    let mut indexes = HashMap::new();
+    let mut rest = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        let Some(group_id) = session.group_id.filter(|id| known.contains(id)) else {
+            rest.push(*session);
+            continue;
+        };
+        let index = *indexes.entry(group_id).or_insert_with(|| {
+            let index = sections.len();
+            sections.push((SidebarGroup::ChatGroup(group_id), Vec::new()));
+            index
+        });
+        sections[index].1.push(session.id);
+    }
+    // Registry order, not first-seen order: renaming or regrouping never
+    // shuffles the sections.
+    sections.sort_by_key(|(group, _)| {
+        let SidebarGroup::ChatGroup(id) = group else {
+            return usize::MAX;
+        };
+        groups
+            .iter()
+            .position(|known| known.id == *id)
+            .unwrap_or(usize::MAX)
+    });
+    (sections, rest)
 }
 
 fn visible_project_sessions(
@@ -663,39 +719,7 @@ impl Waku {
                 ]
             },
         );
-        let add_project = div()
-            .id("add-project")
-            .tab_index(0)
-            .w(px(20.0))
-            .h(px(22.0))
-            .rounded(px(6.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_default()
-            .focus_visible(|style| style.border_1().border_color(theme.accent))
-            .hover(|element| element.bg(theme.overlay))
-            .active(|element| element.bg(theme.overlay_strong))
-            .tooltip(Tooltip::text(tr!("project.new_project")))
-            .child(icon("icons/folder-new.svg", 14.0, theme.text_secondary))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|this, _, _, cx| {
-                cx.stop_propagation();
-                this.add_project(cx);
-            }))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.add_project(cx);
-                    cx.stop_propagation();
-                }
-            }));
-
-        div()
-            .flex()
-            .items_center()
-            .gap(px(2.0))
-            .child(options)
-            .child(add_project)
+        div().flex().items_center().gap(px(2.0)).child(options)
     }
 
     fn render_sidebar_action_row(
@@ -940,11 +964,9 @@ impl Waku {
 
     /// Branch labels are hidden in chat mode; keep the entry point so callers
     /// do not need to change.
-    fn ensure_sidebar_branch_labels(&self, _cx: &mut Context<Self>) {
-    }
+    fn ensure_sidebar_branch_labels(&self, _cx: &mut Context<Self>) {}
 
-    pub(super) fn cache_sidebar_branch_label(&self, _path: &Path, _branch: Option<&str>) {
-    }
+    pub(super) fn cache_sidebar_branch_label(&self, _path: &Path, _branch: Option<&str>) {}
 
     pub(super) fn render_sidebar(
         &self,
@@ -1090,6 +1112,9 @@ impl Waku {
             fingerprint = mix_uuid(fingerprint, session.id);
             fingerprint = mix_uuid(fingerprint, session.project_id);
             fingerprint = mix(fingerprint, sidebar_session_timestamp(session));
+            if let Some(group_id) = session.group_id {
+                fingerprint = mix_uuid(fingerprint, group_id);
+            }
             if self.state.sidebar_grouping == SidebarGrouping::Project {
                 fingerprint = mix(
                     fingerprint,
@@ -1127,6 +1152,17 @@ impl Waku {
             mix(fingerprint, self.sidebar_collapsed_groups.len() as u64),
             collapsed,
         );
+        // Registry order is render order; names paint the headers.
+        fingerprint = mix(fingerprint, self.state.chat_groups.len() as u64);
+        for group in &self.state.chat_groups {
+            fingerprint = mix_uuid(fingerprint, group.id);
+            fingerprint = mix(
+                fingerprint,
+                group.name.bytes().fold(0u64, |hash, byte| {
+                    hash.wrapping_mul(31).wrapping_add(byte as u64)
+                }),
+            );
+        }
         if self.sidebar_rows_fingerprint.get() != Some(fingerprint) {
             *self.sidebar_rows_snapshot.borrow_mut() = Rc::new(self.sidebar_rows(today, now));
             self.sidebar_rows_fingerprint.set(Some(fingerprint));
@@ -1146,10 +1182,22 @@ impl Waku {
         sort_sidebar_sessions(&mut sorted_sessions, self.state.sidebar_ordering);
 
         let mut rows = vec![SidebarRow::Search];
+        // User-defined groups render ahead of the date/project sections in
+        // both modes; the modes below only ever see the remainder.
+        let (chat_sections, rest) = chat_group_sections(&sorted_sessions, &self.state.chat_groups);
+        for (group, sessions) in &chat_sections {
+            append_sidebar_group_rows(
+                &mut rows,
+                *group,
+                sessions,
+                self.sidebar_collapsed_groups.contains(group),
+                false,
+            );
+        }
         match self.state.sidebar_grouping {
             SidebarGrouping::Updated => {
                 let mut grouped_sessions: [Vec<Uuid>; 6] = std::array::from_fn(|_| Vec::new());
-                for session in sorted_sessions {
+                for session in rest {
                     grouped_sessions
                         [session_date_group(sidebar_session_timestamp(session), today).index()]
                     .push(session.id);
@@ -1171,7 +1219,7 @@ impl Waku {
             }
             SidebarGrouping::Project => {
                 let recent_cutoff = now.saturating_sub(SIDEBAR_PROJECT_RECENT_WINDOW_SECONDS);
-                let session_timestamps = sorted_sessions
+                let session_timestamps = rest
                     .iter()
                     .map(|session| (session.id, sidebar_session_timestamp(session)))
                     .collect::<HashMap<_, _>>();
@@ -1185,9 +1233,7 @@ impl Waku {
                     })
                     .map(|project| project.id)
                     .collect::<HashSet<_>>();
-                for (group, sessions) in
-                    project_sidebar_groups(&sorted_sessions, &projectless_project_ids)
-                {
+                for (group, sessions) in project_sidebar_groups(&rest, &projectless_project_ids) {
                     let revealed_older_sessions = self
                         .sidebar_project_reveal_counts
                         .get(&group)
@@ -1300,9 +1346,9 @@ impl Waku {
         &self,
         group: SidebarGroup,
         first: bool,
-        has_expanded_children: bool,
+        _has_expanded_children: bool,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> AnyElement {
         let theme = Theme::current(cx);
         let collapsed = self.sidebar_collapsed_groups.contains(&group);
         let group_key = group.element_key();
@@ -1313,8 +1359,10 @@ impl Waku {
             .entry(group)
             .or_insert_with(|| cx.focus_handle())
             .clone();
-        let show_folder_icon =
-            matches!(group, SidebarGroup::Project(_) | SidebarGroup::Projectless);
+        let show_folder_icon = matches!(
+            group,
+            SidebarGroup::Project(_) | SidebarGroup::Projectless | SidebarGroup::ChatGroup(_)
+        );
         let folder_icon = if collapsed {
             "icons/folder.svg"
         } else {
@@ -1330,6 +1378,46 @@ impl Waku {
                 .map(Project::display_name)
                 .unwrap_or_else(|| tr!("project.no_project_name")),
             SidebarGroup::Projectless => tr!("project.no_project_name"),
+            SidebarGroup::ChatGroup(group_id) => self
+                .state
+                .chat_groups
+                .iter()
+                .find(|group| group.id == group_id)
+                .map(|group| group.name.clone())
+                .unwrap_or_else(|| tr!("sidebar.untitled_group")),
+        };
+        // A group being renamed swaps its label for the shared inline
+        // editor, mirroring session rows. Header toggle stays off while the
+        // field owns focus so activating it cannot collapse the section.
+        let renaming = matches!(
+            group,
+            SidebarGroup::ChatGroup(group_id) if self.group_rename == Some(group_id)
+        );
+        let label_or_field = if renaming {
+            div()
+                .id(SharedString::from(format!(
+                    "group-rename-field-{group_key}"
+                )))
+                .key_context(GROUP_RENAME_PARENT_CONTEXT)
+                .on_action(cx.listener(|this, _: &CancelGroupRename, window, cx| {
+                    this.cancel_group_rename(window, cx);
+                }))
+                .h(px(18.0))
+                .flex_1()
+                .min_w_0()
+                .px(px(4.0))
+                .rounded(px(4.0))
+                .border_1()
+                .border_color(theme.accent)
+                .bg(theme.inset)
+                .flex()
+                .items_center()
+                .text_size(sp(13.0))
+                .text_color(theme.text)
+                .child(self.group_rename_input.clone())
+                .into_any_element()
+        } else {
+            div().min_w_0().truncate().child(label).into_any_element()
         };
         let updated_chevron = matches!(group, SidebarGroup::Updated(_)).then(|| {
             icon("icons/chevron-down.svg", 14.0, theme.text_secondary)
@@ -1396,6 +1484,13 @@ impl Waku {
                 )
         });
 
+        // The header menu handle doubles as the keyboard path: Shift+F10
+        // opens the group menu for ChatGroup headers, mirroring session
+        // rows. Created up front so the key handler below can borrow it.
+        let header_menu = matches!(group, SidebarGroup::ChatGroup(_))
+            .then(|| self.menu_handle(format!("sidebar-group-menu-{group_key}"), cx));
+        let keyboard_menu = header_menu.clone();
+
         let header = session_group_header(&theme)
             .id(SharedString::from(format!(
                 "sidebar-group-toggle-{group_key}"
@@ -1429,7 +1524,7 @@ impl Waku {
                             .flex()
                             .items_center()
                             .gap(px(2.0))
-                            .child(div().min_w_0().truncate().child(label))
+                            .child(label_or_field)
                             .when_some(updated_chevron, |element, chevron| element.child(chevron)),
                     )
                     .child(div().flex_1()),
@@ -1438,42 +1533,76 @@ impl Waku {
             .when(first, |element| {
                 element.child(self.render_sidebar_header_actions(cx))
             })
-            .when(show_folder_icon && has_expanded_children, |element| {
-                element.child(
-                    div()
-                        .absolute()
-                        .left(px(SIDEBAR_GROUP_GUIDE_X))
-                        .top(px(19.0))
-                        .bottom(px(-2.0))
-                        .w(px(1.0))
-                        .bg(theme.border),
-                )
-            })
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.toggle_sidebar_group(group, cx);
-            }))
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
-                match event.keystroke.key.as_str() {
-                    "enter" | "space" => {
+            .when(!renaming, |element| {
+                element
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         this.toggle_sidebar_group(group, cx);
-                        cx.stop_propagation();
-                    }
-                    "left" if !collapsed => {
-                        this.set_sidebar_group_collapsed(group, true, cx);
-                        cx.stop_propagation();
-                    }
-                    "right" if collapsed => {
-                        this.set_sidebar_group_collapsed(group, false, cx);
-                        cx.stop_propagation();
-                    }
-                    _ => {}
-                }
-            }));
+                    }))
+                    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                        let key = event.keystroke.key.as_str();
+                        if matches!(key, "enter" | "space") {
+                            this.toggle_sidebar_group(group, cx);
+                            cx.stop_propagation();
+                        } else if key == "left" && !collapsed {
+                            this.set_sidebar_group_collapsed(group, true, cx);
+                            cx.stop_propagation();
+                        } else if key == "right" && collapsed {
+                            this.set_sidebar_group_collapsed(group, false, cx);
+                            cx.stop_propagation();
+                        } else if key == "f10" && event.keystroke.modifiers.shift {
+                            if let Some(menu) = keyboard_menu.as_ref() {
+                                menu.open_context_menu(window, cx);
+                                cx.stop_propagation();
+                            }
+                        }
+                    }))
+            });
 
-        div()
+        let footer = div()
             .w_full()
             .pb(px(SIDEBAR_GROUP_HEADER_BOTTOM_GAP))
-            .child(header)
+            .child(header);
+        let SidebarGroup::ChatGroup(group_id) = group else {
+            return footer.into_any_element();
+        };
+        // Group headers carry a context menu for rename and delete. While
+        // the inline editor is open the menu stays off and losing focus
+        // commits, exactly like session rows.
+        if renaming {
+            return footer
+                .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                    if this.group_rename == Some(group_id) {
+                        this.commit_group_rename(cx);
+                    }
+                }))
+                .into_any_element();
+        }
+        let waku = cx.entity().downgrade();
+        let Some(menu) = header_menu else {
+            return footer.into_any_element();
+        };
+        context_menu(
+            footer,
+            SharedString::from(format!("sidebar-group-{group_key}")),
+            &menu,
+            move |_| {
+                let rename_waku = waku.clone();
+                let delete_waku = waku.clone();
+                vec![
+                    MenuItem::new(tr!("common.rename"), move |window, cx| {
+                        let _ = rename_waku.update(cx, |waku, cx| {
+                            waku.begin_group_rename(group_id, window, cx);
+                        });
+                    }),
+                    MenuItem::Separator,
+                    MenuItem::new(tr!("sidebar.delete_group"), move |_, cx| {
+                        let _ = delete_waku.update(cx, |waku, cx| {
+                            waku.delete_chat_group(group_id, cx);
+                        });
+                    }),
+                ]
+            },
+        )
     }
 
     fn open_new_task_for_sidebar_group(
@@ -1486,6 +1615,7 @@ impl Waku {
         match group {
             SidebarGroup::Project(project_id) => self.select_project(project_id, cx),
             SidebarGroup::Projectless => self.create_projectless_session(cx),
+            SidebarGroup::ChatGroup(group_id) => self.create_session_in_group(group_id, cx),
             SidebarGroup::Updated(_) => return,
         }
         let focus = self.composer_focus(cx);
@@ -1531,20 +1661,6 @@ impl Waku {
             .flex()
             .items_center()
             .child(button)
-            .child(
-                div()
-                    .absolute()
-                    .left(px(SIDEBAR_GROUP_GUIDE_X))
-                    .top_0()
-                    .w(px(SIDEBAR_GROUP_CHILD_PADDING
-                        - SIDEBAR_GROUP_GUIDE_X
-                        - 4.0))
-                    .h(px(15.0))
-                    .border_l_1()
-                    .border_b_1()
-                    .rounded_bl(px(4.0))
-                    .border_color(theme.border),
-            )
     }
 
     fn show_more_project_sessions(&mut self, group: SidebarGroup, cx: &mut Context<Self>) {
@@ -1594,6 +1710,168 @@ impl Waku {
         if collapse_changed || reveal_reset {
             self.sidebar_rows_fingerprint.set(None);
             cx.notify();
+        }
+    }
+
+    // ── Chat groups ──────────────────────────────────────────────────────────
+
+    fn chat_group(&self, group_id: Uuid) -> Option<&ChatGroup> {
+        self.state
+            .chat_groups
+            .iter()
+            .find(|group| group.id == group_id)
+    }
+
+    /// Create a group holding `session_id` and open the inline rename so the
+    /// name is chosen up front. Sessions only surface their menu once they
+    /// have started, so the member always has a row to reveal.
+    pub(super) fn create_chat_group(
+        &mut self,
+        session_id: Uuid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Uuid> {
+        if !self
+            .state
+            .sessions
+            .iter()
+            .any(|session| session.id == session_id)
+        {
+            return None;
+        }
+        let group = ChatGroup::new(tr!("sidebar.new_group_name"));
+        let group_id = group.id;
+        self.state.chat_groups.push(group);
+        self.move_session_to_group(session_id, group_id, cx);
+        self.begin_group_rename(group_id, window, cx);
+        Some(group_id)
+    }
+
+    pub(super) fn move_session_to_group(
+        &mut self,
+        session_id: Uuid,
+        group_id: Uuid,
+        cx: &mut Context<Self>,
+    ) {
+        if !self
+            .state
+            .chat_groups
+            .iter()
+            .any(|group| group.id == group_id)
+        {
+            return;
+        }
+        let already_there = self
+            .state
+            .sessions
+            .iter()
+            .find(|session| session.id == session_id)
+            .is_some_and(|session| session.group_id == Some(group_id));
+        if already_there {
+            return;
+        }
+        if let Some(session) = self.state.session_mut(session_id) {
+            session.group_id = Some(group_id);
+        }
+        // The moved chat must be visible: reveal its new section.
+        self.sidebar_collapsed_groups
+            .remove(&SidebarGroup::ChatGroup(group_id));
+        self.prune_empty_chat_groups();
+        self.save();
+        cx.notify();
+    }
+
+    pub(super) fn remove_session_from_group(&mut self, session_id: Uuid, cx: &mut Context<Self>) {
+        let grouped = self
+            .state
+            .sessions
+            .iter()
+            .find(|session| session.id == session_id)
+            .is_some_and(|session| session.group_id.is_some());
+        if !grouped {
+            return;
+        }
+        if let Some(session) = self.state.session_mut(session_id) {
+            session.group_id = None;
+        }
+        self.prune_empty_chat_groups();
+        self.save();
+        cx.notify();
+    }
+
+    pub(super) fn rename_chat_group(
+        &mut self,
+        group_id: Uuid,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
+        let name = name.trim().to_owned();
+        if name.is_empty() {
+            return;
+        }
+        if let Some(group) = self
+            .state
+            .chat_groups
+            .iter_mut()
+            .find(|group| group.id == group_id)
+        {
+            if group.name != name {
+                group.name = name;
+                self.save();
+            }
+        }
+        cx.notify();
+    }
+
+    pub(super) fn delete_chat_group(&mut self, group_id: Uuid, cx: &mut Context<Self>) {
+        self.state.chat_groups.retain(|group| group.id != group_id);
+        let members: Vec<Uuid> = self
+            .state
+            .sessions
+            .iter()
+            .filter(|session| session.group_id == Some(group_id))
+            .map(|session| session.id)
+            .collect();
+        for session_id in members {
+            if let Some(session) = self.state.session_mut(session_id) {
+                session.group_id = None;
+            }
+        }
+        self.sidebar_collapsed_groups
+            .remove(&SidebarGroup::ChatGroup(group_id));
+        if self.group_rename == Some(group_id) {
+            self.group_rename = None;
+        }
+        self.save();
+        cx.notify();
+    }
+
+    /// Drop registry entries with no member sessions, so an emptied group
+    /// leaves no invisible zombie behind. Sessions keep rendering — an
+    /// unknown group id reads as ungrouped — but the registry stays tight.
+    fn prune_empty_chat_groups(&mut self) {
+        let used: HashSet<Uuid> = self
+            .state
+            .sessions
+            .iter()
+            .filter_map(|session| session.group_id)
+            .collect();
+        let before = self.state.chat_groups.len();
+        self.state
+            .chat_groups
+            .retain(|group| used.contains(&group.id));
+        if self.state.chat_groups.len() != before {
+            let known: HashSet<Uuid> = self
+                .state
+                .chat_groups
+                .iter()
+                .map(|group| group.id)
+                .collect();
+            self.sidebar_collapsed_groups.retain(|group| match group {
+                SidebarGroup::ChatGroup(id) => known.contains(id),
+                _ => true,
+            });
+            self.save();
         }
     }
 
@@ -1691,6 +1969,40 @@ impl Waku {
         cx.notify();
     }
 
+    fn begin_group_rename(&mut self, group_id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = self.chat_group(group_id).map(|group| group.name.clone()) else {
+            return;
+        };
+        self.group_rename = Some(group_id);
+        self.group_rename_input.update(cx, |input, cx| {
+            input.set_content(name, cx);
+            input.select_all_text(cx);
+        });
+        let focus = self.group_rename_input.read(cx).focus();
+        window.on_next_frame(move |window, cx| window.focus(&focus, cx));
+        cx.notify();
+    }
+
+    pub(super) fn commit_group_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(group_id) = self.group_rename.take() else {
+            return;
+        };
+        let name = self.group_rename_input.read(cx).content().trim().to_owned();
+        if !name.is_empty() {
+            self.rename_chat_group(group_id, name, cx);
+        }
+        cx.notify();
+    }
+
+    fn cancel_group_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.group_rename.take().is_none() {
+            return;
+        }
+        let focus = self.composer_focus(cx);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
     fn render_sidebar_session_item(&self, session_id: Uuid, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::current(cx);
         let Some(session) = self
@@ -1717,7 +2029,13 @@ impl Waku {
             .iter()
             .find(|project| project.id == session.project_id);
         let grouped_by_project = self.state.sidebar_grouping == SidebarGrouping::Project;
-        let left_padding = if grouped_by_project {
+        // Chats filed in a group sit under its header in either mode, so
+        // they take the indented child treatment with the guide rail.
+        let indented = grouped_by_project
+            || session
+                .group_id
+                .is_some_and(|group_id| self.chat_group(group_id).is_some());
+        let left_padding = if indented {
             SIDEBAR_GROUP_CHILD_PADDING
         } else {
             8.0
@@ -1904,15 +2222,96 @@ impl Waku {
                 div().w_full().child(row),
                 SharedString::from(format!("session-menu-{session_id}")),
                 &menu,
-                move |_| {
+                move |cx| {
                     let rename_waku = waku.clone();
                     let remove_waku = waku.clone();
+                    let move_waku = waku.clone();
+                    let move_value_waku = waku.clone();
                     vec![
                         MenuItem::new(tr!("common.rename"), move |window, cx| {
                             let _ = rename_waku.update(cx, |waku, cx| {
                                 waku.begin_session_rename(session_id, window, cx);
                             });
                         }),
+                        MenuItem::submenu_with_value(
+                            tr!("sidebar.move_to_group"),
+                            move_value_waku
+                                .upgrade()
+                                .map(|entity| {
+                                    entity.update(cx, |waku, _| {
+                                        waku.state
+                                            .sessions
+                                            .iter()
+                                            .find(|session| session.id == session_id)
+                                            .and_then(|session| session.group_id)
+                                            .and_then(|group_id| {
+                                                waku.chat_group(group_id)
+                                                    .map(|group| group.name.clone())
+                                            })
+                                            .unwrap_or_default()
+                                    })
+                                })
+                                .unwrap_or_default(),
+                            move |cx| {
+                                let snapshot = move_waku.upgrade().map(|entity| {
+                                    entity.update(cx, |waku, _| {
+                                        (
+                                            waku.state
+                                                .chat_groups
+                                                .iter()
+                                                .map(|group| (group.id, group.name.clone()))
+                                                .collect::<Vec<_>>(),
+                                            waku.state
+                                                .sessions
+                                                .iter()
+                                                .find(|session| session.id == session_id)
+                                                .and_then(|session| session.group_id),
+                                        )
+                                    })
+                                });
+                                let Some((groups, current)) = snapshot else {
+                                    return Vec::new();
+                                };
+                                let new_group_waku = move_waku.clone();
+                                let mut items = vec![MenuItem::new(
+                                    tr!("sidebar.new_group"),
+                                    move |window, cx| {
+                                        let _ = new_group_waku.update(cx, |waku, cx| {
+                                            waku.create_chat_group(session_id, window, cx);
+                                        });
+                                    },
+                                )];
+                                if !groups.is_empty() {
+                                    items.push(MenuItem::Separator);
+                                }
+                                for (group_id, name) in groups {
+                                    let target = move_waku.clone();
+                                    items.push(
+                                        MenuItem::new(name, move |_, cx| {
+                                            let _ = target.update(cx, |waku, cx| {
+                                                waku.move_session_to_group(
+                                                    session_id, group_id, cx,
+                                                );
+                                            });
+                                        })
+                                        .selected(current == Some(group_id)),
+                                    );
+                                }
+                                if current.is_some() {
+                                    let ungroup = move_waku.clone();
+                                    items.push(MenuItem::Separator);
+                                    items.push(MenuItem::new(
+                                        tr!("sidebar.remove_from_group"),
+                                        move |_, cx| {
+                                            let _ = ungroup.update(cx, |waku, cx| {
+                                                waku.remove_session_from_group(session_id, cx);
+                                            });
+                                        },
+                                    ));
+                                }
+                                items
+                            },
+                        ),
                         MenuItem::Separator,
                         MenuItem::new(tr!("common.remove"), move |_, cx| {
                             let _ = remove_waku
@@ -1928,17 +2327,6 @@ impl Waku {
             .w_full()
             .pb(px(SIDEBAR_SESSION_ROW_GAP))
             .child(row)
-            .when(grouped_by_project, |element| {
-                element.child(
-                    div()
-                        .absolute()
-                        .left(px(SIDEBAR_GROUP_GUIDE_X))
-                        .top_0()
-                        .bottom_0()
-                        .w(px(1.0))
-                        .bg(theme.border),
-                )
-            })
             .into_any_element()
     }
 
@@ -1955,7 +2343,7 @@ impl Waku {
             .map(localized_session_title)
             .unwrap_or_else(|| tr!("session.new_task"));
         let agent_preset_label = session
-            .filter(|session| session.provider == ProviderKind::DeepSeek && session.has_started())
+            .filter(|session| session.provider == ProviderKind::ChatGpt && session.has_started())
             .and_then(|session| self.agent_preset_label_for_session(session));
         let left_window_controls = (!self.sidebar_visible)
             .then(|| {
@@ -2095,6 +2483,7 @@ impl Waku {
     pub(super) fn render_empty_state(&self, cx: &mut Context<Self>) -> Div {
         let theme = Theme::current(cx);
         if self.selected_project().is_none() {
+            // No folder needed: one click starts a fresh chat.
             return div()
                 .flex_1()
                 .flex()
@@ -2110,17 +2499,7 @@ impl Waku {
                         .text_size(sp(20.0))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(theme.text)
-                        .child(tr_cow!("onboarding.open_project_to_begin")),
-                )
-                .child(
-                    div()
-                        .mt(px(8.0))
-                        .max_w(px(380.0))
-                        .text_center()
-                        .text_size(sp(12.5))
-                        .line_height(sp(19.0))
-                        .text_color(theme.text_tertiary)
-                        .child(tr_cow!("onboarding.description")),
+                        .child(tr_cow!("onboarding.what_should_we_build")),
                 )
                 .child(
                     div()
@@ -2134,8 +2513,8 @@ impl Waku {
                         .tab_stop(false)
                         .child(
                             div()
-                                .id("onboarding-add-project")
-                                .track_focus(&self.onboarding_add_project_focus)
+                                .id("onboarding-new-chat")
+                                .track_focus(&self.onboarding_projectless_focus)
                                 .tab_index(0)
                                 .focus_visible(|style| style.border_1().border_color(theme.accent))
                                 .h(px(32.0))
@@ -2150,37 +2529,12 @@ impl Waku {
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .hover(|element| element.opacity(0.9))
                                 .active(|element| element.opacity(0.8))
-                                .child(tr_cow!("onboarding.open_project_folder"))
-                                .on_click(cx.listener(|this, _, _, cx| this.add_project(cx)))
-                                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                        this.add_project(cx);
-                                        cx.stop_propagation();
-                                    }
-                                })),
-                        )
-                        .child(
-                            div()
-                                .id("onboarding-projectless")
-                                .track_focus(&self.onboarding_projectless_focus)
-                                .tab_index(1)
-                                .focus_visible(|style| style.border_1().border_color(theme.accent))
-                                .h(px(30.0))
-                                .px(px(12.0))
-                                .rounded_full()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.0))
-                                .cursor_default()
-                                .text_color(theme.text_secondary)
-                                .text_size(sp(12.5))
-                                .hover(|element| element.bg(theme.overlay))
-                                .active(|element| element.bg(theme.overlay_strong))
-                                .child(icon("icons/x.svg", 11.0, theme.text_tertiary))
-                                .child(tr_cow!("project.no_project"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.create_projectless_session(cx);
-                                }))
+                                .child(tr_cow!("menu.new_task"))
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.create_projectless_session(cx)
+                                    }),
+                                )
                                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                                     if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                                         this.create_projectless_session(cx);
@@ -2190,81 +2544,6 @@ impl Waku {
                         ),
                 );
         }
-        let selected_project_id = self.state.selected_project;
-        let projectless_selected = self.selected_project().is_some_and(Project::is_projectless);
-        let project_name = self
-            .selected_project()
-            .map(|project| {
-                if project.is_projectless() {
-                    tr!("project.without_a_project")
-                } else {
-                    project.display_name()
-                }
-            })
-            .unwrap_or_else(|| tr!("project.your_project"));
-        let project_options = self
-            .state
-            .projects
-            .iter()
-            .filter(|project| !project.is_projectless())
-            .filter(|project| Some(project.id) == selected_project_id)
-            .chain(
-                self.state
-                    .projects
-                    .iter()
-                    .filter(|project| !project.is_projectless())
-                    .filter(|project| Some(project.id) != selected_project_id),
-            )
-            .map(|project| (project.id, project.display_name()))
-            .collect::<Vec<_>>();
-        let weak = cx.entity().downgrade();
-        let handle = self.menu_handle("empty-state-project", cx);
-        let project_selector = dropdown_menu(
-            ProjectNameSelector::new("empty-state-project", project_name)
-                .selected(handle.is_open()),
-            "empty-state-project-menu",
-            &handle,
-            MenuAlign::BelowLeft,
-            move |_| {
-                let mut items = project_options
-                    .clone()
-                    .into_iter()
-                    .map(|(project_id, project_name)| {
-                        let weak = weak.clone();
-                        MenuItem::new(project_name, move |_, cx| {
-                            if Some(project_id) == selected_project_id {
-                                return;
-                            }
-                            let _ = weak.update(cx, |this, cx| this.select_project(project_id, cx));
-                        })
-                        .selected(Some(project_id) == selected_project_id)
-                    })
-                    .collect::<Vec<_>>();
-                if !items.is_empty() {
-                    items.push(MenuItem::Separator);
-                }
-                let add_project_weak = weak.clone();
-                items.push(
-                    MenuItem::new(tr!("project.new_project"), move |_, cx| {
-                        let _ = add_project_weak.update(cx, |this, cx| this.add_project(cx));
-                    })
-                    .icon("icons/folder-new.svg"),
-                );
-                let projectless_weak = weak.clone();
-                items.push(
-                    MenuItem::new(tr!("project.no_project"), move |_, cx| {
-                        let _ = projectless_weak.update(cx, |this, cx| {
-                            if !this.selected_project().is_some_and(Project::is_projectless) {
-                                this.create_projectless_session(cx);
-                            }
-                        });
-                    })
-                    .icon("icons/x.svg")
-                    .selected(projectless_selected),
-                );
-                items
-            },
-        );
         div()
             .flex_1()
             .flex()
@@ -2282,15 +2561,7 @@ impl Waku {
                     .text_size(sp(20.0))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.text)
-                    .when(projectless_selected, |element| {
-                        element.child(tr_cow!("onboarding.what_should_we_build"))
-                    })
-                    .when(!projectless_selected, |element| {
-                        element
-                            .child(tr_cow!("onboarding.what_should_we_build_in"))
-                            .child(project_selector)
-                            .child(tr_cow!("onboarding.question_mark"))
-                    }),
+                    .child(tr_cow!("onboarding.what_should_we_build")),
             )
     }
 }
@@ -2371,6 +2642,44 @@ mod tests {
     }
 
     #[test]
+    fn chat_group_sections_follow_registry_order_and_ignore_unknown_groups() {
+        let first = AgentSession::new(Uuid::from_u128(10), ProviderKind::ChatGpt);
+        let mut second = AgentSession::new(Uuid::from_u128(11), ProviderKind::ChatGpt);
+        let mut third = AgentSession::new(Uuid::from_u128(12), ProviderKind::ChatGpt);
+        let mut fourth = AgentSession::new(Uuid::from_u128(13), ProviderKind::ChatGpt);
+        let beta = ChatGroup {
+            id: Uuid::from_u128(2),
+            name: "Beta".into(),
+            created_at: 2,
+        };
+        let alpha = ChatGroup {
+            id: Uuid::from_u128(1),
+            name: "Alpha".into(),
+            created_at: 1,
+        };
+        second.group_id = Some(beta.id);
+        third.group_id = Some(alpha.id);
+        // A deleted group's chats fall back to the ungrouped remainder.
+        fourth.group_id = Some(Uuid::from_u128(99));
+        let sessions = [&first, &second, &third, &fourth];
+        let (sections, rest) = chat_group_sections(&sessions, &[beta.clone(), alpha.clone()]);
+        // Registry order wins even though beta's session arrived first.
+        assert_eq!(
+            sections.iter().map(|(group, _)| *group).collect::<Vec<_>>(),
+            vec![
+                SidebarGroup::ChatGroup(beta.id),
+                SidebarGroup::ChatGroup(alpha.id),
+            ]
+        );
+        assert_eq!(sections[0].1, vec![second.id]);
+        assert_eq!(sections[1].1, vec![third.id]);
+        assert_eq!(
+            rest.iter().map(|session| session.id).collect::<Vec<_>>(),
+            vec![first.id, fourth.id]
+        );
+    }
+
+    #[test]
     fn hidden_project_sessions_keep_a_keyboard_reveal_row() {
         let group = SidebarGroup::Project(Uuid::from_u128(1));
         let mut expanded = Vec::new();
@@ -2438,12 +2747,12 @@ mod tests {
     #[test]
     fn sidebar_recency_uses_last_reply_with_creation_fallback() {
         let project_id = Uuid::new_v4();
-        let mut renamed_old_session = AgentSession::new(project_id, ProviderKind::Codex);
+        let mut renamed_old_session = AgentSession::new(project_id, ProviderKind::ChatGpt);
         renamed_old_session.created_at = 10;
         renamed_old_session.last_reply_at = Some(20);
         renamed_old_session.updated_at = 1_000;
 
-        let mut newer_unanswered_session = AgentSession::new(project_id, ProviderKind::Codex);
+        let mut newer_unanswered_session = AgentSession::new(project_id, ProviderKind::ChatGpt);
         newer_unanswered_session.created_at = 30;
         newer_unanswered_session.last_reply_at = None;
         newer_unanswered_session.updated_at = 30;
@@ -2463,9 +2772,9 @@ mod tests {
     fn project_grouping_preserves_global_group_and_session_order() {
         let first_project = Uuid::from_u128(1);
         let second_project = Uuid::from_u128(2);
-        let first = AgentSession::new(first_project, ProviderKind::Codex);
-        let second = AgentSession::new(second_project, ProviderKind::Codex);
-        let third = AgentSession::new(first_project, ProviderKind::Codex);
+        let first = AgentSession::new(first_project, ProviderKind::ChatGpt);
+        let second = AgentSession::new(second_project, ProviderKind::ChatGpt);
+        let third = AgentSession::new(first_project, ProviderKind::ChatGpt);
 
         let groups = project_sidebar_groups(&[&second, &first, &third], &HashSet::new());
 
@@ -2486,9 +2795,10 @@ mod tests {
         let ordinary_project = Uuid::from_u128(1);
         let first_projectless_project = Uuid::from_u128(2);
         let second_projectless_project = Uuid::from_u128(3);
-        let first_projectless = AgentSession::new(first_projectless_project, ProviderKind::Codex);
-        let ordinary = AgentSession::new(ordinary_project, ProviderKind::Codex);
-        let second_projectless = AgentSession::new(second_projectless_project, ProviderKind::Codex);
+        let first_projectless = AgentSession::new(first_projectless_project, ProviderKind::ChatGpt);
+        let ordinary = AgentSession::new(ordinary_project, ProviderKind::ChatGpt);
+        let second_projectless =
+            AgentSession::new(second_projectless_project, ProviderKind::ChatGpt);
 
         let groups = project_sidebar_groups(
             &[&first_projectless, &ordinary, &second_projectless],

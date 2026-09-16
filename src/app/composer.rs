@@ -1477,25 +1477,6 @@ impl Waku {
             return None;
         }
 
-        let cursor_suffix = (session.provider == ProviderKind::Cursor)
-            .then(|| self.model_for_session(session))
-            .flatten()
-            .and_then(|requested| {
-                self.provider_probe(session.provider).and_then(|probe| {
-                    waku_protocol::model_catalog::cursor_catalog_model(&probe.models, requested)
-                })
-            })
-            .map(|matched| matched.suffix)
-            .unwrap_or_default();
-        let suffix_effort = waku_protocol::model_catalog::cursor_suffix_reasoning_effort(
-            &cursor_suffix,
-            &model.reasoning_efforts,
-        );
-        let suffix_tier = waku_protocol::model_catalog::cursor_suffix_service_tier(
-            &cursor_suffix,
-            &model.service_tiers,
-        );
-
         let selected_effort = session
             .reasoning_effort
             .as_deref()
@@ -1505,7 +1486,6 @@ impl Waku {
                     .iter()
                     .any(|option| option.id == *selected)
             })
-            .or(suffix_effort.as_deref())
             .or(model.default_reasoning_effort.as_deref())
             .or_else(|| {
                 model
@@ -1532,7 +1512,6 @@ impl Waku {
                         .iter()
                         .any(|option| option.id == *selected)
             })
-            .or(suffix_tier.as_deref())
             .or(model.default_service_tier.as_deref())
             .unwrap_or("default")
             .to_owned();
@@ -1767,12 +1746,12 @@ impl Waku {
     pub(super) fn render_agent_preset_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let session = self
             .selected_session()
-            .filter(|session| session.provider == ProviderKind::DeepSeek)?;
+            .filter(|session| session.provider == ProviderKind::ChatGpt)?;
         if session.has_started() || session.is_busy() {
             return None;
         }
         let presets = self
-            .provider_probe(ProviderKind::DeepSeek)
+            .provider_probe(ProviderKind::ChatGpt)
             .map(|probe| probe.agent_presets.clone())
             .unwrap_or_default();
         if presets.is_empty() {
@@ -1786,7 +1765,7 @@ impl Waku {
         let handle = self.menu_handle_with("agent-preset", cx, move |open, _, cx| {
             if open {
                 let _ = refresh_weak.update(cx, |this, _| {
-                    this.refresh_provider_model_discovery(ProviderKind::DeepSeek);
+                    this.refresh_provider_model_discovery(ProviderKind::ChatGpt);
                 });
             }
         });
@@ -2685,7 +2664,7 @@ impl Waku {
             );
         }
         Some(
-            div().flex_none().px(px(20.0)).child(
+            div().flex_none().px(px(20.0)).pb(px(40.0)).child(
                 div()
                     .w_full()
                     .max_w(px(CONTENT_MAX_WIDTH))
@@ -2741,7 +2720,7 @@ impl Waku {
         // compositing over it.
         let drop_wash = theme.composer.blend(theme.overlay_strong);
         let drop_ring = theme.accent.opacity(0.7);
-        div().flex_none().px(px(20.0)).child(
+        div().flex_none().px(px(20.0)).pb(px(12.0)).child(
             div()
                 .w_full()
                 .max_w(px(CONTENT_MAX_WIDTH))
@@ -2943,129 +2922,6 @@ impl Waku {
 
     fn render_branch_selector(&mut self, _cx: &mut Context<Self>) -> Option<AnyElement> {
         None
-    }
-
-    pub(super) fn render_workspace_footer(&mut self, cx: &mut Context<Self>) -> Div {
-        let theme = Theme::current(cx);
-        let selected_project_id = self.state.selected_project;
-        let projectless_selected = self.selected_project().is_some_and(Project::is_projectless);
-        let project_name = self
-            .selected_project()
-            .map(|project| {
-                if project.is_projectless() {
-                    tr!("project.choose_project")
-                } else {
-                    project.display_name()
-                }
-            })
-            .unwrap_or_else(|| tr!("project.choose_project"));
-        let can_configure_workspace = self
-            .selected_session()
-            .is_some_and(|session| !session.has_started() && !session.is_busy());
-
-        let project_handle = self.menu_handle("workspace-project", cx);
-        let project_trigger = MenuChip::new("workspace-project")
-            .icon("icons/folder.svg", theme.text_tertiary)
-            .label(project_name)
-            .caret(false)
-            .disabled(!can_configure_workspace)
-            .selected(can_configure_workspace && project_handle.is_open())
-            .max_w(px(190.0));
-        let project_selector = if can_configure_workspace {
-            let project_options = self
-                .state
-                .projects
-                .iter()
-                .filter(|project| !project.is_projectless())
-                .filter(|project| Some(project.id) == selected_project_id)
-                .chain(
-                    self.state
-                        .projects
-                        .iter()
-                        .filter(|project| !project.is_projectless())
-                        .filter(|project| Some(project.id) != selected_project_id),
-                )
-                .map(|project| (project.id, project.display_name()))
-                .collect::<Vec<_>>();
-            let weak = cx.entity().downgrade();
-            dropdown_menu(
-                project_trigger,
-                "workspace-project-menu",
-                &project_handle,
-                MenuAlign::AboveLeft,
-                move |_| {
-                    let mut items = project_options
-                        .clone()
-                        .into_iter()
-                        .map(|(project_id, project_name)| {
-                            let weak = weak.clone();
-                            MenuItem::new(project_name, move |_, cx| {
-                                if Some(project_id) != selected_project_id {
-                                    let _ = weak.update(cx, |this, cx| {
-                                        this.select_project_from_composer(project_id, cx);
-                                    });
-                                }
-                            })
-                            .selected(Some(project_id) == selected_project_id)
-                        })
-                        .collect::<Vec<_>>();
-                    if !items.is_empty() {
-                        items.push(MenuItem::Separator);
-                    }
-                    let add_project = weak.clone();
-                    items.push(
-                        MenuItem::new(tr!("project.new_project"), move |_, cx| {
-                            let _ = add_project.update(cx, |this, cx| this.add_project(cx));
-                        })
-                        .icon("icons/folder-new.svg"),
-                    );
-                    let projectless = weak.clone();
-                    items.push(
-                        MenuItem::new(tr!("project.no_project"), move |_, cx| {
-                            let _ = projectless.update(cx, |this, cx| {
-                                if !this.selected_project().is_some_and(Project::is_projectless) {
-                                    this.create_projectless_session_from_composer(cx);
-                                }
-                            });
-                        })
-                        .icon("icons/x.svg")
-                        .selected(projectless_selected),
-                    );
-                    items
-                },
-            )
-        } else {
-            project_trigger.into_any_element()
-        };
-
-        let usage_meter = self.render_usage_meter(cx);
-        div()
-            .flex_none()
-            .px(px(20.0))
-            .pb(px(8.0))
-            .pt(px(4.0))
-            .child(
-                div()
-                    .w_full()
-                    .max_w(px(CONTENT_MAX_WIDTH))
-                    .mx_auto()
-                    .h(px(28.0))
-                    // The chip contributes 7px, lining its icon up with the
-                    // composer's 10px padding plus the controls' 7px inset.
-                    .pl(px(10.0))
-                    .pr(px(10.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(2.0))
-                    .tab_index(0)
-                    .tab_group()
-                    .tab_stop(false)
-                    .text_size(sp(12.5))
-                    .line_height(sp(14.0))
-                    .child(project_selector)
-                    .child(div().flex_1())
-                    .children(usage_meter),
-            )
     }
 }
 

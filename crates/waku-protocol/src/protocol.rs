@@ -97,6 +97,9 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_id: Option<Uuid>,
     },
+    GenerateTitle {
+        prompt: String,
+    },
     Steer {
         prompt: String,
     },
@@ -567,25 +570,25 @@ mod tests {
     #[test]
     fn provider_session_commands_use_stable_wire_fields() {
         let list = serde_json::to_value(Command::ListProviderSessions {
-            provider: ProviderKind::Codex,
+            provider: ProviderKind::ChatGpt,
             limit: 250,
         })
         .unwrap();
         assert_eq!(list["type"], "listProviderSessions");
-        assert_eq!(list["provider"], "codex");
+        assert_eq!(list["provider"], "chatGpt");
         assert_eq!(list["limit"], 250);
 
         let load = serde_json::to_value(Command::LoadProviderSession {
-            cursor: ProviderResumeCursor::Codex {
-                thread_id: "01900000-0000-7000-8000-000000000001".into(),
+            cursor: ProviderResumeCursor::ChatGpt {
+                session_id: "01900000-0000-7000-8000-000000000001".into(),
             },
             cwd: PathBuf::from("/tmp/project"),
         })
         .unwrap();
         assert_eq!(load["type"], "loadProviderSession");
-        assert_eq!(load["cursor"]["provider"], "codex");
+        assert_eq!(load["cursor"]["provider"], "chatGpt");
         assert_eq!(
-            load["cursor"]["threadId"],
+            load["cursor"]["sessionId"],
             "01900000-0000-7000-8000-000000000001"
         );
         assert_eq!(load["cwd"], "/tmp/project");

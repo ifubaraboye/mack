@@ -2823,7 +2823,7 @@ impl Render for TextInput {
             // rely on the same line height.
             .when(self.auto_height, |field| {
                 field
-                    .min_h(px(24.0))
+                    .min_h(px(44.0))
                     .max_h(AUTO_HEIGHT_MAX)
                     .overflow_y_scroll()
                     .track_scroll(&scroll_handle)
@@ -2968,6 +2968,7 @@ impl ComposerInput {
         });
         let focus_handle = input.read(cx).focus();
         let _subscriptions = vec![
+            cx.observe(&input, |_, _, cx| cx.notify()),
             cx.subscribe(&input, |composer, _, event: &InputEvent, cx| match event {
                 InputEvent::Submit(raw) => {
                     // The prompt is consumed by sending it, and whitespace

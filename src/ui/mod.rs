@@ -366,19 +366,7 @@ where
 /// Brand hue for each provider's official mark.
 pub fn provider_color(theme: &Theme, provider: ProviderKind) -> Hsla {
     match provider {
-        ProviderKind::Amp => rgb(0xF34E3F).into(),
-        ProviderKind::Claude => rgb(0xD97757).into(),
-        ProviderKind::DeepSeek => rgb(0x4D6BFE).into(),
-        ProviderKind::Codex
-        | ProviderKind::ChatGpt
-        | ProviderKind::Cursor
-        | ProviderKind::Fx
-        | ProviderKind::OpenCode
-        | ProviderKind::OpenCode2
-        | ProviderKind::Grok
-        | ProviderKind::Kimi
-        | ProviderKind::OhMyPi
-        | ProviderKind::Pi => {
+        ProviderKind::ChatGpt => {
             if theme.is_dark {
                 rgb(0xF3F3F3).into()
             } else {
@@ -391,56 +379,24 @@ pub fn provider_color(theme: &Theme, provider: ProviderKind) -> Hsla {
 /// Recognizable provider marks, matching the model picker vocabulary.
 pub fn provider_icon(provider: ProviderKind) -> &'static str {
     match provider {
-        ProviderKind::Amp => "icons/provider-amp.svg",
-        ProviderKind::Claude => "icons/provider-claude.svg",
-        ProviderKind::Codex => "icons/provider-codex.svg",
-        // ChatGPT keeps the OpenAI blossom; Codex CLI has its own
-        // cloud-terminal mark.
+        // ChatGPT keeps the OpenAI blossom.
         ProviderKind::ChatGpt => "icons/provider-openai.svg",
-        ProviderKind::Cursor => "icons/provider-cursor.svg",
-        ProviderKind::DeepSeek => "icons/provider-deepseek.svg",
-        ProviderKind::Fx => "icons/provider-fx.svg",
-        ProviderKind::OpenCode => "icons/provider-opencode.svg",
-        ProviderKind::OpenCode2 => "icons/provider-opencode2.svg",
-        ProviderKind::Grok => "icons/provider-grok.svg",
-        ProviderKind::Kimi => "icons/provider-kimi.svg",
-        ProviderKind::OhMyPi => "icons/provider-ohmypi.svg",
-        ProviderKind::Pi => "icons/provider-pi.svg",
     }
 }
 
-/// The separately coloured layer some marks carry — OpenCode 2's red "2".
-///
-/// `svg()` renders an alpha mask tinted by ONE color, so stacking a second
-/// element is the only way to give part of a mark its own color.
-pub fn provider_badge(provider: ProviderKind) -> Option<&'static str> {
-    match provider {
-        ProviderKind::OpenCode2 => Some("icons/provider-opencode2-badge.svg"),
-        _ => None,
-    }
+/// The separately coloured layer some marks carry — none for ChatGPT-only.
+pub fn provider_badge(_provider: ProviderKind) -> Option<&'static str> {
+    None
 }
 
 /// A provider mark, including any separately coloured badge layer.
-///
-/// Prefer this over `icon(provider_icon(..), ..)`: a bare `icon` call silently
-/// drops the badge, which is the only thing distinguishing the two OpenCode
-/// marks at a glance.
-pub fn provider_mark(theme: &Theme, provider: ProviderKind, size: f32, color: Hsla) -> Div {
-    let base = div()
+pub fn provider_mark(_theme: &Theme, provider: ProviderKind, size: f32, color: Hsla) -> Div {
+    div()
         .relative()
         .w(sp(size))
         .h(sp(size))
         .flex_none()
-        .child(icon(provider_icon(provider), size, color));
-    match provider_badge(provider) {
-        // The badge inherits the base's alpha so a dimmed row dims both layers.
-        Some(badge) => base.child(div().absolute().top_0().left_0().child(icon(
-            badge,
-            size,
-            theme.danger.opacity(color.a),
-        ))),
-        None => base,
-    }
+        .child(icon(provider_icon(provider), size, color))
 }
 
 pub fn status_color(theme: &Theme, status: SessionStatus) -> Hsla {

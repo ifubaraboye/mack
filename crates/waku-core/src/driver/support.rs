@@ -53,34 +53,14 @@ pub(super) struct HeadlessComputerUseRuntime {
 }
 
 impl HeadlessComputerUseRuntime {
-    pub(super) fn start(provider: ProviderKind, events: DriverEventSender) -> anyhow::Result<Self> {
+    pub(super) fn start(
+        _provider: ProviderKind,
+        events: DriverEventSender,
+    ) -> anyhow::Result<Self> {
         let runtime = computer_use_runtime::ComputerUseRuntime::start(events)?;
-        let config = match provider {
-            ProviderKind::OpenCode => {
-                let existing = match std::env::var("OPENCODE_CONFIG_CONTENT") {
-                    Ok(content) => Some(content),
-                    Err(std::env::VarError::NotPresent) => None,
-                    Err(std::env::VarError::NotUnicode(_)) => {
-                        return Err(anyhow!("OPENCODE_CONFIG_CONTENT is not valid UTF-8"));
-                    }
-                };
-                let base = runtime.config.clone();
-                let config_content = build_opencode_computer_use_config(
-                    existing.as_deref(),
-                    &base.server_path,
-                    &base.repl_path,
-                    &base.skill_path,
-                    &base.process_directory,
-                )?;
-                HeadlessComputerUseConfig::OpenCode {
-                    base,
-                    config_content,
-                }
-            }
-            ProviderKind::Grok => build_grok_computer_use_config(runtime.config.clone())?,
-            _ => return Err(anyhow!("Computer Use is not supported by this driver")),
-        };
-        Ok(Self { runtime, config })
+        let _ = runtime;
+        // ChatGPT-only: no headless Computer Use configuration remains.
+        Err(anyhow!("Computer Use is not supported by this driver"))
     }
 
     pub(super) fn stop(&self) {

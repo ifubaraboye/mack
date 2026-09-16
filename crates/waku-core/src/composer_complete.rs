@@ -8,7 +8,7 @@
 
 use std::collections::BTreeSet;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::model::{ProviderKind, ReportedCommand};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
@@ -163,182 +163,11 @@ fn assemble_slash_commands(
     cli_commands: Vec<SlashCommand>,
 ) -> Vec<SlashCommand> {
     let home = dirs::home_dir();
-    let claude_config_dir = std::env::var("CLAUDE_CONFIG_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| home.as_deref().map(|home| home.join(".claude")));
     let mut commands = Vec::new();
-    match provider {
-        ProviderKind::Claude => {
-            scan_command_files(
-                &project_root.join(".claude/commands"),
-                CommandScope::Project,
-                false,
-                &mut commands,
-            );
-            if let Some(config_dir) = claude_config_dir.as_deref() {
-                scan_command_files(
-                    &config_dir.join("commands"),
-                    CommandScope::User,
-                    false,
-                    &mut commands,
-                );
-            }
-            scan_skill_files(
-                provider,
-                &project_root.join(".claude/skills"),
-                &mut commands,
-            );
-            if let Some(config_dir) = claude_config_dir.as_deref() {
-                scan_skill_files(provider, &config_dir.join("skills"), &mut commands);
-            }
-        }
-        ProviderKind::Codex => {
-            scan_skill_files(provider, &project_root.join(".codex/skills"), &mut commands);
-            if let Some(home) = home.as_deref() {
-                scan_command_files(
-                    &home.join(".codex/prompts"),
-                    CommandScope::User,
-                    true,
-                    &mut commands,
-                );
-                scan_skill_files(provider, &home.join(".codex/skills"), &mut commands);
-            }
-        }
-        // OpenCode 2 publishes commands and skills over its v2 API
-        // (`GET /api/command`, `GET /api/skill`), so it seeds nothing from
-        // the filesystem here. The shared `.agents/skills` + `.waku/commands`
-        // layer below still applies.
-        ProviderKind::OpenCode2 => {}
-        ProviderKind::OpenCode => {
-            scan_command_files(
-                &project_root.join(".opencode/command"),
-                CommandScope::Project,
-                false,
-                &mut commands,
-            );
-            scan_skill_files(
-                provider,
-                &project_root.join(".opencode/skills"),
-                &mut commands,
-            );
-            // OpenCode also loads Claude-compatible skill trees.
-            scan_skill_files(
-                provider,
-                &project_root.join(".claude/skills"),
-                &mut commands,
-            );
-            if let Some(home) = home.as_deref() {
-                scan_command_files(
-                    &home.join(".config/opencode/command"),
-                    CommandScope::User,
-                    false,
-                    &mut commands,
-                );
-                scan_skill_files(
-                    provider,
-                    &home.join(".config/opencode/skills"),
-                    &mut commands,
-                );
-                scan_skill_files(provider, &home.join(".claude/skills"), &mut commands);
-            }
-        }
-        ProviderKind::Cursor => {
-            scan_command_files(
-                &project_root.join(".cursor/commands"),
-                CommandScope::Project,
-                true,
-                &mut commands,
-            );
-            scan_skill_files(
-                provider,
-                &project_root.join(".cursor/skills"),
-                &mut commands,
-            );
-            if let Some(home) = home.as_deref() {
-                scan_command_files(
-                    &home.join(".cursor/commands"),
-                    CommandScope::User,
-                    true,
-                    &mut commands,
-                );
-                scan_skill_files(provider, &home.join(".cursor/skills"), &mut commands);
-            }
-        }
-        ProviderKind::Fx => {
-            // Fx discovers plain `skills/` plus compatibility roots from the
-            // workspace, and keeps managed installs under ~/.fx/skills.
-            for suffix in [
-                "skills",
-                ".opencode/skills",
-                ".codex/skills",
-                ".claude/skills",
-                ".claw/skills",
-            ] {
-                scan_skill_files(provider, &project_root.join(suffix), &mut commands);
-            }
-            if let Some(home) = home.as_deref() {
-                scan_skill_files(provider, &home.join(".fx/skills"), &mut commands);
-                scan_skill_files(
-                    provider,
-                    &home.join(".config/opencode/skills"),
-                    &mut commands,
-                );
-                scan_skill_files(provider, &home.join(".codex/skills"), &mut commands);
-                scan_skill_files(provider, &home.join(".claude/skills"), &mut commands);
-                scan_skill_files(provider, &home.join(".claw/skills"), &mut commands);
-            }
-        }
-        ProviderKind::Pi => {
-            scan_command_files(
-                &project_root.join(".pi/prompts"),
-                CommandScope::Project,
-                true,
-                &mut commands,
-            );
-            scan_skill_files(provider, &project_root.join(".pi/skills"), &mut commands);
-            if let Some(home) = home.as_deref() {
-                scan_command_files(
-                    &home.join(".pi/agent/prompts"),
-                    CommandScope::User,
-                    true,
-                    &mut commands,
-                );
-                scan_skill_files(provider, &home.join(".pi/agent/skills"), &mut commands);
-            }
-        }
-        ProviderKind::OhMyPi => {
-            scan_command_files(
-                &project_root.join(".omp/commands"),
-                CommandScope::Project,
-                true,
-                &mut commands,
-            );
-            scan_skill_files(provider, &project_root.join(".omp/skills"), &mut commands);
-            if let Some(home) = home.as_deref() {
-                scan_command_files(
-                    &home.join(".omp/agent/commands"),
-                    CommandScope::User,
-                    true,
-                    &mut commands,
-                );
-                scan_skill_files(provider, &home.join(".omp/agent/skills"), &mut commands);
-            }
-        }
-        ProviderKind::Amp => {
-            if let Some(home) = home.as_deref() {
-                scan_skill_files(provider, &home.join(".config/agents/skills"), &mut commands);
-            }
-        }
-        // Harness commands are session-scoped and reported live by the Host,
-        // and Kimi Code likewise publishes its whole command set over ACP
-        // rather than from files Waku could scan.
-        ProviderKind::DeepSeek | ProviderKind::Grok | ProviderKind::Kimi => {}
-        // ChatGPT carries no filesystem command/skill trees; its catalog
-        // surface arrives with the Stage 3 conversation driver.
-        ProviderKind::ChatGpt => {}
-    }
+    // ChatGPT-only: no provider filesystem command/skill trees. Its catalog
+    // surface arrives with the Stage 3 conversation driver. Only the shared
+    // `.agents/skills` + `.waku/commands` layer below applies.
+    let _ = provider;
     // The cross-tool skill standard, read by Amp and OpenCode among others;
     // Waku lists it for every provider.
     scan_skill_files(
@@ -500,7 +329,7 @@ fn scan_command_files(
 /// Collect skills — one directory per skill with a `SKILL.md` — as provider
 /// commands. Always passthrough: the provider-native invocation goes through
 /// verbatim, and its own skill machinery resolves it.
-fn scan_skill_files(provider: ProviderKind, root: &Path, commands: &mut Vec<SlashCommand>) {
+fn scan_skill_files(_provider: ProviderKind, root: &Path, commands: &mut Vec<SlashCommand>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -522,16 +351,7 @@ fn scan_skill_files(provider: ProviderKind, root: &Path, commands: &mut Vec<Slas
             continue;
         };
         let front = parse_frontmatter(&contents);
-        let short_name = front.name.unwrap_or(dir_name);
-        let plugin_name = (provider == ProviderKind::Codex)
-            .then(|| codex_plugin_name(&entry.path()))
-            .flatten();
-        let name = match plugin_name.as_deref() {
-            Some(plugin_name) if !short_name.contains(':') => {
-                format!("{plugin_name}:{short_name}")
-            }
-            _ => short_name,
-        };
+        let name = front.name.unwrap_or(dir_name);
         commands.push(SlashCommand {
             name,
             description: front.description.unwrap_or_default(),
@@ -540,32 +360,6 @@ fn scan_skill_files(provider: ProviderKind, root: &Path, commands: &mut Vec<Slas
             template: None,
         });
     }
-}
-
-/// Resolve Codex's plugin namespace from the nearest plugin manifest above a
-/// skill's canonical directory. Installed skills are commonly symlinked from
-/// a presence directory into the plugin checkout, so inspecting only the link
-/// location loses the catalog key Codex requires for explicit invocation.
-fn codex_plugin_name(skill_dir: &Path) -> Option<String> {
-    let canonical = std::fs::canonicalize(skill_dir).ok()?;
-    for ancestor in canonical.ancestors().take(WALK_MAX_DEPTH + 1) {
-        for relative_manifest in [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"] {
-            let Ok(contents) = std::fs::read_to_string(ancestor.join(relative_manifest)) else {
-                continue;
-            };
-            let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&contents) else {
-                continue;
-            };
-            let Some(name) = manifest.get("name").and_then(serde_json::Value::as_str) else {
-                continue;
-            };
-            let name = name.trim();
-            if !name.is_empty() {
-                return Some(name.to_owned());
-            }
-        }
-    }
-    None
 }
 
 struct Frontmatter<'a> {
@@ -696,52 +490,14 @@ pub fn parse_skill_invocation(prompt: &str) -> Option<(&str, &str)> {
 
 /// Resolve only provider-native skill syntax, without expanding templates.
 ///
-/// Accepts both `/name args` and `$(name) args` forms; the latter is what the
-/// `$` picker inserts.
+/// ChatGPT-only: ChatGPT has no native skill invocation syntax, so skills
+/// always resolve to `None` and are sent raw.
 pub fn resolved_skill_submission(
-    provider: ProviderKind,
-    prompt: &str,
-    commands: &[SlashCommand],
+    _provider: ProviderKind,
+    _prompt: &str,
+    _commands: &[SlashCommand],
 ) -> Option<String> {
-    if !matches!(
-        provider,
-        ProviderKind::Codex
-            | ProviderKind::Fx
-            | ProviderKind::Pi
-            | ProviderKind::OhMyPi
-            | ProviderKind::Claude
-            | ProviderKind::OpenCode
-            | ProviderKind::OpenCode2
-    ) {
-        return None;
-    }
-    let invocation = if let Some((name, args)) = parse_skill_invocation(prompt.trim()) {
-        if args.is_empty() {
-            name.to_owned()
-        } else {
-            format!("{name} {args}")
-        }
-    } else {
-        prompt.strip_prefix('/')?.to_owned()
-    };
-    let name = match invocation.split_once(char::is_whitespace) {
-        Some((name, _)) => name,
-        None => invocation.as_str(),
-    };
-    if !commands
-        .iter()
-        .any(|command| command.name == name && command.scope == CommandScope::Skill)
-    {
-        return None;
-    }
-    Some(match provider {
-        ProviderKind::Codex | ProviderKind::Fx => format!("${invocation}"),
-        ProviderKind::Pi | ProviderKind::OhMyPi => format!("/skill:{invocation}"),
-        ProviderKind::Claude | ProviderKind::OpenCode | ProviderKind::OpenCode2 => {
-            format!("/skill:{invocation}")
-        }
-        _ => unreachable!("non-native skill providers returned above"),
-    })
+    None
 }
 
 // ── Workspace file index ───────────────────────────────────────────────────
@@ -1140,29 +896,29 @@ mod tests {
             },
         ];
         assert_eq!(
-            resolved_submission(ProviderKind::OpenCode, "/fix the tests", &commands).as_deref(),
+            resolved_submission(ProviderKind::ChatGpt, "/fix the tests", &commands).as_deref(),
             Some("Fix the tests carefully.")
         );
         assert_eq!(
-            resolved_submission(ProviderKind::OpenCode, "/compact", &commands),
+            resolved_submission(ProviderKind::ChatGpt, "/compact", &commands),
             None
         );
         assert_eq!(
-            resolved_submission(ProviderKind::OpenCode, "/unknown thing", &commands),
+            resolved_submission(ProviderKind::ChatGpt, "/unknown thing", &commands),
             None
         );
         assert_eq!(
-            resolved_submission(ProviderKind::OpenCode, "plain prompt", &commands),
+            resolved_submission(ProviderKind::ChatGpt, "plain prompt", &commands),
             None
         );
+        // ChatGPT has no native skill syntax: skills stay raw (None).
         assert_eq!(
             resolved_submission(
-                ProviderKind::Codex,
+                ProviderKind::ChatGpt,
                 "/mattpocock-skills:to-spec carefully",
                 &commands
-            )
-            .as_deref(),
-            Some("$mattpocock-skills:to-spec carefully")
+            ),
+            None
         );
     }
 
@@ -1373,7 +1129,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let commands = assemble_slash_commands(
-            ProviderKind::Claude,
+            ProviderKind::ChatGpt,
             &root,
             vec![SlashCommand {
                 name: "waku-test-dynamic-command".into(),
@@ -1393,23 +1149,17 @@ mod tests {
     }
 
     #[test]
-    fn opencode_commands_use_native_dispatch_while_waku_templates_still_expand() {
+    fn waku_templates_still_expand() {
         let root =
             std::env::temp_dir().join(format!("waku-native-commands-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(root.join(".opencode/command")).unwrap();
         std::fs::create_dir_all(root.join(".waku/commands")).unwrap();
-        std::fs::write(
-            root.join(".opencode/command/native-review.md"),
-            "Review $ARGUMENTS",
-        )
-        .unwrap();
         std::fs::write(
             root.join(".waku/commands/waku-review.md"),
             "Review $ARGUMENTS",
         )
         .unwrap();
         let commands = assemble_slash_commands(
-            ProviderKind::OpenCode,
+            ProviderKind::ChatGpt,
             &root,
             vec![SlashCommand {
                 name: "init".into(),
@@ -1420,27 +1170,17 @@ mod tests {
             }],
         );
         assert_eq!(
-            resolved_submission(ProviderKind::OpenCode, "/native-review changes", &commands),
+            resolved_submission(ProviderKind::ChatGpt, "/init", &commands),
             None
         );
         assert_eq!(
-            resolved_submission(ProviderKind::OpenCode, "/init", &commands),
-            None
-        );
-        assert_eq!(
-            resolved_submission(ProviderKind::OpenCode, "/waku-review changes", &commands)
+            resolved_submission(ProviderKind::ChatGpt, "/waku-review changes", &commands)
                 .as_deref(),
             Some("Review changes")
         );
         assert!(
-            commands
-                .iter()
-                .position(|command| command.name == "init")
-                .unwrap()
-                < commands
-                    .iter()
-                    .position(|command| command.name == "native-review")
-                    .unwrap()
+            commands.iter().any(|command| command.name == "init")
+                && commands.iter().any(|command| command.name == "waku-review")
         );
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1468,50 +1208,13 @@ mod tests {
             );
         }
         // Raw passthrough end to end: no expansion applies at submit.
-        let commands = assemble_slash_commands(ProviderKind::Amp, &root, Vec::new());
+        // ChatGPT has no native skill syntax, so skills always stay raw.
+        let commands = assemble_slash_commands(ProviderKind::ChatGpt, &root, Vec::new());
         assert_eq!(
-            resolved_submission(ProviderKind::Amp, "/deploy-runbook staging", &commands),
+            resolved_submission(ProviderKind::ChatGpt, "/deploy-runbook staging", &commands),
             None
         );
-        assert_eq!(
-            resolved_submission(ProviderKind::Pi, "/deploy-runbook staging", &commands).as_deref(),
-            Some("/skill:deploy-runbook staging")
-        );
-        assert_eq!(
-            resolved_submission(ProviderKind::OhMyPi, "/deploy-runbook staging", &commands)
-                .as_deref(),
-            Some("/skill:deploy-runbook staging")
-        );
-        assert_eq!(
-            resolved_submission(ProviderKind::Fx, "/deploy-runbook staging", &commands).as_deref(),
-            Some("$deploy-runbook staging")
-        );
 
-        // Each ecosystem's own project-level skill tree is read too.
-        for (provider, dir) in [
-            (ProviderKind::Codex, ".codex/skills"),
-            (ProviderKind::Cursor, ".cursor/skills"),
-            (ProviderKind::Fx, "skills"),
-            (ProviderKind::OpenCode, ".opencode/skills"),
-            (ProviderKind::Pi, ".pi/skills"),
-            (ProviderKind::OhMyPi, ".omp/skills"),
-        ] {
-            let skill_dir = root.join(dir).join("native-skill");
-            std::fs::create_dir_all(&skill_dir).unwrap();
-            std::fs::write(
-                skill_dir.join("SKILL.md"),
-                "---\nname: native-skill\n---\nX",
-            )
-            .unwrap();
-            assert!(
-                assemble_slash_commands(provider, &root, Vec::new())
-                    .iter()
-                    .any(|command| command.name == "native-skill"),
-                "{} misses its project skill tree",
-                provider.display_name()
-            );
-            let _ = std::fs::remove_dir_all(root.join(dir));
-        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1566,7 +1269,7 @@ mod tests {
         std::os::unix::fs::symlink(root.join("real/commands"), root.join("commands")).unwrap();
 
         let mut commands = Vec::new();
-        scan_skill_files(ProviderKind::Claude, &root.join("skills"), &mut commands);
+        scan_skill_files(ProviderKind::ChatGpt, &root.join("skills"), &mut commands);
         assert!(
             commands.iter().any(|c| c.name == "my-skill"),
             "symlinked skill missing: {commands:?}"
@@ -1587,7 +1290,7 @@ mod tests {
     // Windows gates symlink creation behind Developer Mode.
     #[cfg(unix)]
     #[test]
-    fn codex_plugin_skill_uses_qualified_catalog_key() {
+    fn symlinked_skill_keeps_native_short_name() {
         let root =
             std::env::temp_dir().join(format!("waku-codex-plugin-skill-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -1608,19 +1311,10 @@ mod tests {
         std::fs::create_dir_all(root.join(".agents/skills")).unwrap();
         std::os::unix::fs::symlink(&skill, root.join(".agents/skills/to-spec")).unwrap();
 
-        let commands = assemble_slash_commands(ProviderKind::Codex, &root, Vec::new());
+        let commands = assemble_slash_commands(ProviderKind::ChatGpt, &root, Vec::new());
         assert!(
-            commands
-                .iter()
-                .any(|command| command.name == "mattpocock-skills:to-spec"),
-            "Codex plugin skill is missing its catalog key: {commands:?}"
-        );
-        let claude_commands = assemble_slash_commands(ProviderKind::Claude, &root, Vec::new());
-        assert!(
-            claude_commands
-                .iter()
-                .any(|command| command.name == "to-spec"),
-            "non-Codex providers must preserve the skill's native short name"
+            commands.iter().any(|command| command.name == "to-spec"),
+            "ChatGPT must preserve the skill's native short name: {commands:?}"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

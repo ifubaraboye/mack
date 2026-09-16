@@ -141,15 +141,15 @@ mod tests {
         fs::create_dir_all(legacy.parent().unwrap()).unwrap();
         fs::write(
             &legacy,
-            r#"{"theme":"dark","disabled_providers":["claude"]}"#,
+            r#"{"theme":"dark","disabled_providers":["chatgpt"]}"#,
         )
         .unwrap();
 
         let store = DaemonSettingsStore::open_with_legacy(path.clone(), [legacy.clone()]).unwrap();
 
-        assert_eq!(store.get().disabled_providers, vec![ProviderKind::Claude]);
+        assert_eq!(store.get().disabled_providers, vec![ProviderKind::ChatGpt]);
         let migrated: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        assert_eq!(migrated["disabled_providers"][0], "claude");
+        assert_eq!(migrated["disabled_providers"][0], "chatGpt");
         assert!(migrated.get("theme").is_none());
         assert!(legacy.exists());
         fs::remove_dir_all(directory).ok();

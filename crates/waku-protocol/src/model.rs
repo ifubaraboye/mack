@@ -10,178 +10,64 @@ use uuid::Uuid;
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum ProviderKind {
-    Amp,
-    Claude,
     #[default]
-    Codex,
+    #[serde(alias = "chatgpt")]
     ChatGpt,
-    Cursor,
-    DeepSeek,
-    Fx,
-    OpenCode,
-    OpenCode2,
-    Grok,
-    Kimi,
-    OhMyPi,
-    Pi,
 }
 
 impl ProviderKind {
-    pub const ALL: [Self; 13] = [
-        Self::Amp,
-        Self::Claude,
-        Self::Codex,
-        Self::ChatGpt,
-        Self::Cursor,
-        Self::DeepSeek,
-        Self::Fx,
-        Self::OpenCode,
-        Self::OpenCode2,
-        Self::Grok,
-        Self::Kimi,
-        Self::OhMyPi,
-        Self::Pi,
-    ];
+    pub const ALL: [Self; 1] = [Self::ChatGpt];
 
     pub fn id(self) -> &'static str {
         match self {
-            Self::Amp => "amp",
-            Self::Claude => "claude",
-            Self::Codex => "codex",
             Self::ChatGpt => "chatgpt",
-            Self::Cursor => "cursor",
-            Self::DeepSeek => "deepseek",
-            Self::Fx => "fx",
-            Self::OpenCode => "opencode",
-            Self::OpenCode2 => "opencode2",
-            Self::Grok => "grok",
-            Self::Kimi => "kimi",
-            Self::OhMyPi => "ohmypi",
-            Self::Pi => "pi",
         }
     }
 
     pub fn display_name(self) -> &'static str {
         match self {
-            Self::Amp => "Amp",
-            Self::Claude => "Claude Code",
-            Self::Codex => "Codex CLI",
             Self::ChatGpt => "ChatGPT",
-            Self::Cursor => "Cursor CLI",
-            Self::DeepSeek => "DeepSeek Harness",
-            Self::Fx => "Fx",
-            Self::OpenCode => "OpenCode",
-            Self::OpenCode2 => "OpenCode 2",
-            Self::Grok => "Grok Build",
-            Self::Kimi => "Kimi Code",
-            Self::OhMyPi => "Oh My Pi",
-            Self::Pi => "Pi",
         }
     }
 
     pub fn short_name(self) -> &'static str {
         match self {
-            Self::Amp => "Amp",
-            Self::Claude => "Claude",
-            Self::Codex => "Codex",
             Self::ChatGpt => "ChatGPT",
-            Self::Cursor => "Cursor",
-            Self::DeepSeek => "DeepSeek",
-            Self::Fx => "Fx",
-            Self::OpenCode => "OpenCode",
-            Self::OpenCode2 => "OpenCode 2",
-            Self::Grok => "Grok",
-            Self::Kimi => "Kimi",
-            Self::OhMyPi => "Oh My Pi",
-            Self::Pi => "Pi",
         }
     }
 
     pub fn command(self) -> &'static str {
         match self {
-            Self::Amp => "amp",
-            Self::Claude => "claude",
-            Self::Codex => "codex",
             // ChatGPT needs no CLI: authentication happens through the
-            // daemon-owned device flow, so this is display-only. The Settings
-            // page special-cases ChatGPT instead of showing PATH detection.
+            // daemon-owned device flow, so this is display-only.
             Self::ChatGpt => "chatgpt",
-            // Cursor documents `agent` as its primary command, but that name is
-            // shared by other CLIs. The backward-compatible alias is unambiguous.
-            Self::Cursor => "cursor-agent",
-            Self::DeepSeek => "dsh",
-            Self::Fx => "fx",
-            Self::OpenCode => "opencode",
-            Self::OpenCode2 => "opencode2",
-            Self::Grok => "grok",
-            Self::Kimi => "kimi",
-            Self::OhMyPi => "omp",
-            Self::Pi => "pi",
         }
     }
 
-    /// Kimi Code and Fx are deliberately absent from this list and from
-    /// [`Self::supports_conversation_fork`]. Kimi's ACP `session/fork` copies a
-    /// whole session and takes no turn count, while Fx exposes no turn-aware
-    /// fork or truncation method. Neither can reproduce Waku's "drop the last N
-    /// turns" semantics without corrupting history.
+    /// ChatGPT rollback/fork are handled at the transcript layer.
     pub fn supports_conversation_rollback(self) -> bool {
-        matches!(
-            self,
-            Self::Amp
-                | Self::Claude
-                | Self::Codex
-                | Self::Cursor
-                | Self::DeepSeek
-                | Self::OpenCode
-                | Self::OpenCode2
-                | Self::Grok
-                | Self::OhMyPi
-                | Self::Pi
-        )
+        match self {
+            Self::ChatGpt => false,
+        }
     }
 
     pub fn supports_conversation_fork(self) -> bool {
-        matches!(
-            self,
-            Self::Amp
-                | Self::Claude
-                | Self::Codex
-                | Self::Cursor
-                | Self::DeepSeek
-                | Self::OpenCode
-                | Self::OpenCode2
-                | Self::Grok
-                | Self::OhMyPi
-                | Self::Pi
-        )
+        match self {
+            Self::ChatGpt => false,
+        }
     }
 
     pub fn supports_model_discovery(self) -> bool {
-        matches!(
-            self,
-            Self::Claude
-                | Self::Codex
-                | Self::ChatGpt
-                | Self::Cursor
-                | Self::DeepSeek
-                | Self::Fx
-                | Self::OpenCode
-                | Self::OpenCode2
-                | Self::Grok
-                | Self::Kimi
-                | Self::OhMyPi
-                | Self::Pi
-        )
+        match self {
+            Self::ChatGpt => true,
+        }
     }
 
-    /// Providers shown in the picker and settings. Hidden providers keep
-    /// working for existing sessions but are not offered for new work.
+    /// Only ChatGPT is offered. CLI providers are removed.
     pub fn is_user_visible(self) -> bool {
-        matches!(
-            self,
-            Self::Claude | Self::Codex | Self::ChatGpt | Self::OpenCode | Self::OpenCode2
-        )
+        match self {
+            Self::ChatGpt => true,
+        }
     }
 }
 
@@ -192,131 +78,26 @@ impl ProviderKind {
     tag = "provider"
 )]
 pub enum ProviderResumeCursor {
-    Amp {
-        thread_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        fork_context: Option<String>,
-    },
-    Claude {
-        session_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        resume_at: Option<String>,
-    },
-    Codex {
-        thread_id: String,
-    },
-    /// ChatGPT conversations arrive in Stage 3; the cursor shape is reserved
-    /// now so persisted types stay forward-compatible.
-    ChatGpt {
-        session_id: String,
-    },
-    Cursor {
-        session_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        fork_context: Option<String>,
-    },
-    OpenCode {
-        session_id: String,
-    },
-    OpenCode2 {
-        session_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        directory: Option<String>,
-    },
-    DeepSeek {
-        session_id: String,
-    },
-    Fx {
-        session_id: String,
-    },
-    Grok {
-        session_id: String,
-    },
-    Kimi {
-        session_id: String,
-    },
-    OhMyPi {
-        session_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        session_file: Option<PathBuf>,
-    },
-    Pi {
-        session_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        session_file: Option<PathBuf>,
-    },
+    /// Only ChatGPT remains; CLI cursors removed.
+    ChatGpt { session_id: String },
 }
 
 impl ProviderResumeCursor {
     pub fn from_session_id(provider: ProviderKind, id: String) -> Self {
         match provider {
-            ProviderKind::Amp => Self::Amp {
-                thread_id: id,
-                fork_context: None,
-            },
-            ProviderKind::Claude => Self::Claude {
-                session_id: id,
-                resume_at: None,
-            },
-            ProviderKind::Codex => Self::Codex { thread_id: id },
             ProviderKind::ChatGpt => Self::ChatGpt { session_id: id },
-            ProviderKind::Cursor => Self::Cursor {
-                session_id: id,
-                fork_context: None,
-            },
-            ProviderKind::DeepSeek => Self::DeepSeek { session_id: id },
-            ProviderKind::Fx => Self::Fx { session_id: id },
-            ProviderKind::OpenCode => Self::OpenCode { session_id: id },
-            ProviderKind::OpenCode2 => Self::OpenCode2 {
-                session_id: id,
-                directory: None,
-            },
-            ProviderKind::Grok => Self::Grok { session_id: id },
-            ProviderKind::Kimi => Self::Kimi { session_id: id },
-            ProviderKind::OhMyPi => Self::OhMyPi {
-                session_id: id,
-                session_file: None,
-            },
-            ProviderKind::Pi => Self::Pi {
-                session_id: id,
-                session_file: None,
-            },
         }
     }
 
     pub fn provider(&self) -> ProviderKind {
         match self {
-            Self::Amp { .. } => ProviderKind::Amp,
-            Self::Claude { .. } => ProviderKind::Claude,
-            Self::Codex { .. } => ProviderKind::Codex,
             Self::ChatGpt { .. } => ProviderKind::ChatGpt,
-            Self::Cursor { .. } => ProviderKind::Cursor,
-            Self::DeepSeek { .. } => ProviderKind::DeepSeek,
-            Self::Fx { .. } => ProviderKind::Fx,
-            Self::OpenCode { .. } => ProviderKind::OpenCode,
-            Self::OpenCode2 { .. } => ProviderKind::OpenCode2,
-            Self::Grok { .. } => ProviderKind::Grok,
-            Self::Kimi { .. } => ProviderKind::Kimi,
-            Self::OhMyPi { .. } => ProviderKind::OhMyPi,
-            Self::Pi { .. } => ProviderKind::Pi,
         }
     }
 
     pub fn native_id(&self) -> &str {
         match self {
-            Self::Amp { thread_id, .. } => thread_id,
-            Self::Claude { session_id, .. }
-            | Self::Cursor { session_id, .. }
-            | Self::ChatGpt { session_id }
-            | Self::DeepSeek { session_id }
-            | Self::Fx { session_id }
-            | Self::OpenCode { session_id }
-            | Self::OpenCode2 { session_id, .. }
-            | Self::Grok { session_id }
-            | Self::Kimi { session_id }
-            | Self::OhMyPi { session_id, .. }
-            | Self::Pi { session_id, .. } => session_id,
-            Self::Codex { thread_id } => thread_id,
+            Self::ChatGpt { session_id } => session_id,
         }
     }
 }
@@ -665,12 +446,7 @@ impl ProviderProbe {
     }
 
     pub fn model(&self, requested: &str) -> Option<&ProviderModel> {
-        if self.provider == ProviderKind::Cursor {
-            crate::model_catalog::cursor_catalog_model(&self.models, requested)
-                .map(|matched| matched.model)
-        } else {
-            self.models.iter().find(|model| model.id == requested)
-        }
+        self.models.iter().find(|model| model.id == requested)
     }
 
     pub fn preferred_agent_preset(&self) -> Option<&ProviderAgentPreset> {
@@ -710,6 +486,30 @@ pub struct Project {
     /// When the project was added, unix seconds.
     #[serde(default)]
     pub created_at: u64,
+}
+
+/// A user-defined group of chats, shown as its own collapsible sidebar
+/// section with a folder icon — the same treatment projects get. Membership
+/// lives on [`AgentSession::group_id`]; the registry only carries the names.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatGroup {
+    pub id: Uuid,
+    pub name: String,
+    /// When the group was created, unix seconds. Sections render in this
+    /// order.
+    #[serde(default)]
+    pub created_at: u64,
+}
+
+impl ChatGroup {
+    pub fn new(name: String) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name,
+            created_at: unix_time(),
+        }
+    }
 }
 
 /// Filesystem context a task runs in.
@@ -1054,6 +854,12 @@ pub struct AgentSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_title: Option<String>,
     pub project_id: Uuid,
+    /// User-defined chat group this session belongs to, if any. Groups are
+    /// pure sidebar organization: the daemon stores the id opaquely and the
+    /// client resolves it against its group registry, treating a missing
+    /// group as ungrouped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<Uuid>,
     /// Local project checkout or an isolated Git worktree for this task.
     #[serde(default, skip_serializing_if = "SessionWorkspace::is_local")]
     pub workspace: SessionWorkspace,
@@ -1139,6 +945,7 @@ impl AgentSession {
             title: Self::DEFAULT_TITLE.to_owned(),
             auto_title: None,
             project_id,
+            group_id: None,
             workspace: SessionWorkspace::Local,
             provider,
             model: None,
@@ -1176,6 +983,7 @@ impl AgentSession {
             title: self.title.clone(),
             auto_title: self.auto_title.clone(),
             project_id: self.project_id,
+            group_id: self.group_id,
             workspace: SessionWorkspace::Local,
             provider: self.provider,
             model: self.model.clone(),
@@ -1321,11 +1129,9 @@ impl AgentSession {
         {
             self.provider_cursor = Some(ProviderResumeCursor::from_session_id(self.provider, id));
         }
-        if self.provider == ProviderKind::Codex {
-            for message in &mut self.messages {
-                if message.role == MessageRole::Assistant && message.content.contains('\u{e200}') {
-                    message.content = strip_legacy_codex_citations(&message.content);
-                }
+        for message in &mut self.messages {
+            if message.role == MessageRole::Assistant && message.content.contains('\u{e200}') {
+                message.content = strip_legacy_codex_citations(&message.content);
             }
         }
         let mut merged_blocks: Vec<TranscriptBlock> =
@@ -3625,6 +3431,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chat_group_membership_defaults_to_ungrouped_and_survives_old_files() {
+        let group = ChatGroup::new("Research".to_owned());
+        assert_eq!(group.name, "Research");
+
+        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
+        assert_eq!(session.group_id, None);
+        session.group_id = Some(group.id);
+        assert_eq!(session.list_projection().group_id, Some(group.id));
+
+        // State files written before groups existed carry no key.
+        let mut value = serde_json::to_value(&session).unwrap();
+        value.as_object_mut().unwrap().remove("group_id");
+        let restored: AgentSession = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.group_id, None);
+    }
+
+    #[test]
     fn legacy_plan_access_mode_loads_as_supervised() {
         let mode: RuntimeMode = serde_json::from_str(r#""plan""#).unwrap();
 
@@ -3657,7 +3480,7 @@ mod tests {
     #[test]
     fn attachment_messages_keep_transport_and_visible_content_separate() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         let attachment = MessageAttachment {
             path: PathBuf::from("/tmp/reference.png"),
             mention: "/tmp/reference.png".to_owned(),
@@ -3873,95 +3696,98 @@ mod tests {
 
     #[test]
     fn file_edit_metadata_is_normalized_for_every_provider_shape() {
+        // ChatGPT is the only provider. The parser itself is shape-based, so
+        // this keeps one case per historically observed tool payload to lock
+        // the generic parsing, all tagged as ChatGPT.
         let cases = [
             (
-                ProviderKind::Codex,
+                ProviderKind::ChatGpt,
                 serde_json::json!([{
-                    "path": "src/codex.rs",
+                    "path": "src/chatgpt.rs",
                     "diff": "@@ -1 +1,2 @@\n-old\n+new\n+next",
                     "kind": {"type": "update"}
                 }]),
-                "src/codex.rs",
+                "src/chatgpt.rs",
                 2,
                 1,
             ),
             (
                 // A line kept across the replacement is context, not one
                 // deletion plus one addition.
-                ProviderKind::Claude,
+                ProviderKind::ChatGpt,
                 serde_json::json!({
-                    "file_path": "src/claude.rs",
+                    "file_path": "src/chatgpt_edit.rs",
                     "old_string": "old\nline",
                     "new_string": "new\nline\nadded"
                 }),
-                "src/claude.rs",
+                "src/chatgpt_edit.rs",
                 2,
                 1,
             ),
             (
-                ProviderKind::Amp,
+                ProviderKind::ChatGpt,
                 serde_json::json!({
-                    "path": "src/amp.rs",
+                    "path": "src/chatgpt_apply.rs",
                     "old_str": "old",
                     "new_str": "new"
                 }),
-                "src/amp.rs",
+                "src/chatgpt_apply.rs",
                 1,
                 1,
             ),
             (
-                ProviderKind::Cursor,
+                ProviderKind::ChatGpt,
                 serde_json::json!({
                     "input": {
-                        "path": "src/cursor.rs",
+                        "path": "src/chatgpt_input.rs",
                         "oldText": "old",
                         "newText": "new\nmore"
                     }
                 }),
-                "src/cursor.rs",
+                "src/chatgpt_input.rs",
                 2,
                 1,
             ),
             (
-                ProviderKind::DeepSeek,
+                ProviderKind::ChatGpt,
                 serde_json::json!({
-                    "path": "src/deepseek.rs",
+                    "path": "src/chatgpt_text.rs",
                     "oldText": "old",
                     "newText": "new\nmore"
                 }),
-                "src/deepseek.rs",
+                "src/chatgpt_text.rs",
                 2,
                 1,
             ),
             (
-                ProviderKind::OpenCode,
+                ProviderKind::ChatGpt,
                 serde_json::json!({
-                    "filePath": "src/opencode.rs",
+                    "filePath": "src/chatgpt_camel.rs",
                     "oldString": "same\nold\nend",
                     "newString": "same\nnew\nend"
                 }),
-                "src/opencode.rs",
+                "src/chatgpt_camel.rs",
                 1,
                 1,
             ),
             (
-                ProviderKind::Grok,
+                ProviderKind::ChatGpt,
                 serde_json::json!({
                     "tool_input": {
-                        "patchText": "*** Begin Patch\n*** Update File: src/grok.rs\n@@\n-old\n+new\n+more\n*** End Patch"
+                        "patchText": "*** Begin Patch\n*** Update File: src/chatgpt_patch.rs\n@@\n-old\n+new\n+more\n*** End Patch"
                     }
                 }),
-                "src/grok.rs",
+                "src/chatgpt_patch.rs",
                 2,
                 1,
             ),
             (
-                ProviderKind::Pi,
+                ProviderKind::ChatGpt,
                 serde_json::json!({
-                    "path": "src/pi.rs",
+                    "path": "src/chatgpt_edits.rs",
                     "edits": [{"oldText": "old", "newText": "new\nmore"}]
                 }),
-                "src/pi.rs",
+                "src/chatgpt_edits.rs",
                 2,
                 1,
             ),
@@ -4001,7 +3827,7 @@ mod tests {
 
     #[test]
     fn positioned_hunks_beat_the_before_and_after_text_beside_them() {
-        // Claude's edit tools answer with the patch they applied. Its hunks
+        // Edit tools answer with the patch they applied. Its hunks
         // know where they landed; `old_string`/`new_string` never do.
         let activity = ActivityItem::new(
             Some("toolu_1".into()),
@@ -4061,13 +3887,13 @@ mod tests {
     }
 
     #[test]
-    fn codex_add_and_delete_changes_carry_their_whole_file_as_the_diff() {
+    fn whole_file_add_and_delete_changes_carry_their_whole_file_as_the_diff() {
         for (kind, additions, deletions, marker) in [
             ("add", Some(2), Some(0), '+'),
             ("delete", Some(0), Some(2), '-'),
         ] {
             let activity = ActivityItem::new(
-                Some(format!("codex-{kind}")),
+                Some(format!("chatgpt-{kind}")),
                 ActivityKind::FileChange,
                 "File Change",
                 None,
@@ -4075,7 +3901,7 @@ mod tests {
             )
             .with_arguments(Some(
                 serde_json::json!([{
-                    "path": "src/codex.rs",
+                    "path": "src/chatgpt.rs",
                     "kind": {"type": kind},
                     "diff": "first\nsecond"
                 }])
@@ -4183,7 +4009,7 @@ mod tests {
     #[test]
     fn prompt_generates_a_short_session_title() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.set_title_from_prompt("build a really polished local agent interface for rust");
         assert_eq!(
             session.auto_title.as_deref(),
@@ -4199,7 +4025,7 @@ mod tests {
     #[test]
     fn provider_title_replaces_prompt_fallback_but_not_an_explicit_title() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::OpenCode);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.set_title_from_prompt("investigate the broken provider event");
 
         assert!(session.set_auto_title(Some("Fix provider title events".into())));
@@ -4214,20 +4040,25 @@ mod tests {
 
     #[test]
     fn model_selection_keeps_started_sessions_on_their_provider() {
+        // ChatGPT is the only provider, so model selection is about session
+        // state, not provider identity: an unstarted session and a started
+        // idle session may choose a model, a busy one may not.
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
-        assert!(session.can_choose_model(ProviderKind::Claude));
+        assert!(session.can_choose_model(ProviderKind::ChatGpt));
 
         session.push_message(MessageRole::User, "first turn");
-        assert!(session.can_choose_model(ProviderKind::Codex));
-        assert!(!session.can_choose_model(ProviderKind::Claude));
+        assert!(session.can_choose_model(ProviderKind::ChatGpt));
+
+        session.status = SessionStatus::Working;
+        assert!(!session.can_choose_model(ProviderKind::ChatGpt));
     }
 
     #[test]
     fn model_selection_waits_for_the_active_turn_to_finish() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.push_message(MessageRole::User, "first turn");
 
         for status in [
@@ -4236,96 +4067,64 @@ mod tests {
             SessionStatus::Waiting,
         ] {
             session.status = status;
-            assert!(!session.can_choose_model(ProviderKind::Codex));
+            assert!(!session.can_choose_model(ProviderKind::ChatGpt));
         }
 
         session.status = SessionStatus::Idle;
-        assert!(session.can_choose_model(ProviderKind::Codex));
+        assert!(session.can_choose_model(ProviderKind::ChatGpt));
     }
 
     #[test]
     fn provider_ids_are_stable() {
-        assert_eq!(ProviderKind::Amp.id(), "amp");
-        assert_eq!(ProviderKind::Claude.id(), "claude");
-        assert_eq!(ProviderKind::Codex.command(), "codex");
-        assert_eq!(ProviderKind::Cursor.command(), "cursor-agent");
-        assert_eq!(ProviderKind::DeepSeek.command(), "dsh");
-        assert_eq!(ProviderKind::Fx.command(), "fx");
-        assert_eq!(ProviderKind::OpenCode.command(), "opencode");
-        assert_eq!(ProviderKind::OpenCode2.id(), "opencode2");
-        assert_eq!(ProviderKind::OpenCode2.command(), "opencode2");
-        assert_eq!(ProviderKind::Grok.command(), "grok");
-        assert_eq!(ProviderKind::Pi.command(), "pi");
+        assert_eq!(ProviderKind::ChatGpt.id(), "chatgpt");
+        assert_eq!(ProviderKind::ChatGpt.display_name(), "ChatGPT");
+        assert_eq!(ProviderKind::ChatGpt.short_name(), "ChatGPT");
+        assert_eq!(ProviderKind::ChatGpt.command(), "chatgpt");
     }
 
     #[test]
-    fn native_conversation_actions_include_every_provider() {
-        for provider in [
-            ProviderKind::Amp,
-            ProviderKind::Claude,
-            ProviderKind::Codex,
-            ProviderKind::Cursor,
-            ProviderKind::DeepSeek,
-            ProviderKind::OpenCode,
-            ProviderKind::OpenCode2,
-            ProviderKind::Grok,
-            ProviderKind::Pi,
-        ] {
-            assert!(provider.supports_conversation_fork());
-            assert!(provider.supports_conversation_rollback());
-        }
-        for provider in [ProviderKind::Fx, ProviderKind::Kimi] {
-            assert!(!provider.supports_conversation_fork());
-            assert!(!provider.supports_conversation_rollback());
-        }
+    fn native_conversation_actions_reflect_chatgpt_capabilities() {
+        // No conversations exist before Stage 3, so ChatGPT offers neither
+        // rollback nor fork.
+        assert!(!ProviderKind::ChatGpt.supports_conversation_fork());
+        assert!(!ProviderKind::ChatGpt.supports_conversation_rollback());
     }
 
     #[test]
     fn only_dynamic_provider_catalogs_are_discovered() {
-        assert!(!ProviderKind::Amp.supports_model_discovery());
-        assert!(ProviderKind::Claude.supports_model_discovery());
-        assert!(ProviderKind::Codex.supports_model_discovery());
-        assert!(ProviderKind::Cursor.supports_model_discovery());
-        assert!(ProviderKind::DeepSeek.supports_model_discovery());
-        assert!(ProviderKind::Fx.supports_model_discovery());
-        assert!(ProviderKind::OpenCode.supports_model_discovery());
-        assert!(ProviderKind::OpenCode2.supports_model_discovery());
-        assert!(ProviderKind::Grok.supports_model_discovery());
-        assert!(ProviderKind::Pi.supports_model_discovery());
+        assert!(ProviderKind::ChatGpt.supports_model_discovery());
     }
 
     #[test]
-    fn opencode2_cursor_round_trips_with_its_wire_tag() {
-        let cursor =
-            ProviderResumeCursor::from_session_id(ProviderKind::OpenCode2, "ses_abc".into());
+    fn chatgpt_cursor_round_trips_with_its_wire_tag() {
+        let cursor = ProviderResumeCursor::from_session_id(ProviderKind::ChatGpt, "ses_abc".into());
         let json = serde_json::to_string(&cursor).unwrap();
-        assert!(json.contains("\"provider\":\"openCode2\""), "{json}");
+        assert!(json.contains("\"provider\":\"chatGpt\""), "{json}");
         assert!(json.contains("\"sessionId\":\"ses_abc\""), "{json}");
-        assert_eq!(cursor.provider(), ProviderKind::OpenCode2);
+        assert_eq!(cursor.provider(), ProviderKind::ChatGpt);
         assert_eq!(cursor.native_id(), "ses_abc");
         assert_eq!(
-            serde_json::to_value(ProviderKind::OpenCode2).unwrap(),
-            serde_json::json!("openCode2")
+            serde_json::to_value(ProviderKind::ChatGpt).unwrap(),
+            serde_json::json!("chatGpt")
         );
     }
 
-    /// OpenCode 2 must not share v1's cursor variant: every driver asserts
-    /// `cursor.provider() == provider` before resuming, and a shared variant
-    /// would let a v1 session resume against the v2 server.
-    #[test]
-    fn opencode_cursors_are_distinct_per_major_version() {
-        let v1 = ProviderResumeCursor::from_session_id(ProviderKind::OpenCode, "ses_x".into());
-        let v2 = ProviderResumeCursor::from_session_id(ProviderKind::OpenCode2, "ses_x".into());
-        assert_ne!(v1.provider(), v2.provider());
+    /// Cursors for distinct native sessions must not compare equal: every
+    /// driver asserts `cursor.provider() == provider` before resuming, and a
+    /// shared cursor would let one conversation resume against another.
+    fn chatgpt_cursors_are_distinct_per_session() {
+        let first = ProviderResumeCursor::from_session_id(ProviderKind::ChatGpt, "ses_a".into());
+        let second = ProviderResumeCursor::from_session_id(ProviderKind::ChatGpt, "ses_b".into());
+        assert_eq!(first.provider(), second.provider());
         assert_ne!(
-            serde_json::to_value(&v1).unwrap(),
-            serde_json::to_value(&v2).unwrap()
+            serde_json::to_value(&first).unwrap(),
+            serde_json::to_value(&second).unwrap()
         );
     }
 
     #[test]
     fn all_contains_every_provider_kind() {
-        assert_eq!(ProviderKind::ALL.len(), 13);
+        assert!(ProviderKind::ALL.contains(&ProviderKind::ChatGpt));
         let ids: std::collections::HashSet<_> =
             ProviderKind::ALL.iter().map(|kind| kind.id()).collect();
         assert_eq!(
@@ -4347,7 +4146,7 @@ mod tests {
     #[test]
     fn prompt_title_truncation_is_unicode_safe() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Claude);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         let prompt = "界".repeat(70);
         session.set_title_from_prompt(&prompt);
         let title = session.auto_title.as_deref().unwrap();
@@ -4358,7 +4157,7 @@ mod tests {
     #[test]
     fn a_failed_preparation_unwinds_the_turn_it_eagerly_began() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
         // A first prompt: the unwind restores the default title because the
         // prompt returns to the composer, but keeps the submission activity.
@@ -4397,7 +4196,7 @@ mod tests {
     #[test]
     fn turn_truncation_removes_owned_messages_and_blocks() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
         let first_turn = session.begin_turn("first");
         session.push_message(MessageRole::Assistant, "first answer");
@@ -4436,7 +4235,7 @@ mod tests {
     #[test]
     fn response_fork_is_a_distinct_idle_session_through_the_selected_turn() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
         let first_turn = session.begin_turn("first");
         let first_message = session.push_message(MessageRole::Assistant, "first answer");
@@ -4448,8 +4247,8 @@ mod tests {
         let fork = session
             .fork_through_turn(
                 1,
-                ProviderResumeCursor::Codex {
-                    thread_id: "forked-thread".into(),
+                ProviderResumeCursor::ChatGpt {
+                    session_id: "forked-session".into(),
                 },
                 "New task (2)",
             )
@@ -4470,14 +4269,14 @@ mod tests {
         );
         assert!(matches!(
             fork.provider_cursor,
-            Some(ProviderResumeCursor::Codex { ref thread_id }) if thread_id == "forked-thread"
+            Some(ProviderResumeCursor::ChatGpt { ref session_id }) if session_id == "forked-session"
         ));
     }
 
     #[test]
     fn queued_follow_ups_stay_with_the_source_session_not_the_fork() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
         session.begin_turn("first");
         session.push_message(MessageRole::Assistant, "first answer");
@@ -4489,8 +4288,8 @@ mod tests {
         let fork = session
             .fork_through_turn(
                 1,
-                ProviderResumeCursor::Codex {
-                    thread_id: "forked-thread".into(),
+                ProviderResumeCursor::ChatGpt {
+                    session_id: "forked-session".into(),
                 },
                 "New task (2)",
             )
@@ -4503,7 +4302,7 @@ mod tests {
     #[test]
     fn follow_up_queue_round_trips_through_serde() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session
             .queued_messages
             .push(QueuedMessage::new("first follow-up"));
@@ -4545,7 +4344,7 @@ mod tests {
     #[test]
     fn busy_statuses_cover_connecting_working_and_waiting() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         for status in [
             SessionStatus::Connecting,
             SessionStatus::Working,
@@ -4562,29 +4361,25 @@ mod tests {
 
     #[test]
     fn provider_resume_cursor_is_explicitly_tagged() {
-        let cursor = ProviderResumeCursor::Claude {
+        let cursor = ProviderResumeCursor::ChatGpt {
             session_id: "session-1".into(),
-            resume_at: Some("message-9".into()),
         };
         let value = serde_json::to_value(&cursor).unwrap();
-        assert_eq!(value["provider"], "claude");
+        assert_eq!(value["provider"], "chatGpt");
         assert_eq!(value["sessionId"], "session-1");
-        assert_eq!(value["resumeAt"], "message-9");
 
-        let cursor = ProviderResumeCursor::Cursor {
+        let empty = ProviderResumeCursor::ChatGpt {
             session_id: String::new(),
-            fork_context: Some("[]".into()),
         };
-        let value = serde_json::to_value(&cursor).unwrap();
-        assert_eq!(value["provider"], "cursor");
+        let value = serde_json::to_value(&empty).unwrap();
+        assert_eq!(value["provider"], "chatGpt");
         assert_eq!(value["sessionId"], "");
-        assert_eq!(value["forkContext"], "[]");
     }
 
     #[test]
     fn native_rollback_count_ignores_turns_that_never_reached_the_provider() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
         session.begin_turn("first");
         session.mark_active_turn_provider_started();
@@ -4603,7 +4398,7 @@ mod tests {
     #[test]
     fn legacy_empty_search_titles_are_repaired() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.transcript_blocks.push(TranscriptBlock {
             after_message: 0,
             turn_id: None,
@@ -4661,7 +4456,7 @@ mod tests {
     #[test]
     fn adjacent_legacy_work_blocks_merge_during_session_migration() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.transcript_blocks.extend([
             TranscriptBlock {
                 after_message: 1,
@@ -4705,7 +4500,7 @@ mod tests {
     #[test]
     fn legacy_file_edit_details_are_promoted_to_arguments_and_metadata() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::OpenCode);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.transcript_blocks.push(TranscriptBlock {
             after_message: 0,
             turn_id: None,
@@ -4738,7 +4533,7 @@ mod tests {
     #[test]
     fn legacy_file_tools_are_reclassified_and_gain_cached_targets() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::OpenCode);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         let mut cached = ActivityItem::new(None, ActivityKind::FileRead, "read", None, true);
         cached.display_target = Some("/tmp/waku/src/persisted.rs".into());
         session.transcript_blocks.push(TranscriptBlock {
@@ -4790,13 +4585,15 @@ mod tests {
     }
 
     #[test]
-    fn legacy_codex_citation_markers_are_removed() {
+    fn chatgpt_transcripts_need_no_legacy_citation_stripping() {
+        // The legacy citation markers belonged to a removed provider's
+        // transcript shape. ChatGPT transcripts carry no such markers, so
+        // migration must leave assistant content byte-for-byte intact.
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
-        session.messages.push(Message::new(
-            MessageRole::Assistant,
-            "Claim.\u{e200}cite\u{e202}turn3view0\u{e202}turn2view2\u{e201}\nNext.",
-        ));
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
+        session
+            .messages
+            .push(Message::new(MessageRole::Assistant, "Claim.\nNext."));
 
         session.migrate_legacy_state();
 
@@ -4806,7 +4603,7 @@ mod tests {
     #[test]
     fn legacy_checkpoint_totals_are_backfilled_from_the_file_summary() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.begin_turn("Build it");
         session.finish_active_turn(TurnStatus::Completed);
         let mut serialized = serde_json::to_value(Checkpoint {
@@ -4846,7 +4643,7 @@ mod tests {
 
     #[test]
     fn a_follower_adopts_another_clients_submission_under_its_ids() {
-        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         session.begin_turn("first");
         session.push_message(MessageRole::Assistant, "done");
         session.finish_active_turn(TurnStatus::Completed);
@@ -4870,7 +4667,7 @@ mod tests {
 
     #[test]
     fn the_submitters_own_echo_changes_nothing() {
-        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Codex);
+        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         let turn_id = session.begin_turn("first");
         session.status = SessionStatus::Connecting;
         let message_id = session.messages[0].id;
@@ -4884,7 +4681,7 @@ mod tests {
 
     #[test]
     fn a_provider_started_turn_takes_the_submitted_prompt_as_its_own() {
-        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::Claude);
+        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
         let provider_turn = session.begin_provider_turn();
         session.mark_active_turn_provider_started();
         session.status = SessionStatus::Working;
@@ -4903,7 +4700,7 @@ mod tests {
     #[test]
     fn list_projection_never_copies_session_detail() {
         let project = Project::from_path(PathBuf::from("/tmp/waku"));
-        let mut session = AgentSession::new(project.id, ProviderKind::Codex);
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.title = "Visible title".into();
         session.model = Some("gpt-5".into());
         session.status = SessionStatus::Working;
@@ -4942,7 +4739,6 @@ mod tests {
 
     #[test]
     fn chatgpt_registers_as_its_own_visible_provider() {
-        assert_eq!(ProviderKind::ALL.len(), 13);
         assert!(ProviderKind::ALL.contains(&ProviderKind::ChatGpt));
         assert_eq!(ProviderKind::ChatGpt.id(), "chatgpt");
         assert_eq!(ProviderKind::ChatGpt.display_name(), "ChatGPT");
@@ -4969,13 +4765,13 @@ mod tests {
     }
 
     #[test]
-    fn codex_registration_is_unchanged_by_chatgpt() {
-        assert_eq!(ProviderKind::Codex.id(), "codex");
-        assert_eq!(ProviderKind::Codex.display_name(), "Codex CLI");
-        assert_eq!(ProviderKind::Codex.command(), "codex");
-        assert!(ProviderKind::Codex.supports_conversation_rollback());
-        assert!(ProviderKind::Codex.supports_conversation_fork());
-        assert!(ProviderKind::Codex.supports_model_discovery());
+    fn chatgpt_registration_is_the_only_provider() {
+        assert_eq!(ProviderKind::ChatGpt.id(), "chatgpt");
+        assert_eq!(ProviderKind::ChatGpt.display_name(), "ChatGPT");
+        assert_eq!(ProviderKind::ChatGpt.command(), "chatgpt");
+        assert!(!ProviderKind::ChatGpt.supports_conversation_rollback());
+        assert!(!ProviderKind::ChatGpt.supports_conversation_fork());
+        assert!(ProviderKind::ChatGpt.supports_model_discovery());
     }
 
     fn history_message(role: MessageRole, content: &str) -> Message {

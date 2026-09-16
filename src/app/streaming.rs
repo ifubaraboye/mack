@@ -257,13 +257,6 @@ impl Waku {
                 runtime.last_background_refresh_at = Instant::now();
                 runtime.driver.refresh_background_work();
                 if let Some(session) = self.state.session_mut(session_id) {
-                    if let Some(ProviderResumeCursor::Claude {
-                        resume_at: Some(message_id),
-                        ..
-                    }) = &provider_cursor
-                    {
-                        session.mark_active_turn_provider_resume_at(message_id.clone());
-                    }
                     session.provider_cursor = provider_cursor;
                     if session.status == SessionStatus::Connecting {
                         session.status = SessionStatus::Working;
@@ -316,22 +309,9 @@ impl Waku {
                         // a `/goal` began: the provider's start confirms it.
                         session.mark_active_turn_provider_started();
                         session.status = SessionStatus::Working;
-                    } else if matches!(
-                        session.provider,
-                        ProviderKind::Codex | ProviderKind::Claude | ProviderKind::OpenCode2
-                    ) {
-                        // Some providers start turns on their own: Codex goal
-                        // continuation pursues an active goal whenever the
-                        // thread is idle, and Claude Code re-enters the model
-                        // once a backgrounded command, subagent or monitor
-                        // settles. Give the turn a transcript home — there is
-                        // no user message for it — so its work streams in
-                        // instead of being dropped.
-                        session.begin_provider_turn();
-                        session.mark_active_turn_provider_started();
-                        session.status = SessionStatus::Working;
-                        self.state.mark_session_dirty(session_id);
                     }
+                    // ChatGPT-only: no provider-started turns exist, so a
+                    // TurnStarted without an active turn is ignored.
                 }
             }
             DriverEvent::TurnParked => {
@@ -549,17 +529,7 @@ impl Waku {
                     self.enqueue_follow_up_submission(session_id, submission, cx);
                 }
             }
-            DriverEvent::PlanUsageUpdated(usage) => {
-                if let Some(provider) = self
-                    .state
-                    .sessions
-                    .iter()
-                    .find(|session| session.id == session_id)
-                    .map(|session| session.provider)
-                {
-                    self.plan_usage.insert(provider, usage);
-                }
-            }
+            DriverEvent::PlanUsageUpdated(_) => {}
             DriverEvent::GoalUpdated(goal) => {
                 // Conversation meta like usage: it applies regardless of turn
                 // state, and `None` means the provider cleared the goal.
@@ -610,19 +580,6 @@ impl Waku {
                 );
                 let previous_kinds = self.snapshot_selected_transcript_rows(session_id);
                 runtime.last_driver_error = None;
-                // A settled turn moved the account's rate-limit needles; ask
-                // that provider's plan meter to refresh once its backoff
-                // allows.
-                if let Some(provider) = self
-                    .state
-                    .sessions
-                    .iter()
-                    .find(|session| session.id == session_id)
-                    .map(|session| session.provider)
-                    .filter(|provider| usage_meter::PLAN_USAGE_PROVIDERS.contains(provider))
-                {
-                    self.plan_usage_stale.insert(provider);
-                }
                 if self
                     .state
                     .sessions
