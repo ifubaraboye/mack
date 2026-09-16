@@ -35,15 +35,6 @@ const APP_STATE_VERSION: u32 = 1;
 pub const DEFAULT_SIDEBAR_WIDTH: f32 = 252.0;
 pub const DEFAULT_RIGHT_PANEL_WIDTH: f32 = 460.0;
 
-/// How the desktop groups task history in the sidebar.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SidebarGrouping {
-    Project,
-    #[default]
-    Updated,
-}
-
 /// Direction of task history inside the sidebar's current grouping.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -330,8 +321,6 @@ struct AppState {
     #[serde(default = "default_sidebar_width")]
     sidebar_width: f32,
     #[serde(default)]
-    sidebar_grouping: SidebarGrouping,
-    #[serde(default)]
     sidebar_ordering: SidebarOrdering,
     #[serde(default)]
     chat_groups: Vec<ChatGroup>,
@@ -396,8 +385,6 @@ pub struct PersistedState {
     pub right_panel_visible: bool,
     #[serde(default = "default_sidebar_width")]
     pub sidebar_width: f32,
-    #[serde(default)]
-    pub sidebar_grouping: SidebarGrouping,
     #[serde(default)]
     pub sidebar_ordering: SidebarOrdering,
     #[serde(default = "default_right_panel_width")]
@@ -466,7 +453,6 @@ impl PersistedState {
             sidebar_visible: true,
             right_panel_visible: false,
             sidebar_width: DEFAULT_SIDEBAR_WIDTH,
-            sidebar_grouping: SidebarGrouping::Updated,
             sidebar_ordering: SidebarOrdering::Newest,
             right_panel_width: DEFAULT_RIGHT_PANEL_WIDTH,
             markdown_preview: false,
@@ -610,7 +596,6 @@ impl PersistedState {
             sidebar_visible: self.sidebar_visible,
             right_panel_visible: self.right_panel_visible,
             sidebar_width: self.sidebar_width,
-            sidebar_grouping: self.sidebar_grouping,
             sidebar_ordering: self.sidebar_ordering,
             chat_groups: self.chat_groups.clone(),
             right_panel_width: self.right_panel_width,
@@ -647,7 +632,6 @@ impl PersistedState {
         self.sidebar_visible = app_state.sidebar_visible;
         self.right_panel_visible = app_state.right_panel_visible;
         self.sidebar_width = app_state.sidebar_width;
-        self.sidebar_grouping = app_state.sidebar_grouping;
         self.sidebar_ordering = app_state.sidebar_ordering;
         self.chat_groups = app_state.chat_groups;
         self.right_panel_width = app_state.right_panel_width;
@@ -1200,7 +1184,6 @@ mod tests {
     fn legacy_app_state_defaults_sidebar_presentation() {
         let state: AppState = serde_json::from_str(r#"{"app_state_version":1}"#).unwrap();
 
-        assert_eq!(state.sidebar_grouping, SidebarGrouping::Updated);
         assert_eq!(state.sidebar_ordering, SidebarOrdering::Newest);
         assert_eq!(state.last_runtime_mode, RuntimeMode::FullAccess);
     }

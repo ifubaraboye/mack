@@ -76,6 +76,16 @@ command_palette.sessions:
   en: Terminal sessions
 command_palette.providers:
   en: Providers
+command_palette.projects:
+  en: Projects
+command_palette.projects_placeholder:
+  en: Search projects…
+command_palette.project_chats_placeholder:
+  en: Search chats in %{project}…
+command_palette.project_chat_count_one:
+  en: 1 chat
+command_palette.project_chat_count_many:
+  en: "%{count} chats"
 command_palette.commands:
   en: Commands
 command_palette.settings:
@@ -513,22 +523,16 @@ sidebar.today:
   en: Today
 sidebar.search:
   en: Search
+sidebar.projects:
+  en: Projects
 sidebar.options:
   en: Sidebar options
-sidebar.grouping:
-  en: Grouping
-sidebar.grouping_project:
-  en: Project
-sidebar.grouping_updated:
-  en: Updated
 sidebar.ordering:
   en: Ordering
 sidebar.ordering_newest:
   en: Newest first
 sidebar.ordering_oldest:
   en: Oldest first
-sidebar.show_more:
-  en: Show more
 sidebar.yesterday:
   en: Yesterday
 sidebar.this_week:

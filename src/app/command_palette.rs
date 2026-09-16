@@ -72,6 +72,7 @@ enum PaletteSection {
     Tasks,
     Sessions,
     Providers,
+    Projects,
     Commands,
     Settings,
 }
@@ -83,6 +84,7 @@ impl PaletteSection {
             Self::Tasks => "command_palette.tasks",
             Self::Sessions => "command_palette.sessions",
             Self::Providers => "command_palette.providers",
+            Self::Projects => "command_palette.projects",
             Self::Commands => "command_palette.commands",
             Self::Settings => "command_palette.settings",
         })
@@ -90,7 +92,11 @@ impl PaletteSection {
 
     fn query_rank(self) -> usize {
         match self {
-            Self::Commands | Self::Suggested | Self::Sessions | Self::Providers => 0,
+            Self::Commands
+            | Self::Suggested
+            | Self::Sessions
+            | Self::Providers
+            | Self::Projects => 0,
             Self::Tasks => 1,
             Self::Settings => 2,
         }
@@ -159,6 +165,8 @@ enum PaletteAction {
     ToggleRightPanel,
     OpenSettings(SettingsPage),
     SelectTask(Uuid),
+    OpenProjects,
+    OpenProjectChats(Uuid),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -167,6 +175,8 @@ enum CommandPaletteView {
     Commands,
     Resume,
     ResumeProviders,
+    Projects,
+    ProjectChats,
 }
 
 #[derive(Clone, Debug)]
@@ -361,6 +371,9 @@ pub(super) struct CommandPaletteUi {
     message_search_pending: bool,
     provider_sessions: Vec<ProviderSessionSummary>,
     resume_provider: ProviderKind,
+    /// Project whose chats the ProjectChats view lists. `None` outside
+    /// that view, mirroring how `resume_provider` scopes ResumeProviders.
+    project_view_project: Option<Uuid>,
     provider_sessions_pending: bool,
     provider_session_import: Option<ProviderResumeCursor>,
     provider_session_error: Option<String>,
@@ -386,6 +399,7 @@ impl CommandPaletteUi {
             message_search_pending: false,
             provider_sessions: Vec::new(),
             resume_provider: ProviderKind::default(),
+            project_view_project: None,
             provider_sessions_pending: false,
             provider_session_import: None,
             provider_session_error: None,
@@ -546,12 +560,73 @@ impl Waku {
         cx.notify();
     }
 
+    /// Open the palette (if needed) straight into the Projects view, where
+    /// each project lists the chats it holds. The sidebar Projects row is
+    /// the entry point.
+    pub(super) fn open_projects_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.command_palette.open {
+            self.open_command_palette(window, cx);
+        }
+        self.open_command_palette_projects_view(cx);
+    }
+
+    fn open_command_palette_projects_view(&mut self, cx: &mut Context<Self>) {
+        self.command_palette.view = CommandPaletteView::Projects;
+        self.command_palette.project_view_project = None;
+        self.command_palette.search.update(cx, |input, cx| {
+            input.set_placeholder(tr!("command_palette.projects_placeholder"), cx);
+            input.clear(cx);
+        });
+        self.refresh_command_palette_results("", false, cx);
+        cx.notify();
+    }
+
+    fn open_command_palette_project_chats_view(
+        &mut self,
+        project_id: Uuid,
+        cx: &mut Context<Self>,
+    ) {
+        self.command_palette.view = CommandPaletteView::ProjectChats;
+        self.command_palette.project_view_project = Some(project_id);
+        let project = self.command_palette_project_name();
+        self.command_palette.search.update(cx, |input, cx| {
+            input.set_placeholder(
+                tr!("command_palette.project_chats_placeholder", project = project),
+                cx,
+            );
+            input.clear(cx);
+        });
+        self.refresh_command_palette_results("", false, cx);
+        cx.notify();
+    }
+
+    fn leave_command_palette_project_chats_view(&mut self, cx: &mut Context<Self>) {
+        self.open_command_palette_projects_view(cx);
+    }
+
+    fn command_palette_project_name(&self) -> String {
+        self.command_palette
+            .project_view_project
+            .and_then(|project_id| {
+                self.state
+                    .projects
+                    .iter()
+                    .find(|project| project.id == project_id)
+            })
+            .map(Project::display_name)
+            .unwrap_or_else(|| tr!("project.no_project_name"))
+    }
+
     fn dismiss_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.command_palette.view {
             CommandPaletteView::Commands => self.close_command_palette(window, cx),
             CommandPaletteView::Resume => self.leave_command_palette_resume_view(cx),
             CommandPaletteView::ResumeProviders => {
                 self.leave_command_palette_resume_provider_view(cx)
+            }
+            CommandPaletteView::Projects => self.close_command_palette(window, cx),
+            CommandPaletteView::ProjectChats => {
+                self.leave_command_palette_project_chats_view(cx)
             }
         }
     }
@@ -563,6 +638,11 @@ impl Waku {
             CommandPaletteView::ResumeProviders => {
                 tr!("command_palette.resume_provider_placeholder")
             }
+            CommandPaletteView::Projects => tr!("command_palette.projects_placeholder"),
+            CommandPaletteView::ProjectChats => tr!(
+                "command_palette.project_chats_placeholder",
+                project = self.command_palette_project_name()
+            ),
         };
         self.command_palette
             .search
@@ -579,7 +659,10 @@ impl Waku {
         }
         if matches!(
             self.command_palette.view,
-            CommandPaletteView::Resume | CommandPaletteView::ResumeProviders
+            CommandPaletteView::Resume
+                | CommandPaletteView::ResumeProviders
+                | CommandPaletteView::Projects
+                | CommandPaletteView::ProjectChats
         ) {
             self.refresh_command_palette_results(query, false, cx);
             cx.notify();
@@ -995,8 +1078,182 @@ impl Waku {
             .collect()
     }
 
-    fn refresh_command_palette_resume_results(&mut self, query: &str, preserve_selection: bool) {
+    /// One row per project, most-recently-active first: the Projects view.
+    /// Typing a chat title surfaces its project, so the view doubles as a
+    /// scoped task search.
+    fn command_palette_project_candidates(&self) -> Vec<CommandPaletteItem> {
+        self.state
+            .projects
+            .iter()
+            .enumerate()
+            .map(|(order, project)| {
+                let mut chats = self
+                    .state
+                    .sessions
+                    .iter()
+                    .filter(|session| session.has_started() && session.project_id == project.id)
+                    .collect::<Vec<_>>();
+                chats.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
+                let recency = chats.first().map(|session| session.updated_at).unwrap_or(0);
+                let titles = chats
+                    .iter()
+                    .take(5)
+                    .map(|session| session.display_title())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                CommandPaletteItem {
+                    section: PaletteSection::Projects,
+                    search_text: format!(
+                        "{} {} {} project folder chats conversations",
+                        Project::display_name(project),
+                        project.path.to_string_lossy(),
+                        titles,
+                    ),
+                    label: Project::display_name(project),
+                    detail: Some(if chats.len() == 1 {
+                        tr!("command_palette.project_chat_count_one")
+                    } else {
+                        tr!(
+                            "command_palette.project_chat_count_many",
+                            count = chats.len()
+                        )
+                    }),
+                    icon: PaletteIcon::Asset("icons/folder.svg"),
+                    shortcut: None,
+                    action: PaletteAction::OpenProjectChats(project.id),
+                    content_match: None,
+                    order,
+                    recency,
+                }
+            })
+            .collect()
+    }
+
+    /// The selected project's chats, reusing the task rows so a chat looks
+    /// the same here as in the Commands view.
+    fn command_palette_project_chat_candidates(
+        &self,
+        project_id: Uuid,
+    ) -> Vec<CommandPaletteItem> {
+        self.command_palette_task_candidates()
+            .into_iter()
+            .filter(|item| {
+                matches!(&item.action, PaletteAction::SelectTask(session_id) if self
+                    .state
+                    .sessions
+                    .iter()
+                    .find(|session| session.id == *session_id)
+                    .is_some_and(|session| session.project_id == project_id))
+            })
+            .collect()
+    }
+
+    fn refresh_command_palette_project_results(&mut self, query: &str, preserve_selection: bool) {
         let query = query.trim();
+        let selected_action = preserve_selection.then(|| {
+            self.command_palette
+                .results
+                .get(self.command_palette.selected)
+                .map(|item| item.action.clone())
+        });
+        let mut candidates = self.command_palette_project_candidates();
+        if query.is_empty() {
+            candidates.sort_by(|a, b| b.recency.cmp(&a.recency).then(a.order.cmp(&b.order)));
+        } else {
+            let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+            let mut utf32 = Vec::new();
+            let mut scored = candidates
+                .into_iter()
+                .filter_map(|item| {
+                    pattern
+                        .score(
+                            Utf32Str::new(&item.search_text, &mut utf32),
+                            &mut self.command_palette.matcher,
+                        )
+                        .map(|score| ScoredPaletteItem { score, item })
+                })
+                .collect::<Vec<_>>();
+            scored.sort_by(|a, b| {
+                b.score
+                    .cmp(&a.score)
+                    .then(b.item.recency.cmp(&a.item.recency))
+                    .then(a.item.order.cmp(&b.item.order))
+            });
+            candidates = scored.into_iter().map(|scored| scored.item).collect();
+        }
+        self.command_palette.results = candidates;
+        self.command_palette.selected = selected_action
+            .flatten()
+            .and_then(|action| {
+                self.command_palette
+                    .results
+                    .iter()
+                    .position(|item| item.action == action)
+            })
+            .unwrap_or(0);
+        let scroll_index = self.command_palette_scroll_index(self.command_palette.selected);
+        self.command_palette.scroll.scroll_to_item(scroll_index);
+    }
+
+    fn refresh_command_palette_project_chat_results(
+        &mut self,
+        query: &str,
+        preserve_selection: bool,
+    ) {
+        let query = query.trim();
+        let selected_action = preserve_selection.then(|| {
+            self.command_palette
+                .results
+                .get(self.command_palette.selected)
+                .map(|item| item.action.clone())
+        });
+        let Some(project_id) = self.command_palette.project_view_project else {
+            self.command_palette.results = Vec::new();
+            self.command_palette.selected = 0;
+            return;
+        };
+        let mut candidates = self.command_palette_project_chat_candidates(project_id);
+        if query.is_empty() {
+            candidates.sort_by(|a, b| b.recency.cmp(&a.recency).then(a.order.cmp(&b.order)));
+            candidates.truncate(MAX_TASK_RESULTS);
+            self.command_palette.results = candidates;
+        } else {
+            let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+            let mut utf32 = Vec::new();
+            let mut scored = candidates
+                .into_iter()
+                .filter_map(|item| {
+                    pattern
+                        .score(
+                            Utf32Str::new(&item.search_text, &mut utf32),
+                            &mut self.command_palette.matcher,
+                        )
+                        .map(|score| ScoredPaletteItem { score, item })
+                })
+                .collect::<Vec<_>>();
+            scored.sort_by(|a, b| {
+                b.score
+                    .cmp(&a.score)
+                    .then(b.item.recency.cmp(&a.item.recency))
+                    .then(a.item.order.cmp(&b.item.order))
+            });
+            scored.truncate(MAX_TASK_RESULTS);
+            self.command_palette.results = scored.into_iter().map(|scored| scored.item).collect();
+        }
+        self.command_palette.selected = selected_action
+            .flatten()
+            .and_then(|action| {
+                self.command_palette
+                    .results
+                    .iter()
+                    .position(|item| item.action == action)
+            })
+            .unwrap_or(0);
+        let scroll_index = self.command_palette_scroll_index(self.command_palette.selected);
+        self.command_palette.scroll.scroll_to_item(scroll_index);
+    }
+
+    fn refresh_command_palette_resume_results(&mut self, query: &str, preserve_selection: bool) {        let query = query.trim();
         let selected_action = preserve_selection.then(|| {
             self.command_palette
                 .results
@@ -1115,6 +1372,14 @@ impl Waku {
             }
             CommandPaletteView::ResumeProviders => {
                 self.refresh_command_palette_resume_provider_results(query, preserve_selection);
+                return;
+            }
+            CommandPaletteView::Projects => {
+                self.refresh_command_palette_project_results(query, preserve_selection);
+                return;
+            }
+            CommandPaletteView::ProjectChats => {
+                self.refresh_command_palette_project_chat_results(query, preserve_selection);
                 return;
             }
             CommandPaletteView::Commands => {}
@@ -1528,6 +1793,14 @@ impl Waku {
                 self.load_command_palette_provider_session(summary, window, cx);
                 return;
             }
+            PaletteAction::OpenProjects => {
+                self.open_command_palette_projects_view(cx);
+                return;
+            }
+            PaletteAction::OpenProjectChats(project_id) => {
+                self.open_command_palette_project_chats_view(project_id, cx);
+                return;
+            }
             _ => {}
         }
 
@@ -1575,8 +1848,10 @@ impl Waku {
             PaletteAction::Resume
             | PaletteAction::ChooseResumeProvider
             | PaletteAction::SelectResumeProvider(_)
-            | PaletteAction::ResumeProviderSession(_) => {
-                unreachable!("resume actions are handled before closing the palette")
+            | PaletteAction::ResumeProviderSession(_)
+            | PaletteAction::OpenProjects
+            | PaletteAction::OpenProjectChats(_) => {
+                unreachable!("view-switching actions are handled before closing the palette")
             }
         }
     }
@@ -1610,7 +1885,9 @@ impl Waku {
         let results_pending = match self.command_palette.view {
             CommandPaletteView::Resume => self.command_palette.provider_sessions_pending,
             CommandPaletteView::Commands => self.command_palette.message_search_pending,
-            CommandPaletteView::ResumeProviders => false,
+            CommandPaletteView::ResumeProviders
+            | CommandPaletteView::Projects
+            | CommandPaletteView::ProjectChats => false,
         };
         let show_empty_state = should_show_command_palette_empty_state(
             if resume_view {

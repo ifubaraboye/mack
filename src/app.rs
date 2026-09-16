@@ -54,7 +54,7 @@ use crate::ui::tooltip::Tooltip;
 
 use crate::persistence::{
     ComposerDraftStore, ComposerDrafts, DEFAULT_RIGHT_PANEL_WIDTH, DEFAULT_SIDEBAR_WIDTH,
-    PersistedState, PersistedWindowState, SidebarGrouping, SidebarOrdering, StateStore,
+    PersistedState, PersistedWindowState, SidebarOrdering, StateStore,
 };
 use crate::query::{Query, QueryCache};
 use crate::terminal::TerminalView;
@@ -1253,18 +1253,13 @@ pub struct Waku {
     /// the same stable-field treatment as session renames.
     group_rename: Option<Uuid>,
     group_rename_input: Entity<TextInput>,
-    /// Groups the user has folded in either sidebar view. This is
-    /// intentionally runtime-only, like transcript disclosure state.
+    /// Groups the user has folded in the sidebar. This is intentionally
+    /// runtime-only, like transcript disclosure state.
     sidebar_collapsed_groups: HashSet<SidebarGroup>,
-    /// Number of older sessions revealed inside each project section. This is
-    /// runtime-only so every launch starts with the recent three-day view.
-    sidebar_project_reveal_counts: HashMap<SidebarGroup, usize>,
     /// Stable keyboard focus for each virtualized sidebar group header and
     /// its hover-revealed New Task control.
     sidebar_group_header_focuses: RefCell<HashMap<SidebarGroup, FocusHandle>>,
     sidebar_group_compose_focuses: RefCell<HashMap<SidebarGroup, FocusHandle>>,
-    /// Stable keyboard focus for each virtualized project-history reveal row.
-    sidebar_show_more_focuses: RefCell<HashMap<SidebarGroup, FocusHandle>>,
     sidebar_visible: bool,
     sidebar_width: f32,
     right_panel_visible: bool,
@@ -2705,10 +2700,8 @@ impl Waku {
                 group_rename: None,
                 group_rename_input,
                 sidebar_collapsed_groups: HashSet::new(),
-                sidebar_project_reveal_counts: HashMap::new(),
                 sidebar_group_header_focuses: RefCell::new(HashMap::new()),
                 sidebar_group_compose_focuses: RefCell::new(HashMap::new()),
-                sidebar_show_more_focuses: RefCell::new(HashMap::new()),
                 sidebar_visible,
                 sidebar_width,
                 right_panel_visible,
