@@ -23,7 +23,7 @@ actions!(
         SelectPageUp,
         Confirm,
         Dismiss,
-        DeleteProject
+        DeleteGroup
     ]
 );
 
@@ -62,9 +62,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("enter", Confirm, Some(SEARCH_CONTEXT)),
         // The search field owns plain Delete for text editing; with an empty
         // query Shift+Delete reaches the palette and removes the highlighted
-        // project instead. The handler re-checks the query, so a stray
+        // group instead. The handler re-checks the query, so a stray
         // keystroke while typing can never delete anything.
-        KeyBinding::new("shift-delete", DeleteProject, Some("CommandPalette")),
+        KeyBinding::new("shift-delete", DeleteGroup, Some("CommandPalette")),
         // Bound at the palette, not the field: the query field's own
         // clear-on-escape outranks this (deeper context) while it has text,
         // and an empty field propagates the keystroke down to it.
@@ -78,7 +78,7 @@ enum PaletteSection {
     Tasks,
     Sessions,
     Providers,
-    Projects,
+    Groups,
     Commands,
     Settings,
 }
@@ -90,7 +90,7 @@ impl PaletteSection {
             Self::Tasks => "command_palette.tasks",
             Self::Sessions => "command_palette.sessions",
             Self::Providers => "command_palette.providers",
-            Self::Projects => "command_palette.projects",
+            Self::Groups => "command_palette.groups",
             Self::Commands => "command_palette.commands",
             Self::Settings => "command_palette.settings",
         })
@@ -102,7 +102,7 @@ impl PaletteSection {
             | Self::Suggested
             | Self::Sessions
             | Self::Providers
-            | Self::Projects => 0,
+            | Self::Groups => 0,
             Self::Tasks => 1,
             Self::Settings => 2,
         }
@@ -171,8 +171,8 @@ enum PaletteAction {
     ToggleRightPanel,
     OpenSettings(SettingsPage),
     SelectTask(Uuid),
-    OpenProjects,
-    OpenProjectChats(Uuid),
+    OpenGroups,
+    OpenGroupChats(Uuid),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -181,8 +181,8 @@ enum CommandPaletteView {
     Commands,
     Resume,
     ResumeProviders,
-    Projects,
-    ProjectChats,
+    Groups,
+    GroupChats,
 }
 
 #[derive(Clone, Debug)]
@@ -377,9 +377,9 @@ pub(super) struct CommandPaletteUi {
     message_search_pending: bool,
     provider_sessions: Vec<ProviderSessionSummary>,
     resume_provider: ProviderKind,
-    /// Project whose chats the ProjectChats view lists. `None` outside
-    /// that view, mirroring how `resume_provider` scopes ResumeProviders.
-    project_view_project: Option<Uuid>,
+    /// Group whose chats the GroupChats view lists. `None` outside that
+    /// view, mirroring how `resume_provider` scopes ResumeProviders.
+    group_view_group: Option<Uuid>,
     provider_sessions_pending: bool,
     provider_session_import: Option<ProviderResumeCursor>,
     provider_session_error: Option<String>,
@@ -405,7 +405,7 @@ impl CommandPaletteUi {
             message_search_pending: false,
             provider_sessions: Vec::new(),
             resume_provider: ProviderKind::default(),
-            project_view_project: None,
+            group_view_group: None,
             provider_sessions_pending: false,
             provider_session_import: None,
             provider_session_error: None,
@@ -566,40 +566,40 @@ impl Waku {
         cx.notify();
     }
 
-    /// Open the palette (if needed) straight into the Projects view, where
-    /// each project lists the chats it holds. The sidebar Projects row is
+    /// Open the palette (if needed) straight into the Groups view, where
+    /// each chat group lists the chats it holds. The sidebar Groups row is
     /// the entry point.
-    pub(super) fn open_projects_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_groups_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.command_palette.open {
             self.open_command_palette(window, cx);
         }
-        self.open_command_palette_projects_view(cx);
+        self.open_command_palette_groups_view(cx);
     }
 
-    fn open_command_palette_projects_view(&mut self, cx: &mut Context<Self>) {
-        self.command_palette.view = CommandPaletteView::Projects;
-        self.command_palette.project_view_project = None;
+    fn open_command_palette_groups_view(&mut self, cx: &mut Context<Self>) {
+        self.command_palette.view = CommandPaletteView::Groups;
+        self.command_palette.group_view_group = None;
         self.command_palette.search.update(cx, |input, cx| {
-            input.set_placeholder(tr!("command_palette.projects_placeholder"), cx);
+            input.set_placeholder(tr!("command_palette.groups_placeholder"), cx);
             input.clear(cx);
         });
         self.refresh_command_palette_results("", false, cx);
         cx.notify();
     }
 
-    fn open_command_palette_project_chats_view(
+    fn open_command_palette_group_chats_view(
         &mut self,
-        project_id: Uuid,
+        group_id: Uuid,
         cx: &mut Context<Self>,
     ) {
-        self.command_palette.view = CommandPaletteView::ProjectChats;
-        self.command_palette.project_view_project = Some(project_id);
-        let project = self.command_palette_project_name();
+        self.command_palette.view = CommandPaletteView::GroupChats;
+        self.command_palette.group_view_group = Some(group_id);
+        let group = self.command_palette_group_name();
         self.command_palette.search.update(cx, |input, cx| {
             input.set_placeholder(
                 tr!(
-                    "command_palette.project_chats_placeholder",
-                    project = project
+                    "command_palette.group_chats_placeholder",
+                    group = group
                 ),
                 cx,
             );
@@ -609,15 +609,15 @@ impl Waku {
         cx.notify();
     }
 
-    fn leave_command_palette_project_chats_view(&mut self, cx: &mut Context<Self>) {
-        self.open_command_palette_projects_view(cx);
+    fn leave_command_palette_group_chats_view(&mut self, cx: &mut Context<Self>) {
+        self.open_command_palette_groups_view(cx);
     }
 
-    /// Delete the highlighted project from the Projects view. Typing a
+    /// Delete the highlighted group from the Groups view. Typing a
     /// query keeps Delete for text editing, so this only runs on an empty
     /// query — the same guard as the keybinding comment above.
-    fn delete_command_palette_project(&mut self, cx: &mut Context<Self>) {
-        if self.command_palette.view != CommandPaletteView::Projects {
+    fn delete_command_palette_group(&mut self, cx: &mut Context<Self>) {
+        if self.command_palette.view != CommandPaletteView::Groups {
             return;
         }
         if !self
@@ -630,43 +630,37 @@ impl Waku {
         {
             return;
         }
-        let Some(project_id) = self
+        let Some(group_id) = self
             .command_palette
             .results
             .get(self.command_palette.selected)
             .and_then(|item| match item.action {
-                PaletteAction::OpenProjectChats(project_id) => Some(project_id),
+                PaletteAction::OpenGroupChats(group_id) => Some(group_id),
                 _ => None,
             })
         else {
             return;
         };
-        self.delete_project(project_id, cx);
-        self.refresh_command_palette_after_project_deleted(cx);
+        self.delete_chat_group(group_id, cx);
+        self.refresh_command_palette_after_group_deleted(cx);
     }
 
-    /// Re-list the Projects view after a deletion, falling back from a
-    /// now-missing project's chat list to the project list itself.
-    pub(super) fn refresh_command_palette_after_project_deleted(
+    /// Re-list the Groups view after a deletion, falling back from a
+    /// now-missing group's chat list to the group list itself.
+    pub(super) fn refresh_command_palette_after_group_deleted(
         &mut self,
         cx: &mut Context<Self>,
     ) {
         if !self.command_palette.open {
             return;
         }
-        if self.command_palette.view == CommandPaletteView::ProjectChats
+        if self.command_palette.view == CommandPaletteView::GroupChats
             && self
                 .command_palette
-                .project_view_project
-                .is_some_and(|project_id| {
-                    !self
-                        .state
-                        .projects
-                        .iter()
-                        .any(|project| project.id == project_id)
-                })
+                .group_view_group
+                .is_some_and(|group_id| self.chat_group(group_id).is_none())
         {
-            self.open_command_palette_projects_view(cx);
+            self.open_command_palette_groups_view(cx);
             return;
         }
         let query = self
@@ -679,17 +673,12 @@ impl Waku {
         cx.notify();
     }
 
-    fn command_palette_project_name(&self) -> String {
+    fn command_palette_group_name(&self) -> String {
         self.command_palette
-            .project_view_project
-            .and_then(|project_id| {
-                self.state
-                    .projects
-                    .iter()
-                    .find(|project| project.id == project_id)
-            })
-            .map(Project::display_name)
-            .unwrap_or_else(|| tr!("project.no_project_name"))
+            .group_view_group
+            .and_then(|group_id| self.chat_group(group_id))
+            .map(|group| group.name.clone())
+            .unwrap_or_else(|| tr!("sidebar.untitled_group"))
     }
 
     fn dismiss_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -699,8 +688,8 @@ impl Waku {
             CommandPaletteView::ResumeProviders => {
                 self.leave_command_palette_resume_provider_view(cx)
             }
-            CommandPaletteView::Projects => self.close_command_palette(window, cx),
-            CommandPaletteView::ProjectChats => self.leave_command_palette_project_chats_view(cx),
+            CommandPaletteView::Groups => self.close_command_palette(window, cx),
+            CommandPaletteView::GroupChats => self.leave_command_palette_group_chats_view(cx),
         }
     }
 
@@ -711,10 +700,10 @@ impl Waku {
             CommandPaletteView::ResumeProviders => {
                 tr!("command_palette.resume_provider_placeholder")
             }
-            CommandPaletteView::Projects => tr!("command_palette.projects_placeholder"),
-            CommandPaletteView::ProjectChats => tr!(
-                "command_palette.project_chats_placeholder",
-                project = self.command_palette_project_name()
+            CommandPaletteView::Groups => tr!("command_palette.groups_placeholder"),
+            CommandPaletteView::GroupChats => tr!(
+                "command_palette.group_chats_placeholder",
+                group = self.command_palette_group_name()
             ),
         };
         self.command_palette
@@ -734,8 +723,8 @@ impl Waku {
             self.command_palette.view,
             CommandPaletteView::Resume
                 | CommandPaletteView::ResumeProviders
-                | CommandPaletteView::Projects
-                | CommandPaletteView::ProjectChats
+                | CommandPaletteView::Groups
+                | CommandPaletteView::GroupChats
         ) {
             self.refresh_command_palette_results(query, false, cx);
             cx.notify();
@@ -1151,20 +1140,22 @@ impl Waku {
             .collect()
     }
 
-    /// One row per project, most-recently-active first: the Projects view.
-    /// Typing a chat title surfaces its project, so the view doubles as a
+    /// One row per chat group, in registry order: the Groups view.
+    /// Typing a chat title surfaces its group, so the view doubles as a
     /// scoped task search.
-    fn command_palette_project_candidates(&self) -> Vec<CommandPaletteItem> {
+    fn command_palette_group_candidates(&self) -> Vec<CommandPaletteItem> {
         self.state
-            .projects
+            .chat_groups
             .iter()
             .enumerate()
-            .map(|(order, project)| {
+            .map(|(order, group)| {
                 let mut chats = self
                     .state
                     .sessions
                     .iter()
-                    .filter(|session| session.has_started() && session.project_id == project.id)
+                    .filter(|session| {
+                        session.has_started() && session.group_id == Some(group.id)
+                    })
                     .collect::<Vec<_>>();
                 chats.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
                 let recency = chats.first().map(|session| session.updated_at).unwrap_or(0);
@@ -1175,25 +1166,23 @@ impl Waku {
                     .collect::<Vec<_>>()
                     .join(" ");
                 CommandPaletteItem {
-                    section: PaletteSection::Projects,
+                    section: PaletteSection::Groups,
                     search_text: format!(
-                        "{} {} {} project folder chats conversations",
-                        Project::display_name(project),
-                        project.path.to_string_lossy(),
-                        titles,
+                        "{} {} group folder chats conversations",
+                        group.name, titles,
                     ),
-                    label: Project::display_name(project),
+                    label: group.name.clone(),
                     detail: Some(if chats.len() == 1 {
-                        tr!("command_palette.project_chat_count_one")
+                        tr!("command_palette.group_chat_count_one")
                     } else {
                         tr!(
-                            "command_palette.project_chat_count_many",
+                            "command_palette.group_chat_count_many",
                             count = chats.len()
                         )
                     }),
                     icon: PaletteIcon::Asset("icons/folder.svg"),
                     shortcut: None,
-                    action: PaletteAction::OpenProjectChats(project.id),
+                    action: PaletteAction::OpenGroupChats(group.id),
                     content_match: None,
                     order,
                     recency,
@@ -1202,9 +1191,9 @@ impl Waku {
             .collect()
     }
 
-    /// The selected project's chats, reusing the task rows so a chat looks
+    /// The selected group's chats, reusing the task rows so a chat looks
     /// the same here as in the Commands view.
-    fn command_palette_project_chat_candidates(&self, project_id: Uuid) -> Vec<CommandPaletteItem> {
+    fn command_palette_group_chat_candidates(&self, group_id: Uuid) -> Vec<CommandPaletteItem> {
         self.command_palette_task_candidates()
             .into_iter()
             .filter(|item| {
@@ -1213,12 +1202,12 @@ impl Waku {
                     .sessions
                     .iter()
                     .find(|session| session.id == *session_id)
-                    .is_some_and(|session| session.project_id == project_id))
+                    .is_some_and(|session| session.group_id == Some(group_id)))
             })
             .collect()
     }
 
-    fn refresh_command_palette_project_results(&mut self, query: &str, preserve_selection: bool) {
+    fn refresh_command_palette_group_results(&mut self, query: &str, preserve_selection: bool) {
         let query = query.trim();
         let selected_action = preserve_selection.then(|| {
             self.command_palette
@@ -1226,7 +1215,7 @@ impl Waku {
                 .get(self.command_palette.selected)
                 .map(|item| item.action.clone())
         });
-        let mut candidates = self.command_palette_project_candidates();
+        let mut candidates = self.command_palette_group_candidates();
         if query.is_empty() {
             candidates.sort_by(|a, b| b.recency.cmp(&a.recency).then(a.order.cmp(&b.order)));
         } else {
@@ -1265,7 +1254,7 @@ impl Waku {
         self.command_palette.scroll.scroll_to_item(scroll_index);
     }
 
-    fn refresh_command_palette_project_chat_results(
+    fn refresh_command_palette_group_chat_results(
         &mut self,
         query: &str,
         preserve_selection: bool,
@@ -1277,12 +1266,12 @@ impl Waku {
                 .get(self.command_palette.selected)
                 .map(|item| item.action.clone())
         });
-        let Some(project_id) = self.command_palette.project_view_project else {
+        let Some(group_id) = self.command_palette.group_view_group else {
             self.command_palette.results = Vec::new();
             self.command_palette.selected = 0;
             return;
         };
-        let mut candidates = self.command_palette_project_chat_candidates(project_id);
+        let mut candidates = self.command_palette_group_chat_candidates(group_id);
         if query.is_empty() {
             candidates.sort_by(|a, b| b.recency.cmp(&a.recency).then(a.order.cmp(&b.order)));
             candidates.truncate(MAX_TASK_RESULTS);
@@ -1445,12 +1434,12 @@ impl Waku {
                 self.refresh_command_palette_resume_provider_results(query, preserve_selection);
                 return;
             }
-            CommandPaletteView::Projects => {
-                self.refresh_command_palette_project_results(query, preserve_selection);
+            CommandPaletteView::Groups => {
+                self.refresh_command_palette_group_results(query, preserve_selection);
                 return;
             }
-            CommandPaletteView::ProjectChats => {
-                self.refresh_command_palette_project_chat_results(query, preserve_selection);
+            CommandPaletteView::GroupChats => {
+                self.refresh_command_palette_group_chat_results(query, preserve_selection);
                 return;
             }
             CommandPaletteView::Commands => {}
@@ -1864,12 +1853,12 @@ impl Waku {
                 self.load_command_palette_provider_session(summary, window, cx);
                 return;
             }
-            PaletteAction::OpenProjects => {
-                self.open_command_palette_projects_view(cx);
+            PaletteAction::OpenGroups => {
+                self.open_command_palette_groups_view(cx);
                 return;
             }
-            PaletteAction::OpenProjectChats(project_id) => {
-                self.open_command_palette_project_chats_view(project_id, cx);
+            PaletteAction::OpenGroupChats(group_id) => {
+                self.open_command_palette_group_chats_view(group_id, cx);
                 return;
             }
             _ => {}
@@ -1920,8 +1909,8 @@ impl Waku {
             | PaletteAction::ChooseResumeProvider
             | PaletteAction::SelectResumeProvider(_)
             | PaletteAction::ResumeProviderSession(_)
-            | PaletteAction::OpenProjects
-            | PaletteAction::OpenProjectChats(_) => {
+            | PaletteAction::OpenGroups
+            | PaletteAction::OpenGroupChats(_) => {
                 unreachable!("view-switching actions are handled before closing the palette")
             }
         }
@@ -1957,8 +1946,8 @@ impl Waku {
             CommandPaletteView::Resume => self.command_palette.provider_sessions_pending,
             CommandPaletteView::Commands => self.command_palette.message_search_pending,
             CommandPaletteView::ResumeProviders
-            | CommandPaletteView::Projects
-            | CommandPaletteView::ProjectChats => false,
+            | CommandPaletteView::Groups
+            | CommandPaletteView::GroupChats => false,
         };
         let show_empty_state = should_show_command_palette_empty_state(
             if resume_view {
@@ -2159,6 +2148,17 @@ impl Waku {
                 };
                 let content_match = item.content_match.clone();
                 let shortcut = item.shortcut;
+                // Groups carry an inline delete button in the Groups
+                // view. A context menu never landed here, so the action is
+                // an explicit control instead.
+                let deletable_group = match item.action {
+                    PaletteAction::OpenGroupChats(group_id)
+                        if self.command_palette.view == CommandPaletteView::Groups =>
+                    {
+                        Some(group_id)
+                    }
+                    _ => None,
+                };
                 let row = div()
                         .id(SharedString::from(format!("command-palette-row-{index}")))
                         .when(
@@ -2278,36 +2278,41 @@ impl Waku {
                                     .text_color(theme.text_tertiary)
                                     .child(shortcut),
                             )
+                        })
+                        .when_some(deletable_group, |row, group_id| {
+                            row.child(
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "palette-delete-group-{group_id}"
+                                    )))
+                                    .flex_none()
+                                    .w(px(24.0))
+                                    .h(px(24.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(6.0))
+                                    .cursor_default()
+                                    .tooltip(Tooltip::text(tr!("sidebar.delete_group")))
+                                    .child(icon(
+                                        "icons/trash.svg",
+                                        13.0,
+                                        theme.text_tertiary,
+                                    ))
+                                    .hover(|style| style.bg(theme.overlay))
+                                    .active(|style| style.bg(theme.overlay_strong))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        |_, _, cx| cx.stop_propagation(),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.delete_chat_group(group_id, cx);
+                                        this.refresh_command_palette_after_group_deleted(cx);
+                                    })),
+                            )
                         });
-                // Projects can be deleted from this menu: right-click a
-                // project row, mirroring the sidebar's chat menu.
-                let row = match item.action {
-                    PaletteAction::OpenProjectChats(project_id)
-                        if self.command_palette.view == CommandPaletteView::Projects =>
-                    {
-                        let waku = cx.entity().downgrade();
-                        let menu =
-                            self.menu_handle(format!("palette-project-{project_id}"), cx);
-                        context_menu(
-                            row,
-                            SharedString::from(format!(
-                                "palette-project-menu-{project_id}-{index}"
-                            )),
-                            &menu,
-                            move |_| {
-                                let delete_waku = waku.clone();
-                                vec![MenuItem::new(tr!("project.delete"), move |_, cx| {
-                                    let _ = delete_waku.update(cx, |waku, cx| {
-                                        waku.delete_project(project_id, cx);
-                                        waku.refresh_command_palette_after_project_deleted(cx);
-                                    });
-                                })]
-                            },
-                        )
-                    }
-                    _ => row.into_any_element(),
-                };
-                results = results.child(row);
+                results = results.child(row.into_any_element());
             }
         }
 
@@ -2337,8 +2342,8 @@ impl Waku {
                 .on_action(cx.listener(|this, _: &Confirm, window, cx| {
                     this.execute_command_palette_selection(None, window, cx)
                 }))
-                .on_action(cx.listener(|this, _: &DeleteProject, _, cx| {
-                    this.delete_command_palette_project(cx)
+                .on_action(cx.listener(|this, _: &DeleteGroup, _, cx| {
+                    this.delete_command_palette_group(cx)
                 }))
                 .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
                     this.dismiss_command_palette(window, cx)

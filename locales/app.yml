@@ -76,15 +76,15 @@ command_palette.sessions:
   en: Terminal sessions
 command_palette.providers:
   en: Providers
-command_palette.projects:
-  en: Projects
-command_palette.projects_placeholder:
-  en: Search projects…
-command_palette.project_chats_placeholder:
-  en: Search chats in %{project}…
-command_palette.project_chat_count_one:
+command_palette.groups:
+  en: Groups
+command_palette.groups_placeholder:
+  en: Search groups…
+command_palette.group_chats_placeholder:
+  en: Search chats in %{group}…
+command_palette.group_chat_count_one:
   en: 1 chat
-command_palette.project_chat_count_many:
+command_palette.group_chat_count_many:
   en: "%{count} chats"
 command_palette.commands:
   en: Commands
@@ -523,8 +523,8 @@ sidebar.today:
   en: Today
 sidebar.search:
   en: Search
-sidebar.projects:
-  en: Projects
+sidebar.groups:
+  en: Groups
 sidebar.options:
   en: Sidebar options
 sidebar.ordering:
@@ -590,12 +590,6 @@ sidebar.status_failed:
 
 project.no_project_name:
   en: No project
-project.delete:
-  en: Delete project
-project.deleted_one:
-  en: Deleted %{name} (1 chat)
-project.deleted_many:
-  en: Deleted %{name} (%{count} chats)
 onboarding.web_description:
   en: Choose a path on the daemon host, or start without a project.
 onboarding.what_should_we_build:

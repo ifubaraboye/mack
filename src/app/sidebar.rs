@@ -313,8 +313,8 @@ pub(super) fn format_time_ago(seconds: u64) -> String {
 pub(super) enum SidebarRow {
     /// Opens the window-wide command palette and scrolls with history.
     Search,
-    /// Opens the palette straight into the Projects view.
-    Projects,
+    /// Opens the palette straight into the Groups view.
+    Groups,
     /// Group header; the first row also carries the sidebar actions.
     Header(SidebarGroup),
     /// A started session.
@@ -331,7 +331,7 @@ fn sidebar_session_row_index(rows: &[SidebarRow], session_id: Uuid) -> Option<us
 fn sidebar_row_height(row: SidebarRow) -> Pixels {
     px(match row {
         SidebarRow::Search => SIDEBAR_ACTION_ROW_HEIGHT + SIDEBAR_SEARCH_BOTTOM_GAP,
-        SidebarRow::Projects => SIDEBAR_ACTION_ROW_HEIGHT + SIDEBAR_SEARCH_BOTTOM_GAP,
+        SidebarRow::Groups => SIDEBAR_ACTION_ROW_HEIGHT + SIDEBAR_SEARCH_BOTTOM_GAP,
         SidebarRow::Header(_) => SIDEBAR_GROUP_HEADER_HEIGHT + SIDEBAR_GROUP_HEADER_BOTTOM_GAP,
         SidebarRow::Session(_) => SIDEBAR_SESSION_ROW_HEIGHT,
         SidebarRow::GroupSpacer => SIDEBAR_GROUP_SPACER_HEIGHT,
@@ -705,20 +705,20 @@ impl Waku {
             .child(search)
     }
 
-    fn render_sidebar_projects(&self, cx: &mut Context<Self>) -> Div {
-        let projects = self
+    fn render_sidebar_groups(&self, cx: &mut Context<Self>) -> Div {
+        let groups = self
             .render_sidebar_action_row(
-                "sidebar-projects",
+                "sidebar-groups",
                 "icons/folder.svg",
-                tr!("sidebar.projects"),
+                tr!("sidebar.groups"),
                 cx,
             )
             .on_click(cx.listener(|this, _, window, cx| {
-                this.open_projects_palette(window, cx);
+                this.open_groups_palette(window, cx);
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.open_projects_palette(window, cx);
+                    this.open_groups_palette(window, cx);
                     cx.stop_propagation();
                 }
             }));
@@ -726,7 +726,7 @@ impl Waku {
             .w_full()
             .h(px(SIDEBAR_ACTION_ROW_HEIGHT + SIDEBAR_SEARCH_BOTTOM_GAP))
             .flex_none()
-            .child(projects)
+            .child(groups)
     }
 
     fn start_available_update(&mut self, cx: &mut Context<Self>) {
@@ -1072,14 +1072,26 @@ impl Waku {
             .collect::<Vec<_>>();
         sort_sidebar_sessions(&mut sorted_sessions, self.state.sidebar_ordering);
 
-        let mut rows = vec![SidebarRow::Search, SidebarRow::Projects];
-        // Keep the sidebar focused on conversations and recency. Projects and
-        // user-defined groups remain available through their dedicated UI,
-        // but their names do not become sidebar sections or row labels.
+        let mut rows = vec![SidebarRow::Search, SidebarRow::Groups];
+        // User-defined groups render ahead of the date sections; the date
+        // grouping below only ever sees the remainder.
+        let (chat_sections, rest) =
+            chat_group_sections(&sorted_sessions, &self.state.chat_groups);
+        for (group, sessions) in &chat_sections {
+            append_sidebar_group_rows(
+                &mut rows,
+                *group,
+                sessions,
+                self.sidebar_collapsed_groups.contains(group),
+            );
+        }
+        // The sidebar is always date-grouped: chat groups first, then one
+        // section per recency period with the project under each chat.
         let mut grouped_sessions: [Vec<Uuid>; 6] = std::array::from_fn(|_| Vec::new());
-        for session in sorted_sessions {
-            grouped_sessions[session_date_group(sidebar_session_timestamp(session), today).index()]
-                .push(session.id);
+        for session in rest {
+            grouped_sessions
+                [session_date_group(sidebar_session_timestamp(session), today).index()]
+            .push(session.id);
         }
         let mut groups = SessionDateGroup::ALL;
         if self.state.sidebar_ordering == SidebarOrdering::Oldest {
@@ -1139,12 +1151,12 @@ impl Waku {
         };
         match *row {
             SidebarRow::Search => self.render_sidebar_search(cx).into_any_element(),
-            SidebarRow::Projects => self.render_sidebar_projects(cx).into_any_element(),
+            SidebarRow::Groups => self.render_sidebar_groups(cx).into_any_element(),
             SidebarRow::Header(group) => {
                 let has_expanded_children = rows
                     .get(index + 1)
                     .is_some_and(|row| matches!(row, SidebarRow::Session(_)));
-                // Search and Projects lead; the first header carries actions.
+                // Search and Groups lead; the first header carries actions.
                 self.render_sidebar_group_header(group, index == 2, has_expanded_children, cx)
                     .into_any_element()
             }
@@ -1472,7 +1484,7 @@ impl Waku {
 
     // ── Chat groups ──────────────────────────────────────────────────────────
 
-    fn chat_group(&self, group_id: Uuid) -> Option<&ChatGroup> {
+    pub(super) fn chat_group(&self, group_id: Uuid) -> Option<&ChatGroup> {
         self.state
             .chat_groups
             .iter()
@@ -1500,6 +1512,9 @@ impl Waku {
         let group_id = group.id;
         self.state.chat_groups.push(group);
         self.move_session_to_group(session_id, group_id, cx);
+        // The member moved to a brand-new section at the top: scroll it
+        // into view before handing the name editor focus.
+        self.reveal_sidebar_session(session_id);
         self.begin_group_rename(group_id, window, cx);
         Some(group_id)
     }
@@ -1718,7 +1733,11 @@ impl Waku {
             input.set_content(name, cx);
             input.select_all_text(cx);
         });
+        // Focus eagerly and on the next frame: the renamed section mounts
+        // fresh (list re-sync, shifted rows), so a single deferred focus
+        // can lose to the previously focused session row.
         let focus = self.group_rename_input.read(cx).focus();
+        window.focus(&focus, cx);
         window.on_next_frame(move |window, cx| window.focus(&focus, cx));
         cx.notify();
     }

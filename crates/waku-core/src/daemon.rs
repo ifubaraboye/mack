@@ -20,7 +20,7 @@ use crate::computer_use::{ComputerTarget, ComputerUsePhase, ComputerUseState};
 use crate::driver::{self, DriverHandle, DriverStartOptions, SessionOptions};
 use crate::model::{
     ActivityKind, AgentSession, Checkpoint, CheckpointStatus, DriverEvent, PermissionOption,
-    Project, ProviderKind, ProviderResumeCursor, SessionStatus,
+    ProviderKind, ProviderResumeCursor, SessionStatus,
 };
 use crate::persistence::{ComposerDraftStore, PersistedState, StateStore};
 use crate::settings::DaemonSettingsStore;
@@ -463,16 +463,15 @@ impl Backend for WakuBackend {
                         .map(|session| session.project_id);
                     state.sessions.retain(|session| session.id != session_id);
                     if let Some(project_id) = project_id {
-                        let remove_project = state
-                            .projects
+                        // A project left without chats goes away, folder
+                        // backed or not: the client re-sends every project
+                        // it still lists on its next save, so a kept project
+                        // is restored while a deleted one stays gone.
+                        if !state
+                            .sessions
                             .iter()
-                            .find(|project| project.id == project_id)
-                            .is_some_and(Project::is_projectless)
-                            && !state
-                                .sessions
-                                .iter()
-                                .any(|session| session.project_id == project_id);
-                        if remove_project {
+                            .any(|session| session.project_id == project_id)
+                        {
                             state.projects.retain(|project| project.id != project_id);
                         }
                     }
