@@ -22,7 +22,8 @@ actions!(
         SelectPageDown,
         SelectPageUp,
         Confirm,
-        Dismiss
+        Dismiss,
+        DeleteProject
     ]
 );
 
@@ -59,6 +60,11 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("pagedown", SelectPageDown, Some(SEARCH_CONTEXT)),
         KeyBinding::new("pageup", SelectPageUp, Some(SEARCH_CONTEXT)),
         KeyBinding::new("enter", Confirm, Some(SEARCH_CONTEXT)),
+        // The search field owns plain Delete for text editing; with an empty
+        // query Shift+Delete reaches the palette and removes the highlighted
+        // project instead. The handler re-checks the query, so a stray
+        // keystroke while typing can never delete anything.
+        KeyBinding::new("shift-delete", DeleteProject, Some("CommandPalette")),
         // Bound at the palette, not the field: the query field's own
         // clear-on-escape outranks this (deeper context) while it has text,
         // and an empty field propagates the keystroke down to it.
@@ -591,7 +597,10 @@ impl Waku {
         let project = self.command_palette_project_name();
         self.command_palette.search.update(cx, |input, cx| {
             input.set_placeholder(
-                tr!("command_palette.project_chats_placeholder", project = project),
+                tr!(
+                    "command_palette.project_chats_placeholder",
+                    project = project
+                ),
                 cx,
             );
             input.clear(cx);
@@ -602,6 +611,72 @@ impl Waku {
 
     fn leave_command_palette_project_chats_view(&mut self, cx: &mut Context<Self>) {
         self.open_command_palette_projects_view(cx);
+    }
+
+    /// Delete the highlighted project from the Projects view. Typing a
+    /// query keeps Delete for text editing, so this only runs on an empty
+    /// query — the same guard as the keybinding comment above.
+    fn delete_command_palette_project(&mut self, cx: &mut Context<Self>) {
+        if self.command_palette.view != CommandPaletteView::Projects {
+            return;
+        }
+        if !self
+            .command_palette
+            .search
+            .read(cx)
+            .content()
+            .trim()
+            .is_empty()
+        {
+            return;
+        }
+        let Some(project_id) = self
+            .command_palette
+            .results
+            .get(self.command_palette.selected)
+            .and_then(|item| match item.action {
+                PaletteAction::OpenProjectChats(project_id) => Some(project_id),
+                _ => None,
+            })
+        else {
+            return;
+        };
+        self.delete_project(project_id, cx);
+        self.refresh_command_palette_after_project_deleted(cx);
+    }
+
+    /// Re-list the Projects view after a deletion, falling back from a
+    /// now-missing project's chat list to the project list itself.
+    pub(super) fn refresh_command_palette_after_project_deleted(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.command_palette.open {
+            return;
+        }
+        if self.command_palette.view == CommandPaletteView::ProjectChats
+            && self
+                .command_palette
+                .project_view_project
+                .is_some_and(|project_id| {
+                    !self
+                        .state
+                        .projects
+                        .iter()
+                        .any(|project| project.id == project_id)
+                })
+        {
+            self.open_command_palette_projects_view(cx);
+            return;
+        }
+        let query = self
+            .command_palette
+            .search
+            .read(cx)
+            .content()
+            .to_owned();
+        self.refresh_command_palette_results(&query, false, cx);
+        cx.notify();
     }
 
     fn command_palette_project_name(&self) -> String {
@@ -625,9 +700,7 @@ impl Waku {
                 self.leave_command_palette_resume_provider_view(cx)
             }
             CommandPaletteView::Projects => self.close_command_palette(window, cx),
-            CommandPaletteView::ProjectChats => {
-                self.leave_command_palette_project_chats_view(cx)
-            }
+            CommandPaletteView::ProjectChats => self.leave_command_palette_project_chats_view(cx),
         }
     }
 
@@ -1131,10 +1204,7 @@ impl Waku {
 
     /// The selected project's chats, reusing the task rows so a chat looks
     /// the same here as in the Commands view.
-    fn command_palette_project_chat_candidates(
-        &self,
-        project_id: Uuid,
-    ) -> Vec<CommandPaletteItem> {
+    fn command_palette_project_chat_candidates(&self, project_id: Uuid) -> Vec<CommandPaletteItem> {
         self.command_palette_task_candidates()
             .into_iter()
             .filter(|item| {
@@ -1253,7 +1323,8 @@ impl Waku {
         self.command_palette.scroll.scroll_to_item(scroll_index);
     }
 
-    fn refresh_command_palette_resume_results(&mut self, query: &str, preserve_selection: bool) {        let query = query.trim();
+    fn refresh_command_palette_resume_results(&mut self, query: &str, preserve_selection: bool) {
+        let query = query.trim();
         let selected_action = preserve_selection.then(|| {
             self.command_palette
                 .results
@@ -2088,8 +2159,7 @@ impl Waku {
                 };
                 let content_match = item.content_match.clone();
                 let shortcut = item.shortcut;
-                results = results.child(
-                    div()
+                let row = div()
                         .id(SharedString::from(format!("command-palette-row-{index}")))
                         .when(
                             starts_section && item.section == PaletteSection::Providers,
@@ -2208,8 +2278,36 @@ impl Waku {
                                     .text_color(theme.text_tertiary)
                                     .child(shortcut),
                             )
-                        }),
-                );
+                        });
+                // Projects can be deleted from this menu: right-click a
+                // project row, mirroring the sidebar's chat menu.
+                let row = match item.action {
+                    PaletteAction::OpenProjectChats(project_id)
+                        if self.command_palette.view == CommandPaletteView::Projects =>
+                    {
+                        let waku = cx.entity().downgrade();
+                        let menu =
+                            self.menu_handle(format!("palette-project-{project_id}"), cx);
+                        context_menu(
+                            row,
+                            SharedString::from(format!(
+                                "palette-project-menu-{project_id}-{index}"
+                            )),
+                            &menu,
+                            move |_| {
+                                let delete_waku = waku.clone();
+                                vec![MenuItem::new(tr!("project.delete"), move |_, cx| {
+                                    let _ = delete_waku.update(cx, |waku, cx| {
+                                        waku.delete_project(project_id, cx);
+                                        waku.refresh_command_palette_after_project_deleted(cx);
+                                    });
+                                })]
+                            },
+                        )
+                    }
+                    _ => row.into_any_element(),
+                };
+                results = results.child(row);
             }
         }
 
@@ -2238,6 +2336,9 @@ impl Waku {
                 }))
                 .on_action(cx.listener(|this, _: &Confirm, window, cx| {
                     this.execute_command_palette_selection(None, window, cx)
+                }))
+                .on_action(cx.listener(|this, _: &DeleteProject, _, cx| {
+                    this.delete_command_palette_project(cx)
                 }))
                 .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
                     this.dismiss_command_palette(window, cx)

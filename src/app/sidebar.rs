@@ -209,8 +209,6 @@ const SIDEBAR_SEARCH_BOTTOM_GAP: f32 = 10.0;
 const SIDEBAR_GROUP_HEADER_HEIGHT: f32 = 28.0;
 const SIDEBAR_GROUP_HEADER_BOTTOM_GAP: f32 = 2.0;
 const SIDEBAR_GROUP_SPACER_HEIGHT: f32 = 10.0;
-const SIDEBAR_GROUP_GUIDE_X: f32 = 15.0;
-const SIDEBAR_GROUP_CHILD_PADDING: f32 = 28.0;
 
 /// The session row's trailing time: how long the live turn has been working,
 /// or how long ago the agent last replied. A session that has never replied
@@ -333,7 +331,7 @@ fn sidebar_session_row_index(rows: &[SidebarRow], session_id: Uuid) -> Option<us
 fn sidebar_row_height(row: SidebarRow) -> Pixels {
     px(match row {
         SidebarRow::Search => SIDEBAR_ACTION_ROW_HEIGHT + SIDEBAR_SEARCH_BOTTOM_GAP,
-        SidebarRow::Projects => SIDEBAR_ACTION_ROW_HEIGHT,
+        SidebarRow::Projects => SIDEBAR_ACTION_ROW_HEIGHT + SIDEBAR_SEARCH_BOTTOM_GAP,
         SidebarRow::Header(_) => SIDEBAR_GROUP_HEADER_HEIGHT + SIDEBAR_GROUP_HEADER_BOTTOM_GAP,
         SidebarRow::Session(_) => SIDEBAR_SESSION_ROW_HEIGHT,
         SidebarRow::GroupSpacer => SIDEBAR_GROUP_SPACER_HEIGHT,
@@ -596,30 +594,28 @@ impl Waku {
             MenuAlign::BelowLeft,
             move |_| {
                 let ordering_weak = weak.clone();
-                vec![
-                    MenuItem::submenu_with_value(
-                        tr!("sidebar.ordering"),
-                        sidebar_ordering_label(ordering),
-                        move |_| {
-                            let newest_weak = ordering_weak.clone();
-                            let oldest_weak = ordering_weak.clone();
-                            vec![
-                                MenuItem::new(tr!("sidebar.ordering_newest"), move |_, cx| {
-                                    let _ = newest_weak.update(cx, |this, cx| {
-                                        this.set_sidebar_ordering(SidebarOrdering::Newest, cx);
-                                    });
-                                })
-                                .selected(ordering == SidebarOrdering::Newest),
-                                MenuItem::new(tr!("sidebar.ordering_oldest"), move |_, cx| {
-                                    let _ = oldest_weak.update(cx, |this, cx| {
-                                        this.set_sidebar_ordering(SidebarOrdering::Oldest, cx);
-                                    });
-                                })
-                                .selected(ordering == SidebarOrdering::Oldest),
-                            ]
-                        },
-                    ),
-                ]
+                vec![MenuItem::submenu_with_value(
+                    tr!("sidebar.ordering"),
+                    sidebar_ordering_label(ordering),
+                    move |_| {
+                        let newest_weak = ordering_weak.clone();
+                        let oldest_weak = ordering_weak.clone();
+                        vec![
+                            MenuItem::new(tr!("sidebar.ordering_newest"), move |_, cx| {
+                                let _ = newest_weak.update(cx, |this, cx| {
+                                    this.set_sidebar_ordering(SidebarOrdering::Newest, cx);
+                                });
+                            })
+                            .selected(ordering == SidebarOrdering::Newest),
+                            MenuItem::new(tr!("sidebar.ordering_oldest"), move |_, cx| {
+                                let _ = oldest_weak.update(cx, |this, cx| {
+                                    this.set_sidebar_ordering(SidebarOrdering::Oldest, cx);
+                                });
+                            })
+                            .selected(ordering == SidebarOrdering::Oldest),
+                        ]
+                    },
+                )]
             },
         );
         div().flex().items_center().gap(px(2.0)).child(options)
@@ -704,7 +700,7 @@ impl Waku {
             }));
         div()
             .w_full()
-            .h(px(SIDEBAR_ACTION_ROW_HEIGHT + SIDEBAR_SEARCH_BOTTOM_GAP))
+            .h(px(SIDEBAR_ACTION_ROW_HEIGHT))
             .flex_none()
             .child(search)
     }
@@ -728,7 +724,7 @@ impl Waku {
             }));
         div()
             .w_full()
-            .h(px(SIDEBAR_ACTION_ROW_HEIGHT))
+            .h(px(SIDEBAR_ACTION_ROW_HEIGHT + SIDEBAR_SEARCH_BOTTOM_GAP))
             .flex_none()
             .child(projects)
     }
@@ -1016,8 +1012,8 @@ impl Waku {
     /// [`Self::sidebar_rows`] reads: started sessions with their project,
     /// group, and recency, the ordering preference, the group registry, the
     /// collapsed-group set, and today's date.
-    fn sidebar_rows_cached(&self, today: NaiveDate, now: u64) -> Rc<Vec<SidebarRow>> {
-        let mut         fingerprint = mix(0x51de_ba5e_5eed_c0de, today.num_days_from_ce() as u64);
+    fn sidebar_rows_cached(&self, today: NaiveDate, _now: u64) -> Rc<Vec<SidebarRow>> {
+        let mut fingerprint = mix(0x51de_ba5e_5eed_c0de, today.num_days_from_ce() as u64);
         fingerprint = mix(
             fingerprint,
             match self.state.sidebar_ordering {
@@ -1059,7 +1055,7 @@ impl Waku {
             );
         }
         if self.sidebar_rows_fingerprint.get() != Some(fingerprint) {
-            *self.sidebar_rows_snapshot.borrow_mut() = Rc::new(self.sidebar_rows(today, now));
+            *self.sidebar_rows_snapshot.borrow_mut() = Rc::new(self.sidebar_rows(today, _now));
             self.sidebar_rows_fingerprint.set(Some(fingerprint));
         }
         self.sidebar_rows_snapshot.borrow().clone()
@@ -1067,7 +1063,7 @@ impl Waku {
 
     /// Snapshot the session history as a flat list of lightweight rows:
     /// chat-group sections first, then one date section per recency period.
-    fn sidebar_rows(&self, today: NaiveDate, now: u64) -> Vec<SidebarRow> {
+    fn sidebar_rows(&self, today: NaiveDate, _now: u64) -> Vec<SidebarRow> {
         let mut sorted_sessions = self
             .state
             .sessions
@@ -1077,24 +1073,13 @@ impl Waku {
         sort_sidebar_sessions(&mut sorted_sessions, self.state.sidebar_ordering);
 
         let mut rows = vec![SidebarRow::Search, SidebarRow::Projects];
-        // User-defined groups render ahead of the date sections; the
-        // date grouping below only ever sees the remainder.
-        let (chat_sections, rest) = chat_group_sections(&sorted_sessions, &self.state.chat_groups);
-        for (group, sessions) in &chat_sections {
-            append_sidebar_group_rows(
-                &mut rows,
-                *group,
-                sessions,
-                self.sidebar_collapsed_groups.contains(group),
-            );
-        }
-        // The sidebar is always date-grouped: chat groups first, then one
-        // section per recency period with the project under each chat.
+        // Keep the sidebar focused on conversations and recency. Projects and
+        // user-defined groups remain available through their dedicated UI,
+        // but their names do not become sidebar sections or row labels.
         let mut grouped_sessions: [Vec<Uuid>; 6] = std::array::from_fn(|_| Vec::new());
-        for session in rest {
-            grouped_sessions
-                [session_date_group(sidebar_session_timestamp(session), today).index()]
-            .push(session.id);
+        for session in sorted_sessions {
+            grouped_sessions[session_date_group(sidebar_session_timestamp(session), today).index()]
+                .push(session.id);
         }
         let mut groups = SessionDateGroup::ALL;
         if self.state.sidebar_ordering == SidebarOrdering::Oldest {
@@ -1156,9 +1141,9 @@ impl Waku {
             SidebarRow::Search => self.render_sidebar_search(cx).into_any_element(),
             SidebarRow::Projects => self.render_sidebar_projects(cx).into_any_element(),
             SidebarRow::Header(group) => {
-                let has_expanded_children = rows.get(index + 1).is_some_and(|row| {
-                    matches!(row, SidebarRow::Session(_))
-                });
+                let has_expanded_children = rows
+                    .get(index + 1)
+                    .is_some_and(|row| matches!(row, SidebarRow::Session(_)));
                 // Search and Projects lead; the first header carries actions.
                 self.render_sidebar_group_header(group, index == 2, has_expanded_children, cx)
                     .into_any_element()
@@ -1778,28 +1763,18 @@ impl Waku {
             session.status,
             SessionStatus::Connecting | SessionStatus::Working
         );
+        // Grouped chats align with the rest of the list: no indent, no
+        // guide rail. The group name underneath says where each one lives.
+        let left_padding = 8.0;
         let project = self
             .state
             .projects
             .iter()
             .find(|project| project.id == session.project_id);
-        // Chats filed in a group sit under its header, so they take the
-        // indented child treatment with the guide rail.
-        let indented = session
-            .group_id
-            .is_some_and(|group_id| self.chat_group(group_id).is_some());
-        let left_padding = if indented {
-            SIDEBAR_GROUP_CHILD_PADDING
-        } else {
-            8.0
-        };
         let detail_label = if let Some(group) = session
             .group_id
             .and_then(|group_id| self.chat_group(group_id))
         {
-            // A grouped chat names its group, not its folder: the group is
-            // what the section above says, and the project underneath would
-            // contradict it (e.g. projectless chats reading "No project").
             Some(SharedString::from(group.name.clone()))
         } else {
             Some(SharedString::from(

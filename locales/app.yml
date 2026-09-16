@@ -590,6 +590,12 @@ sidebar.status_failed:
 
 project.no_project_name:
   en: No project
+project.delete:
+  en: Delete project
+project.deleted_one:
+  en: Deleted %{name} (1 chat)
+project.deleted_many:
+  en: Deleted %{name} (%{count} chats)
 onboarding.web_description:
   en: Choose a path on the daemon host, or start without a project.
 onboarding.what_should_we_build:
