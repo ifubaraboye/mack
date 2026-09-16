@@ -1485,7 +1485,7 @@ session.forked_with_checkpoint_warning:
 session.forked_from_response:
   en: Forked task from this response
 session.fork_selection:
-  en: Fork selection
+  en: Fork to new chat
 session.forked_from_selection:
   en: Forked chat from the selection
 session.message_not_editable:

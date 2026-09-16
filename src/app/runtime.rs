@@ -1897,6 +1897,36 @@ impl Waku {
         anchor
     }
 
+    /// Forks from a raw text selection: resolves the anchor message through
+    /// [`Self::resolve_fork_anchor`], then delegates to
+    /// [`Self::fork_session_from_selection`], which re-validates everything.
+    /// The UI passes spans and text untouched and never decides message
+    /// ownership itself.
+    pub(super) fn fork_session_from_span_selection(
+        &mut self,
+        session_id: Uuid,
+        spans: Vec<crate::md::selection::Span>,
+        selected_text: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(source) = self
+            .state
+            .sessions
+            .iter()
+            .find(|session| session.id == session_id)
+        else {
+            self.show_toast(tr!("session.response_unavailable"));
+            cx.notify();
+            return;
+        };
+        let Some((_, message_id)) = Self::resolve_fork_anchor(source, &spans) else {
+            self.show_toast(tr!("session.response_cannot_fork"));
+            cx.notify();
+            return;
+        };
+        self.fork_session_from_selection(session_id, message_id, selected_text, cx);
+    }
+
     /// Forks the conversation prefix ending at `message_id` (inclusive) into
     /// an independent session carrying `ForkMetadata`. Pure in-memory
     /// clone/truncate — no background work, no network — followed by the
