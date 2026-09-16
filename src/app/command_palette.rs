@@ -1026,13 +1026,6 @@ impl Waku {
                     .get(&session.project_id)
                     .cloned()
                     .unwrap_or_else(|| (tr!("project.no_project_name"), String::new()));
-                let detail = {
-                    let mut details = vec![project.clone()];
-                    if Some(session.id) == self.state.selected_session {
-                        details.push(tr!("command_palette.current"));
-                    }
-                    details.join(" · ")
-                };
                 let label = session.display_title().to_owned();
                 let content_match = self
                     .command_palette
@@ -1048,7 +1041,7 @@ impl Waku {
                         session.model.as_deref().unwrap_or_default(),
                     ),
                     label,
-                    detail: Some(detail),
+                    detail: None,
                     icon: PaletteIcon::Provider(session.provider),
                     shortcut: None,
                     action: PaletteAction::SelectTask(session.id),
