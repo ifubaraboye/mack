@@ -217,6 +217,8 @@ impl CodexDriver {
             agent_preset: _,
             computer_use_enabled,
             provider_cursor,
+            // ChatGPT-only resume seed; Codex keeps its native thread resume path.
+            chatgpt_history: _,
         } = options;
         let provider_session_id = match provider_cursor {
             Some(ProviderResumeCursor::Codex { thread_id }) => Some(thread_id),
@@ -2504,6 +2506,7 @@ mod tests {
                     agent_preset: None,
                     computer_use_enabled: false,
                     provider_cursor: Some(cursor),
+                    chatgpt_history: None,
                 },
                 events,
             )
@@ -2589,6 +2592,7 @@ mod tests {
                     agent_preset: None,
                     computer_use_enabled: false,
                     provider_cursor: cursor,
+                    chatgpt_history: None,
                 },
                 events,
             )

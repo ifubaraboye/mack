@@ -3074,10 +3074,28 @@ impl Waku {
                 agent_preset,
                 computer_use_enabled: false,
                 provider_cursor: session.provider_cursor.clone(),
+                chatgpt_history: Self::chatgpt_history_seed(session),
             },
             event_wake: self.event_wake_tx.clone(),
             daemon: self.daemon.clone(),
         })
+    }
+
+    /// Builds the ChatGPT-only resume seed for a driver start from this
+    /// session's own persisted transcript. Returns `None` for other providers
+    /// and for fresh conversations. The persisted `provider_cursor` is left
+    /// untouched: the seed travels only with this start request, so different
+    /// conversations can never exchange history.
+    fn chatgpt_history_seed(session: &AgentSession) -> Option<Vec<ChatGptHistorySeed>> {
+        if session.provider != ProviderKind::ChatGpt {
+            return None;
+        }
+        let history = ChatGptHistorySeed::from_messages(&session.messages);
+        if history.is_empty() {
+            None
+        } else {
+            Some(history)
+        }
     }
 
     /// Start the session's provider runtime for a goal operation, without a

@@ -321,6 +321,80 @@ impl ProviderResumeCursor {
     }
 }
 
+/// Upper bound on the ChatGPT history seed (items, not tokens). Mirrors the
+/// ChatGPT driver's live-turn resend cap: one persisted message becomes one
+/// seed item, so the seed never exceeds what a live worker would resend.
+pub const CHATGPT_HISTORY_SEED_LIMIT: usize = 200;
+
+/// Which persisted transcript side a [`ChatGptHistorySeed`] came from. There
+/// is deliberately no `System` variant: the ChatGPT driver has no
+/// system-prompt mechanism, and the seed restores the user/assistant
+/// conversation only.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatGptHistoryRole {
+    User,
+    Assistant,
+}
+
+/// One persisted Waku transcript message in ChatGPT-driver shape. Built
+/// client-side from the hydrated `AgentSession.messages` when a ChatGPT
+/// worker starts, so a restarted worker resends the same conversation a
+/// live worker would have carried in memory. Scoped to a single
+/// conversation: the builder only ever sees that session's messages.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatGptHistorySeed {
+    pub role: ChatGptHistoryRole,
+    pub text: String,
+}
+
+impl ChatGptHistorySeed {
+    /// Converts persisted messages into seed items, oldest first.
+    ///
+    /// Skips `System` messages (no driver mapping exists), still-streaming
+    /// messages (partial text must never seed a new worker), and empty
+    /// messages. Keeps the newest [`CHATGPT_HISTORY_SEED_LIMIT`] items and
+    /// aligns the start to a `User` message so the seeded history never
+    /// opens with an orphan assistant item.
+    pub fn from_messages(messages: &[Message]) -> Vec<Self> {
+        let mut seeds: Vec<Self> = messages
+            .iter()
+            .filter_map(|message| {
+                if message.streaming {
+                    return None;
+                }
+                if message.content.trim().is_empty() {
+                    return None;
+                }
+                let role = match message.role {
+                    MessageRole::User => ChatGptHistoryRole::User,
+                    MessageRole::Assistant => ChatGptHistoryRole::Assistant,
+                    MessageRole::System => return None,
+                };
+                Some(Self {
+                    role,
+                    text: message.content.clone(),
+                })
+            })
+            .collect();
+        if seeds.len() > CHATGPT_HISTORY_SEED_LIMIT {
+            seeds.drain(..seeds.len() - CHATGPT_HISTORY_SEED_LIMIT);
+        }
+        match seeds
+            .iter()
+            .position(|seed| seed.role == ChatGptHistoryRole::User)
+        {
+            Some(first_user) => {
+                seeds.drain(..first_user);
+            }
+            // Assistant-only history has no valid conversation boundary.
+            None => seeds.clear(),
+        }
+        seeds
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum RuntimeMode {
@@ -4902,5 +4976,121 @@ mod tests {
         assert!(ProviderKind::Codex.supports_conversation_rollback());
         assert!(ProviderKind::Codex.supports_conversation_fork());
         assert!(ProviderKind::Codex.supports_model_discovery());
+    }
+
+    fn history_message(role: MessageRole, content: &str) -> Message {
+        Message::new(role, content)
+    }
+
+    #[test]
+    fn chatgpt_seed_keeps_ordered_user_assistant_turns() {
+        let messages = vec![
+            history_message(MessageRole::User, "u1"),
+            history_message(MessageRole::Assistant, "a1"),
+            history_message(MessageRole::User, "u2"),
+            history_message(MessageRole::Assistant, "a2"),
+        ];
+        let seeds = ChatGptHistorySeed::from_messages(&messages);
+        assert_eq!(seeds.len(), 4);
+        assert_eq!(
+            seeds.iter().map(|seed| seed.role).collect::<Vec<_>>(),
+            vec![
+                ChatGptHistoryRole::User,
+                ChatGptHistoryRole::Assistant,
+                ChatGptHistoryRole::User,
+                ChatGptHistoryRole::Assistant,
+            ]
+        );
+        assert_eq!(seeds[0].text, "u1");
+        assert_eq!(seeds[3].text, "a2");
+    }
+
+    #[test]
+    fn chatgpt_seed_skips_system_streaming_and_empty() {
+        let mut streaming = history_message(MessageRole::Assistant, "partial");
+        streaming.streaming = true;
+        let messages = vec![
+            history_message(MessageRole::System, "system prompt"),
+            history_message(MessageRole::User, "hello"),
+            history_message(MessageRole::User, "   "),
+            streaming,
+            history_message(MessageRole::Assistant, "done"),
+        ];
+        let seeds = ChatGptHistorySeed::from_messages(&messages);
+        assert_eq!(seeds.len(), 2);
+        assert_eq!(seeds[0].role, ChatGptHistoryRole::User);
+        assert_eq!(seeds[0].text, "hello");
+        assert_eq!(seeds[1].role, ChatGptHistoryRole::Assistant);
+        assert_eq!(seeds[1].text, "done");
+    }
+
+    #[test]
+    fn chatgpt_seed_never_opens_with_assistant() {
+        // Truncation to the newest N items can orphan an assistant message at
+        // the front; the seed must realign to the first user boundary.
+        // LIMIT + 11 messages drain 11, landing on an assistant item, so one
+        // more drops and the seed holds LIMIT - 1 items starting with a user.
+        let mut messages = Vec::new();
+        for index in 0..CHATGPT_HISTORY_SEED_LIMIT + 11 {
+            let role = if index % 2 == 0 {
+                MessageRole::User
+            } else {
+                MessageRole::Assistant
+            };
+            messages.push(history_message(role, &format!("m{index}")));
+        }
+        let seeds = ChatGptHistorySeed::from_messages(&messages);
+        assert_eq!(seeds.len(), CHATGPT_HISTORY_SEED_LIMIT - 1);
+        assert_eq!(seeds.first().unwrap().role, ChatGptHistoryRole::User);
+    }
+
+    #[test]
+    fn chatgpt_seed_without_user_has_no_valid_boundary() {
+        let messages = vec![
+            history_message(MessageRole::Assistant, "a1"),
+            history_message(MessageRole::Assistant, "a2"),
+            history_message(MessageRole::System, "s"),
+        ];
+        assert!(ChatGptHistorySeed::from_messages(&messages).is_empty());
+        assert!(ChatGptHistorySeed::from_messages(&[]).is_empty());
+    }
+
+    #[test]
+    fn chatgpt_seeds_are_scoped_to_one_sessions_messages() {
+        // Isolation falls out of the builder's signature: it only ever sees
+        // the one session's messages, so two conversations can never mix.
+        let first = vec![
+            history_message(MessageRole::User, "first question"),
+            history_message(MessageRole::Assistant, "first answer"),
+        ];
+        let second = vec![
+            history_message(MessageRole::User, "second question"),
+            history_message(MessageRole::Assistant, "second answer"),
+        ];
+        let first_seeds = ChatGptHistorySeed::from_messages(&first);
+        let second_seeds = ChatGptHistorySeed::from_messages(&second);
+        assert!(first_seeds.iter().all(|seed| !seed.text.contains("second")));
+        assert!(second_seeds.iter().all(|seed| !seed.text.contains("first")));
+    }
+
+    #[test]
+    fn chatgpt_seed_round_trips_through_json() {
+        let seeds = vec![
+            ChatGptHistorySeed {
+                role: ChatGptHistoryRole::User,
+                text: "hello".to_owned(),
+            },
+            ChatGptHistorySeed {
+                role: ChatGptHistoryRole::Assistant,
+                text: "hi".to_owned(),
+            },
+        ];
+        let json = serde_json::to_value(&seeds).unwrap();
+        assert_eq!(json[0]["role"], "user");
+        assert_eq!(json[1]["role"], "assistant");
+        assert_eq!(
+            serde_json::from_value::<Vec<ChatGptHistorySeed>>(json).unwrap(),
+            seeds
+        );
     }
 }

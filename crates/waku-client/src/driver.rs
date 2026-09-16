@@ -7,8 +7,8 @@ use crossbeam_channel::{Receiver, SendError, Sender, unbounded};
 use uuid::Uuid;
 use waku_protocol::computer_use::ComputerToolRequest;
 use waku_protocol::model::{
-    BackgroundWorkKey, DriverEvent, GoalOperation, ProviderResumeCursor, RuntimeMode,
-    UserInputAnswer,
+    BackgroundWorkKey, ChatGptHistorySeed, DriverEvent, GoalOperation, ProviderResumeCursor,
+    RuntimeMode, UserInputAnswer,
 };
 
 #[derive(Clone)]
@@ -148,6 +148,9 @@ pub struct DriverStartOptions {
     pub agent_preset: Option<String>,
     pub computer_use_enabled: bool,
     pub provider_cursor: Option<ProviderResumeCursor>,
+    /// ChatGPT-only resume history, seeded from the persisted Waku
+    /// transcript. Forwarded opaquely to the daemon; ignored otherwise.
+    pub chatgpt_history: Option<Vec<ChatGptHistorySeed>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

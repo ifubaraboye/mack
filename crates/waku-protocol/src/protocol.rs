@@ -8,8 +8,8 @@ use uuid::Uuid;
 use crate::attachments::{AttachmentUpload, StoredAttachment};
 use crate::computer_use::ComputerPermissions;
 use crate::model::{
-    AgentSession, GoalOperation, Project, ProviderKind, ProviderProbe, ProviderResumeCursor,
-    ProviderSessionHistory, ProviderSessionSummary, UserInputAnswer,
+    AgentSession, ChatGptHistorySeed, GoalOperation, Project, ProviderKind, ProviderProbe,
+    ProviderResumeCursor, ProviderSessionHistory, ProviderSessionSummary, UserInputAnswer,
 };
 use crate::persistence::{ComposerDraftChange, ComposerDrafts, SessionMessageMatch};
 use crate::provider_session::{ProviderSessionFork, ProviderSessionForkRequest};
@@ -290,6 +290,11 @@ pub struct WireDriverStartOptions {
     pub agent_preset: Option<String>,
     pub computer_use_enabled: bool,
     pub provider_cursor: Option<Value>,
+    /// ChatGPT-only resume history, seeded client-side from the persisted
+    /// Waku transcript. Every other provider ignores it and keeps its native
+    /// resume path. `None` (and empty) means a fresh conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chatgpt_history: Option<Vec<ChatGptHistorySeed>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]

@@ -125,6 +125,8 @@ impl AcpDriver {
             agent_preset: _,
             computer_use_enabled,
             provider_cursor,
+            // ChatGPT-only resume seed; this driver keeps its native resume path.
+            chatgpt_history: _,
         } = options;
         let fork_context = match &provider_cursor {
             Some(ProviderResumeCursor::Cursor { fork_context, .. }) => fork_context.clone(),
@@ -2640,6 +2642,7 @@ mod tests {
                 agent_preset: None,
                 computer_use_enabled: false,
                 provider_cursor: None,
+                chatgpt_history: None,
             },
             events,
         )
@@ -2693,6 +2696,7 @@ mod tests {
                 agent_preset: None,
                 computer_use_enabled: false,
                 provider_cursor: None,
+                chatgpt_history: None,
             },
             events,
         )
@@ -2751,6 +2755,7 @@ mod tests {
                 agent_preset: None,
                 computer_use_enabled: false,
                 provider_cursor: None,
+                chatgpt_history: None,
             },
             events,
         )

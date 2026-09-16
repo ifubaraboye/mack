@@ -216,6 +216,8 @@ impl PiDriver {
             agent_preset: _,
             computer_use_enabled,
             provider_cursor,
+            // ChatGPT-only resume seed; this driver keeps its native resume path.
+            chatgpt_history: _,
         } = options;
         if mode != RuntimeMode::FullAccess {
             return Err(anyhow!(
@@ -1761,6 +1763,7 @@ mod tests {
                 agent_preset: None,
                 computer_use_enabled: false,
                 provider_cursor: None,
+                chatgpt_history: None,
             },
             events,
         )
@@ -2008,6 +2011,7 @@ mod tests {
                 agent_preset: None,
                 computer_use_enabled: false,
                 provider_cursor: None,
+                chatgpt_history: None,
             },
             events,
         )

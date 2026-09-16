@@ -40,6 +40,7 @@ pub(crate) fn start_remote(
                 .provider_cursor
                 .map(serde_json::to_value)
                 .transpose()?,
+            chatgpt_history: options.chatgpt_history,
         },
     };
     let supports_steer = match client.request(session_id, runtime_id, command) {

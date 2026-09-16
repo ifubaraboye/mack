@@ -24,8 +24,8 @@ use crossbeam_channel::{Receiver, SendError, Sender, unbounded};
 
 use crate::computer_use::ComputerToolRequest;
 use crate::model::{
-    BackgroundWorkKey, DriverEvent, GoalOperation, ProviderKind, ProviderResumeCursor, RuntimeMode,
-    UserInputAnswer,
+    BackgroundWorkKey, ChatGptHistorySeed, DriverEvent, GoalOperation, ProviderKind,
+    ProviderResumeCursor, RuntimeMode, UserInputAnswer,
 };
 
 /// Provider events remain synchronous to send from reader threads, while the
@@ -194,6 +194,10 @@ pub struct DriverStartOptions {
     pub agent_preset: Option<String>,
     pub computer_use_enabled: bool,
     pub provider_cursor: Option<ProviderResumeCursor>,
+    /// ChatGPT-only resume history, seeded from the persisted Waku
+    /// transcript. Consumed only by the ChatGPT driver; every other driver
+    /// ignores it and keeps its native resume path.
+    pub chatgpt_history: Option<Vec<ChatGptHistorySeed>>,
 }
 
 /// The subset of `DriverStartOptions` a user can change without starting a new

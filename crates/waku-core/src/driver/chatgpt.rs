@@ -44,7 +44,8 @@ use crate::chatgpt_protocol::{
 use crate::chatgpt_session::{
     CURL_PATH, ChatGptSessionManager, FreshAuth, default_session_manager,
 };
-use crate::model::{DriverEvent, ProviderResumeCursor};
+use crate::model::CHATGPT_HISTORY_SEED_LIMIT;
+use crate::model::{ChatGptHistoryRole, ChatGptHistorySeed, DriverEvent, ProviderResumeCursor};
 
 /// Total curl wall-clock budget per turn attempt. Streaming turns run for
 /// minutes; unary auth calls keep their own 20s budget elsewhere.
@@ -55,7 +56,9 @@ const STREAM_MAX_TIME_SECS: &str = "600";
 const ERROR_BODY_CAP_BYTES: usize = 64 * 1024;
 /// Client-side input history cap (items, not tokens). Oldest turns drain
 /// first; indices stay consistent via [`Worker::enforce_history_cap`].
-const MAX_HISTORY_ITEMS: usize = 200;
+/// Single source of truth lives in the protocol crate so the restart seed
+/// builder and the live worker can never drift apart.
+const MAX_HISTORY_ITEMS: usize = CHATGPT_HISTORY_SEED_LIMIT;
 
 // ---------------------------------------------------------------------------
 // Streaming transport (curl with secrets on stdin, like `usage.rs`)
@@ -464,15 +467,22 @@ impl ChatGptDriver {
             service_tier: options.service_tier,
         }));
         let (commands, incoming) = unbounded();
-        let worker = Worker {
+        // Restart resume: rebuild the resend-history a live worker would
+        // have carried from the persisted Waku transcript seed. Post-seed
+        // behavior is identical to a worker that had remained alive — the
+        // next prompt still appends exactly once via `execute_turn`.
+        let (history, turn_starts) =
+            Worker::seed_history_from_transcript(options.chatgpt_history.unwrap_or_default());
+        let mut worker = Worker {
             manager,
             transport,
             events,
             shared: shared.clone(),
             options: live.clone(),
-            history: Vec::new(),
-            turn_starts: Vec::new(),
+            history,
+            turn_starts,
         };
+        worker.enforce_history_cap();
         std::thread::Builder::new()
             .name("waku-chatgpt-driver".into())
             .spawn(move || worker.run(incoming))
@@ -784,6 +794,36 @@ impl Worker {
                 }
             }
         }
+    }
+
+    /// Rebuilds the worker's resend-history from the persisted-transcript
+    /// seed carried on the start request. Item shapes match
+    /// [`Worker::commit_history`] exactly — user items open turns recorded
+    /// in `turn_starts`, assistant items take the rebuilt-text shape a live
+    /// worker keeps — so the next turn's request is identical to one from a
+    /// worker that had never restarted. No text is logged here; the seed
+    /// only flows into the request body like live-turn history does.
+    fn seed_history_from_transcript(seeds: Vec<ChatGptHistorySeed>) -> (Vec<Value>, Vec<usize>) {
+        let mut history = Vec::with_capacity(seeds.len());
+        let mut turn_starts = Vec::new();
+        for seed in seeds {
+            match seed.role {
+                ChatGptHistoryRole::User => {
+                    turn_starts.push(history.len());
+                    history.push(serde_json::json!({
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": seed.text}],
+                    }));
+                }
+                ChatGptHistoryRole::Assistant => {
+                    history.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": seed.text}],
+                    }));
+                }
+            }
+        }
+        (history, turn_starts)
     }
 
     /// Appends a completed turn (user message plus endpoint output items) to
@@ -1171,6 +1211,7 @@ mod tests {
             agent_preset: None,
             computer_use_enabled: false,
             provider_cursor: None,
+            chatgpt_history: None,
         }
     }
 
@@ -1704,6 +1745,178 @@ mod tests {
             }
         }
         assert!(saw_finish, "cancel settled the turn as stopped");
+    }
+
+    fn persisted_transcript(turns: &[(&str, &str)]) -> Vec<crate::model::Message> {
+        let mut messages = Vec::new();
+        for (user, assistant) in turns {
+            messages.push(crate::model::Message::new(
+                crate::model::MessageRole::User,
+                (*user).to_owned(),
+            ));
+            messages.push(crate::model::Message::new(
+                crate::model::MessageRole::Assistant,
+                (*assistant).to_owned(),
+            ));
+        }
+        messages
+    }
+
+    fn live_worker_history(turns: &[(&str, &str)]) -> (Vec<Value>, Vec<usize>) {
+        // A worker that stayed alive through these turns: each completed turn
+        // commits its user message plus the streamed-text assistant rebuild
+        // (empty endpoint output items, like the mock `response.completed`
+        // frames produce).
+        let (events, _receiver) = test_event_channel();
+        let mut worker = Worker {
+            manager: authenticated_manager(),
+            transport: Arc::new(MockTransport::with_streams(Vec::new())),
+            events,
+            shared: Arc::new(Shared {
+                body: Mutex::new(None),
+                generation: AtomicU64::new(0),
+                busy: AtomicBool::new(false),
+            }),
+            options: Arc::new(Mutex::new(LiveOptions::default())),
+            history: Vec::new(),
+            turn_starts: Vec::new(),
+        };
+        for (user, assistant) in turns {
+            let user_message = serde_json::json!({
+                "role": "user",
+                "content": [{"type": "input_text", "text": *user}],
+            });
+            worker.commit_history(user_message, Vec::new(), (*assistant).to_owned());
+        }
+        (worker.history, worker.turn_starts)
+    }
+
+    #[test]
+    fn empty_seed_starts_with_empty_history() {
+        let (history, turn_starts) = Worker::seed_history_from_transcript(Vec::new());
+        assert!(history.is_empty());
+        assert!(turn_starts.is_empty());
+    }
+
+    #[test]
+    fn seed_item_shapes_match_commit_history() {
+        let seeds = vec![
+            ChatGptHistorySeed {
+                role: ChatGptHistoryRole::User,
+                text: "u1".to_owned(),
+            },
+            ChatGptHistorySeed {
+                role: ChatGptHistoryRole::Assistant,
+                text: "a1".to_owned(),
+            },
+        ];
+        let (history, turn_starts) = Worker::seed_history_from_transcript(seeds);
+        assert_eq!(turn_starts, vec![0]);
+        assert_eq!(
+            history[0],
+            serde_json::json!({
+                "role": "user",
+                "content": [{"type": "input_text", "text": "u1"}],
+            })
+        );
+        assert_eq!(
+            history[1],
+            serde_json::json!({
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "a1"}],
+            })
+        );
+    }
+
+    #[test]
+    fn restarted_worker_resends_the_live_workers_history() {
+        // Worker A lives through three turns; Worker B is seeded from the
+        // persisted transcript of those same turns. The next turn's request
+        // input must be identical — this is the restart bug, proven fixed.
+        let turns = [("u1", "a1"), ("u2", "a2"), ("u3", "a3")];
+        let (live_history, live_starts) = live_worker_history(&turns);
+        let seeds = ChatGptHistorySeed::from_messages(&persisted_transcript(&turns));
+        let (seeded_history, seeded_starts) = Worker::seed_history_from_transcript(seeds);
+        assert_eq!(seeded_history, live_history);
+        assert_eq!(seeded_starts, live_starts);
+        assert_eq!(seeded_starts, vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn seeded_worker_appends_the_new_prompt_exactly_once() {
+        let seeds = ChatGptHistorySeed::from_messages(&persisted_transcript(&[("u1", "a1")]));
+        let completed = sse_completed_frame();
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![completed.as_bytes()],
+        )]));
+        let (events, receiver) = test_event_channel();
+        let mut options = start_options(Some("gpt-5.5"));
+        options.chatgpt_history = Some(seeds);
+        let driver = ChatGptDriver::start_with_manager(
+            options,
+            events,
+            authenticated_manager(),
+            transport.clone(),
+        )
+        .unwrap();
+        driver.prompt("u2".to_owned());
+        let events = collect_until_finished(&receiver);
+        assert!(matches!(
+            events.last(),
+            Some(DriverEvent::TurnFinished { success: true, .. })
+        ));
+        let requests = transport.requests.lock();
+        assert_eq!(requests.len(), 1);
+        let input = requests[0].body["input"].as_array().unwrap();
+        assert_eq!(
+            input.len(),
+            3,
+            "seed plus exactly one new prompt: {input:?}"
+        );
+        assert_eq!(input[0]["content"][0]["text"], "u1");
+        assert_eq!(input[1]["content"][0]["text"], "a1");
+        assert_eq!(input[2]["content"][0]["text"], "u2");
+    }
+
+    #[test]
+    fn seeded_history_reuses_the_live_history_cap() {
+        // 250 single-message turns seed 250 items; the existing cap keeps the
+        // newest 200 with turn indices still pointing at user items.
+        let turns = (0..250)
+            .map(|index| (format!("u{index}"), format!("a{index}")))
+            .collect::<Vec<_>>();
+        let refs = turns
+            .iter()
+            .map(|(user, assistant)| (user.as_str(), assistant.as_str()))
+            .collect::<Vec<_>>();
+        let seeds = ChatGptHistorySeed::from_messages(&persisted_transcript(&refs));
+        assert_eq!(seeds.len(), CHATGPT_HISTORY_SEED_LIMIT);
+        assert_eq!(seeds.first().unwrap().role, ChatGptHistoryRole::User);
+        let (mut history, mut turn_starts) = Worker::seed_history_from_transcript(seeds);
+        // Seed shape mirrors commit_history exactly, so enforcing the live
+        // cap on it is the same operation a long-lived worker performs.
+        let (events, _receiver) = test_event_channel();
+        let mut worker = Worker {
+            manager: authenticated_manager(),
+            transport: Arc::new(MockTransport::with_streams(Vec::new())),
+            events,
+            shared: Arc::new(Shared {
+                body: Mutex::new(None),
+                generation: AtomicU64::new(0),
+                busy: AtomicBool::new(false),
+            }),
+            options: Arc::new(Mutex::new(LiveOptions::default())),
+            history: std::mem::take(&mut history),
+            turn_starts: std::mem::take(&mut turn_starts),
+        };
+        worker.enforce_history_cap();
+        assert!(worker.history.len() <= MAX_HISTORY_ITEMS);
+        assert!(!worker.turn_starts.is_empty());
+        assert_eq!(worker.turn_starts[0], 0);
+        for start in &worker.turn_starts {
+            assert_eq!(worker.history[*start]["role"], "user");
+        }
     }
 
     #[test]

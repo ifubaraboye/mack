@@ -1412,6 +1412,7 @@ mod tests {
                         agent_preset: None,
                         computer_use_enabled: false,
                         provider_cursor: None,
+                        chatgpt_history: None,
                     },
                 },
             )
@@ -1479,6 +1480,7 @@ mod tests {
                         agent_preset: None,
                         computer_use_enabled: false,
                         provider_cursor: None,
+                        chatgpt_history: None,
                     },
                 },
             )
@@ -1596,6 +1598,7 @@ mod tests {
                         agent_preset: None,
                         computer_use_enabled: false,
                         provider_cursor: None,
+                        chatgpt_history: None,
                     },
                 },
             )
@@ -2255,6 +2258,7 @@ mod tests {
             agent_preset: None,
             computer_use_enabled: false,
             provider_cursor: None,
+            chatgpt_history: None,
         }
     }
 }

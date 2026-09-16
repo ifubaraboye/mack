@@ -397,6 +397,8 @@ impl OpenCode2Driver {
             agent_preset,
             computer_use_enabled,
             provider_cursor,
+            // ChatGPT-only resume seed; this driver keeps its native resume path.
+            chatgpt_history: _,
         } = options;
 
         let resumed = match provider_cursor {
@@ -2998,6 +3000,7 @@ mod tests {
                 agent_preset: None,
                 computer_use_enabled: false,
                 provider_cursor: None,
+                chatgpt_history: None,
             },
             events,
         )
@@ -3063,6 +3066,7 @@ mod tests {
                     agent_preset: None,
                     computer_use_enabled: true,
                     provider_cursor: None,
+                    chatgpt_history: None,
                 },
                 events,
             )
