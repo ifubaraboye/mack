@@ -239,7 +239,6 @@ impl Render for Waku {
         let task_switcher = self.render_task_switcher(window, cx);
         if self.settings_page.is_some() {
             let command_palette = self.render_command_palette(window, cx);
-            let commit_dialog = self.render_commit_dialog(cx);
             let goal_dialog = self.render_goal_dialog(window, cx);
             let toast = self.render_active_toast(cx);
             let content = div()
@@ -257,7 +256,6 @@ impl Render for Waku {
                 .child(self.render_settings(window, cx))
                 .children(toast)
                 .children(command_palette)
-                .children(commit_dialog)
                 .children(goal_dialog)
                 .children(image_preview)
                 .children(task_switcher)
@@ -273,7 +271,6 @@ impl Render for Waku {
         let permission = self.render_permission(cx);
         let computer_use = self.render_computer_use_overlay(window, cx);
         let command_palette = self.render_command_palette(window, cx);
-        let commit_dialog = self.render_commit_dialog(cx);
         let goal_dialog = self.render_goal_dialog(window, cx);
         let toast = self.render_active_toast(cx);
         let content = div()
@@ -399,7 +396,6 @@ impl Render for Waku {
             })
             .children(computer_use)
             .children(command_palette)
-            .children(commit_dialog)
             .children(goal_dialog)
             .children(image_preview)
             .children(task_switcher)

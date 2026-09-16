@@ -181,13 +181,8 @@ fn task_switcher_title(session: &AgentSession) -> String {
     }
 }
 
-fn task_switcher_branch(workspace: &SessionWorkspace) -> Option<&str> {
-    match workspace {
-        SessionWorkspace::Local => None,
-        SessionWorkspace::NewWorktree { base_branch } => base_branch.as_deref(),
-        SessionWorkspace::Worktree { branch, .. } => Some(branch.as_str()),
-    }
-    .filter(|branch| !branch.is_empty())
+fn task_switcher_branch(_workspace: &SessionWorkspace) -> Option<&str> {
+    None
 }
 
 fn task_switcher_status_icon(status: SessionStatus) -> Option<&'static str> {

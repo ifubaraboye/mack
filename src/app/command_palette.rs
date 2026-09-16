@@ -894,23 +894,13 @@ impl Waku {
                     .get(&session.project_id)
                     .cloned()
                     .unwrap_or_else(|| (tr!("project.no_project_name"), String::new()));
-                let (workspace_path, branch) = match &session.workspace {
-                    SessionWorkspace::Local => (String::new(), None),
-                    SessionWorkspace::NewWorktree { base_branch } => {
-                        (String::new(), base_branch.as_deref())
+                let detail = {
+                    let mut details = vec![project.clone()];
+                    if Some(session.id) == self.state.selected_session {
+                        details.push(tr!("command_palette.current"));
                     }
-                    SessionWorkspace::Worktree { path, branch } => {
-                        (path.to_string_lossy().into_owned(), Some(branch.as_str()))
-                    }
+                    details.join(" · ")
                 };
-                let mut details = vec![project.clone()];
-                if let Some(branch) = branch {
-                    details.push(format!("#{branch}"));
-                }
-                if Some(session.id) == self.state.selected_session {
-                    details.push(tr!("command_palette.current"));
-                }
-                let detail = details.join(" · ");
                 let label = session.display_title().to_owned();
                 let content_match = self
                     .command_palette
@@ -920,8 +910,7 @@ impl Waku {
                 CommandPaletteItem {
                     section: PaletteSection::Tasks,
                     search_text: format!(
-                        "{label} {project} {project_path} {workspace_path} {} {} {} {} task session chat conversation",
-                        branch.unwrap_or_default(),
+                        "{label} {project} {project_path} {} {} {} task session chat conversation",
                         session.provider.short_name(),
                         session.provider.display_name(),
                         session.model.as_deref().unwrap_or_default(),

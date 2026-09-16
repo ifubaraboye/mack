@@ -584,21 +584,6 @@ composer.suggestions: 输入建议
 composer.loading_suggestions: 正在加载建议…
 composer.remove_attachment: 移除 %{name}
 composer.queued_message_actions: 后续消息操作
-branches.detached_head: 游离 HEAD
-branches.search_project: 搜索 %{project} 的分支
-branches.switching: 正在切换…
-branches.create_and_checkout: 创建并切换到新分支
-branches.create_hint: 按 Return 创建 · 按 Esc 取消
-branches.none_found: 未找到分支
-branches.create_and_checkout_ellipsis: 创建并切换到新分支…
-branches.title: 分支
-branches.choose: 选择分支
-branches.checked_out_elsewhere: 已在另一个工作树中检出
-workspace.work_in: 工作位置
-workspace.local: 本地
-workspace.new_worktree: 新建工作树
-workspace.workspace: 工作区
-workspace.worktree: 工作树
 terminal.starting: 正在启动终端…
 project.add_project: 添加项目
 errors.remote_project_picker: 添加守护进程主机上的项目需要远程路径选择器，但该功能尚不可用
@@ -717,14 +702,6 @@ right_panel.resize: 调整右侧面板宽度
 right_panel.tabs: 右侧面板标签页
 right_panel.hide: 隐藏右侧面板
 right_panel.close_tab: 关闭%{title}
-open_in.open: 用%{app}打开项目
-open_in.choose: 选择打开项目的应用…
-environment.title: 环境
-environment.summary: 环境和后台工作
-environment.changes: 更改
-environment.commit_or_push: 提交或推送
-environment.task_id: 任务 ID
-environment.agent_cli_thread_id: 智能体 CLI 线程 ID
 commit.message_placeholder: 提交信息（留空以自动生成）…
 commit.message: 提交信息
 commit.include_unstaged: 包含未暂存的更改

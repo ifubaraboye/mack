@@ -1255,38 +1255,6 @@ composer.loading_suggestions:
 composer.remove_attachment:
   en: Remove %{name}
 
-branches.detached_head:
-  en: Detached HEAD
-branches.search_project:
-  en: Search %{project} branches
-branches.switching:
-  en: Switching…
-branches.create_and_checkout:
-  en: Create and checkout new branch
-branches.create_hint:
-  en: Press Return to create · Esc to cancel
-branches.none_found:
-  en: No branches found
-branches.create_and_checkout_ellipsis:
-  en: Create and checkout new branch…
-branches.title:
-  en: Branches
-branches.choose:
-  en: Choose a branch
-branches.checked_out_elsewhere:
-  en: Checked out in another worktree
-
-workspace.work_in:
-  en: Work in
-workspace.local:
-  en: Local
-workspace.new_worktree:
-  en: New worktree
-workspace.workspace:
-  en: workspace
-workspace.worktree:
-  en: Worktree
-
 terminal.starting:
   en: Starting terminal…
 
@@ -1528,24 +1496,6 @@ right_panel.hide:
   en: Hide right panel
 right_panel.close_tab:
   en: Close %{title}
-
-open_in.open:
-  en: Open project in %{app}
-open_in.choose:
-  en: Open project in…
-
-environment.title:
-  en: Environment
-environment.summary:
-  en: Environment and background work
-environment.changes:
-  en: Changes
-environment.commit_or_push:
-  en: Commit or push
-environment.task_id:
-  en: Task ID
-environment.agent_cli_thread_id:
-  en: Agent CLI thread ID
 
 commit.message_placeholder:
   en: Commit message (leave blank to generate)…

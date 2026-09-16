@@ -8,9 +8,6 @@ const OUTPUT_CACHE_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 /// the settle; a first token that slow is a wake in progress, not a no-show.
 const BACKGROUND_RESUME_GRACE: Duration = Duration::from_secs(30);
 const BACKGROUND_SUMMARY_MENU_ID: &str = "background-work-summary";
-const OPEN_IN_MENU_ID: &str = "open-in-app";
-const TASK_ID_COPY_CONTROL_ID: &str = "background-summary-copy-task-id";
-const AGENT_THREAD_ID_COPY_CONTROL_ID: &str = "background-summary-copy-agent-thread-id";
 
 #[derive(Default)]
 pub(super) struct BackgroundWorkRegistry {
@@ -45,36 +42,6 @@ struct BackgroundSummaryEntry {
     item: BackgroundWorkItem,
     row_focus: FocusHandle,
     stop_focus: FocusHandle,
-}
-
-#[derive(Clone)]
-struct EnvironmentSummary {
-    commit_status: Option<String>,
-    commit_focus: FocusHandle,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TaskIdentifiers {
-    task_id: Uuid,
-    agent_cli_thread_id: Option<String>,
-}
-
-#[derive(Clone)]
-struct TaskIdentifierSection {
-    values: TaskIdentifiers,
-    task_id_copy_focus: FocusHandle,
-    agent_cli_thread_id_copy_focus: FocusHandle,
-    task_id_copied: bool,
-    agent_cli_thread_id_copied: bool,
-}
-
-impl From<&AgentSession> for TaskIdentifiers {
-    fn from(session: &AgentSession) -> Self {
-        Self {
-            task_id: session.id,
-            agent_cli_thread_id: session.provider_native_id().map(str::to_owned),
-        }
-    }
 }
 
 impl BackgroundWorkRegistry {
@@ -735,14 +702,6 @@ impl Waku {
     pub(super) fn render_background_work_summary(&self, cx: &mut Context<Self>) -> AnyElement {
         let session = self.selected_session();
         let session_id = session.map(|session| session.id);
-        let identifiers = session.map(|session| TaskIdentifierSection {
-            values: TaskIdentifiers::from(session),
-            task_id_copy_focus: self.transcript_control_focus(TASK_ID_COPY_CONTROL_ID, cx),
-            agent_cli_thread_id_copy_focus: self
-                .transcript_control_focus(AGENT_THREAD_ID_COPY_CONTROL_ID, cx),
-            task_id_copied: self.control_was_copied(TASK_ID_COPY_CONTROL_ID),
-            agent_cli_thread_id_copied: self.control_was_copied(AGENT_THREAD_ID_COPY_CONTROL_ID),
-        });
         let entries = session_id
             .and_then(|session_id| self.background_work.get(&session_id))
             .map(|registry| {
@@ -768,41 +727,15 @@ impl Waku {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let workspace_path = session
-            .and_then(|session| self.workspace_path_for_session(session))
-            .or_else(|| {
-                self.selected_project()
-                    .map(|project| project.path.as_path())
-            });
-        let snapshot = workspace_path.and_then(|path| {
-            self.visible_branch_snapshot
-                .as_ref()
-                .filter(|(snapshot_path, _)| snapshot_path == path)
-                .map(|(_, snapshot)| snapshot)
-        });
-        let change_counts = snapshot
-            .map(|snapshot| (snapshot.additions, snapshot.deletions))
-            .filter(|(additions, deletions)| *additions > 0 || *deletions > 0);
-        let environment = Some(EnvironmentSummary {
-            commit_status: self.commit_operation_status_label(),
-            commit_focus: self.transcript_control_focus("environment-summary-commit", cx),
-        });
         let (processes, agents) = session_id
             .map(|session_id| self.background_work_counts(session_id))
             .unwrap_or_default();
         let has_live_work = processes > 0 || agents > 0;
         let summary = background_work_count_summary(processes, agents);
         let theme = Theme::current(cx);
-        let refresh_weak = cx.entity().downgrade();
-        let handle = self.menu_handle_with(BACKGROUND_SUMMARY_MENU_ID, cx, move |open, _, cx| {
-            if open {
-                let _ = refresh_weak.update(cx, |this, cx| {
-                    this.refresh_selected_branch_snapshot(cx);
-                });
-            }
-        });
+        let handle = self.menu_handle(BACKGROUND_SUMMARY_MENU_ID, cx);
         let trigger = div()
-            .id("environment-summary-trigger")
+            .id("background-summary-trigger")
             .size(px(28.0))
             .relative()
             .rounded(px(7.0))
@@ -820,7 +753,7 @@ impl Waku {
             .hover(|style| style.bg(theme.overlay))
             .when(handle.is_open(), |style| style.bg(theme.overlay_strong))
             .tooltip(Tooltip::text(if summary.is_empty() {
-                tr!("environment.summary")
+                tr!("background.title")
             } else {
                 summary
             }))
@@ -834,37 +767,6 @@ impl Waku {
                         .child(pulse_dot(5.0, theme.accent)),
                 )
             });
-        let git_status = change_counts.map(|(additions, deletions)| {
-            div()
-                .id("header-git-status")
-                .h(px(28.0))
-                .px(px(7.0))
-                .rounded(px(7.0))
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .cursor_default()
-                .text_size(sp(12.5))
-                .font_weight(FontWeight::MEDIUM)
-                .when(additions > 0, |button| {
-                    button.child(
-                        div()
-                            .text_color(theme.success)
-                            .child(format!("+{additions}")),
-                    )
-                })
-                .when(deletions > 0, |button| {
-                    button.child(
-                        div()
-                            .text_color(theme.danger)
-                            .child(format!("-{deletions}")),
-                    )
-                })
-                .tooltip(Tooltip::text(tr!("environment.changes")))
-                .into_any_element()
-        });
-        let open_in = self.render_open_in_control(workspace_path, cx);
         let entries = Rc::new(entries);
         let weak = cx.entity().downgrade();
         let info = popover(
@@ -875,8 +777,6 @@ impl Waku {
                 render_background_summary_card(
                     handle,
                     session_id.unwrap_or_else(Uuid::nil),
-                    identifiers.clone(),
-                    environment.clone(),
                     entries.clone(),
                     weak.clone(),
                     cx,
@@ -884,15 +784,13 @@ impl Waku {
             },
         );
         div()
-            .id("header-environment-controls")
+            .id("header-background-controls")
             .tab_group()
             .tab_stop(false)
             .flex_none()
             .flex()
             .items_center()
             .gap(px(8.0))
-            .children(git_status)
-            .children(open_in)
             .child(info)
             .into_any_element()
     }
@@ -914,162 +812,6 @@ impl Waku {
             });
         })
         .detach();
-    }
-
-    /// The app the primary "open in" button targets: the persisted choice
-    /// while it is still installed, otherwise the file manager.
-    fn preferred_open_in_app(&self) -> Option<&crate::platform::ExternalApp> {
-        self.state
-            .open_in_app
-            .as_deref()
-            .and_then(|id| self.open_in_apps.iter().find(|app| app.id == id))
-            .or_else(|| self.open_in_apps.iter().find(|app| app.id == "finder"))
-            .or_else(|| self.open_in_apps.first())
-    }
-
-    /// Open the workspace folder in the catalog app `app_id` and remember it
-    /// as the preferred target. Launch Services delivers the open
-    /// asynchronously, so this one-shot action never blocks a frame.
-    fn open_workspace_in_app(&mut self, path: &Path, app_id: &str, cx: &mut Context<Self>) {
-        let Some(bundle_id) = self
-            .open_in_apps
-            .iter()
-            .find(|app| app.id == app_id)
-            .map(|app| app.bundle_id)
-        else {
-            return;
-        };
-        crate::platform::open_path_in_app(path, bundle_id);
-        if self.state.open_in_app.as_deref() != Some(app_id) {
-            self.state.open_in_app = Some(app_id.to_owned());
-            self.save();
-            cx.notify();
-        }
-    }
-
-    /// The split "open project in app" control: an icon button launching the
-    /// preferred app, and a chevron opening the menu of every installed
-    /// target. Hidden while there is no local folder to open or app detection
-    /// has not landed yet.
-    fn render_open_in_control(
-        &self,
-        workspace_path: Option<&Path>,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if self.daemon.is_remote() {
-            return None;
-        }
-        let path: Rc<Path> = Rc::from(workspace_path?);
-        let preferred = self.preferred_open_in_app()?;
-        let preferred_id = preferred.id;
-        let preferred_label = preferred.label;
-        let preferred_icon = preferred.icon.clone();
-        let apps = self.open_in_apps.clone();
-        let theme = Theme::current(cx);
-        let handle = self.menu_handle(OPEN_IN_MENU_ID, cx);
-        let focus = self.transcript_control_focus("header-open-in", cx);
-
-        let primary_path = path.clone();
-        let key_path = path.clone();
-        let primary = div()
-            .id("header-open-in")
-            .track_focus(&focus)
-            .tab_index(0)
-            .h_full()
-            .px(px(6.0))
-            .rounded_tl(px(6.0))
-            .rounded_bl(px(6.0))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_default()
-            .focus_visible(|style| {
-                style
-                    .bg(theme.overlay)
-                    .border_1()
-                    .border_color(theme.accent)
-            })
-            .hover(|style| style.bg(theme.overlay))
-            .active(|style| style.bg(theme.overlay_strong))
-            .tooltip(Tooltip::text(tr!("open_in.open", app = preferred_label)))
-            .child(img(preferred_icon).size(px(16.0)).flex_none())
-            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.open_workspace_in_app(&primary_path, preferred_id, cx);
-            }))
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.open_workspace_in_app(&key_path, preferred_id, cx);
-                    cx.stop_propagation();
-                }
-            }));
-
-        let caret = div()
-            .id("header-open-in-caret")
-            .h_full()
-            .w(px(18.0))
-            .rounded_tr(px(6.0))
-            .rounded_br(px(6.0))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_default()
-            .focus_visible(|style| {
-                style
-                    .bg(theme.overlay)
-                    .border_1()
-                    .border_color(theme.accent)
-            })
-            .hover(|style| style.bg(theme.overlay))
-            .when(handle.is_open(), |style| style.bg(theme.overlay_strong))
-            .tooltip(Tooltip::text(tr!("open_in.choose")))
-            .child(icon("icons/chevron-down.svg", 11.0, theme.text_tertiary));
-
-        let weak = cx.entity().downgrade();
-        let menu = dropdown_menu(
-            caret,
-            "header-open-in-menu",
-            &handle,
-            MenuAlign::BelowRight,
-            move |_| {
-                apps.iter()
-                    .map(|app| {
-                        let weak = weak.clone();
-                        let path = path.clone();
-                        let app_id = app.id;
-                        MenuItem::new(app.label, move |_, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                this.open_workspace_in_app(&path, app_id, cx);
-                            });
-                        })
-                        .image(app.icon.clone())
-                        .selected(app.id == preferred_id)
-                    })
-                    .collect()
-            },
-        );
-
-        // One outlined group, so the two segments read as a single split
-        // button even though only the hovered half fills.
-        Some(
-            div()
-                .h(px(28.0))
-                .rounded(px(7.0))
-                .border_1()
-                .border_color(theme.border_strong)
-                .flex_none()
-                .flex()
-                .items_center()
-                .child(primary)
-                .child(div().w(px(1.0)).h_full().flex_none().bg(theme.border))
-                .child(menu)
-                .into_any_element(),
-        )
     }
 
     pub(super) fn render_background_work_surface(
@@ -1412,8 +1154,6 @@ fn background_work_count_summary(processes: usize, agents: usize) -> String {
 fn render_background_summary_card(
     handle: &ContextMenuHandle,
     session_id: Uuid,
-    identifiers: Option<TaskIdentifierSection>,
-    environment: Option<EnvironmentSummary>,
     entries: Rc<Vec<BackgroundSummaryEntry>>,
     weak: WeakEntity<Waku>,
     cx: &mut App,
@@ -1437,20 +1177,6 @@ fn render_background_summary_card(
         .flex()
         .flex_col()
         .gap(px(8.0));
-    let has_environment = environment.is_some();
-    let has_background = !processes.is_empty() || !agents.is_empty();
-    let has_identifiers = identifiers.is_some();
-    if let Some(environment) = environment {
-        content = content.child(render_environment_summary_section(
-            environment,
-            handle.clone(),
-            weak.clone(),
-            &theme,
-        ));
-    }
-    if has_environment && has_background {
-        content = content.child(div().mx(px(8.0)).h(px(1.0)).bg(theme.border));
-    }
     if !processes.is_empty() {
         content = content.child(render_background_summary_section(
             tr!("background.processes"),
@@ -1471,12 +1197,6 @@ fn render_background_summary_card(
             &theme,
         ));
     }
-    if has_identifiers && (has_environment || has_background) {
-        content = content.child(div().mx(px(8.0)).h(px(1.0)).bg(theme.border));
-    }
-    if let Some(identifiers) = identifiers {
-        content = content.child(render_task_identifiers_section(identifiers, weak, &theme));
-    }
     div()
         .id("background-summary-card")
         .track_focus(handle.focus_handle())
@@ -1489,259 +1209,6 @@ fn render_background_summary_card(
         .shadow_lg()
         .child(content)
         .into_any_element()
-}
-
-fn render_task_identifiers_section(
-    section: TaskIdentifierSection,
-    weak: WeakEntity<Waku>,
-    theme: &Theme,
-) -> Div {
-    let mut rows = vec![render_task_identifier_row(
-        tr!("environment.task_id"),
-        section.values.task_id.to_string(),
-        TASK_ID_COPY_CONTROL_ID,
-        &section.task_id_copy_focus,
-        section.task_id_copied,
-        weak.clone(),
-        theme,
-    )];
-    if let Some(thread_id) = section.values.agent_cli_thread_id {
-        rows.push(render_task_identifier_row(
-            tr!("environment.agent_cli_thread_id"),
-            thread_id,
-            AGENT_THREAD_ID_COPY_CONTROL_ID,
-            &section.agent_cli_thread_id_copy_focus,
-            section.agent_cli_thread_id_copied,
-            weak,
-            theme,
-        ));
-    }
-
-    div()
-        .w_full()
-        .tab_group()
-        .tab_stop(false)
-        .flex()
-        .flex_col()
-        .gap(px(7.0))
-        .children(rows)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_task_identifier_row(
-    label: String,
-    value: String,
-    control_id: &'static str,
-    focus: &FocusHandle,
-    copied: bool,
-    weak: WeakEntity<Waku>,
-    theme: &Theme,
-) -> Div {
-    let tooltip = Tooltip::text(if copied {
-        tr!("common.copied")
-    } else {
-        tr!("common.copy_named", name = label.clone())
-    });
-    let copy_value = value.clone();
-    let copy_action = Rc::new(move |cx: &mut App| {
-        cx.write_to_clipboard(ClipboardItem::new_string(copy_value.clone()));
-        let _ = weak.update(cx, |this, cx| {
-            this.show_control_copied(control_id, cx);
-        });
-    });
-    let key_copy_action = copy_action.clone();
-    let copy_button = div()
-        .id(control_id)
-        .track_focus(focus)
-        .tab_index(0)
-        .size(px(24.0))
-        .rounded(px(6.0))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_default()
-        .focus_visible(|style| {
-            style
-                .bg(theme.overlay)
-                .border_1()
-                .border_color(theme.accent)
-        })
-        .hover(|style| style.bg(theme.overlay_strong))
-        .active(|style| style.bg(theme.overlay))
-        .tooltip(tooltip)
-        .child(icon(
-            if copied {
-                "icons/check.svg"
-            } else {
-                "icons/copy.svg"
-            },
-            12.0,
-            theme.text_tertiary,
-        ))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(move |_, _, cx| {
-            copy_action(cx);
-            cx.stop_propagation();
-        })
-        .on_key_down(move |event: &KeyDownEvent, _, cx| {
-            if !event.keystroke.modifiers.modified()
-                && matches!(event.keystroke.key.as_str(), "enter" | "space")
-            {
-                key_copy_action(cx);
-                cx.stop_propagation();
-            }
-        });
-
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap(px(3.0))
-        .child(
-            div().h(px(20.0)).px(px(8.0)).flex().items_center().child(
-                div()
-                    .text_size(sp(12.0))
-                    .text_color(theme.text_tertiary)
-                    .child(label),
-            ),
-        )
-        .child(
-            div()
-                .w_full()
-                .h(px(28.0))
-                .pl(px(8.0))
-                .rounded(px(6.0))
-                .bg(theme.inset)
-                .flex()
-                .items_center()
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .truncate()
-                        .text_size(sp(11.5))
-                        .font_family(md::render::MONO_FAMILY)
-                        .text_color(theme.text_secondary)
-                        .child(value),
-                )
-                .child(copy_button),
-        )
-}
-
-fn render_environment_summary_section(
-    environment: EnvironmentSummary,
-    handle: ContextMenuHandle,
-    weak: WeakEntity<Waku>,
-    theme: &Theme,
-) -> Div {
-    let commit_handle = handle.clone();
-    let commit_weak = weak.clone();
-    let commit_pending = environment.commit_status.is_some();
-    let commit = render_environment_action_row(
-        "environment-summary-commit",
-        &environment.commit_focus,
-        "icons/git-commit-horizontal.svg",
-        environment
-            .commit_status
-            .unwrap_or_else(|| tr!("environment.commit_or_push")),
-        !commit_pending,
-        commit_pending,
-        None,
-        theme,
-        move |window, cx| {
-            commit_handle.close(window, cx);
-            window.refresh();
-            let _ = commit_weak.update(cx, |this, cx| {
-                this.open_commit_dialog(window, cx);
-            });
-        },
-    );
-
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap_0()
-        .child(
-            div()
-                .h(px(30.0))
-                .px(px(8.0))
-                .flex()
-                .items_center()
-                .text_size(sp(13.5))
-                .text_color(theme.text_tertiary)
-                .child(tr!("environment.title")),
-        )
-        .child(commit)
-}
-
-fn render_environment_action_row(
-    id: &'static str,
-    focus: &FocusHandle,
-    icon_path: &'static str,
-    label: String,
-    enabled: bool,
-    active: bool,
-    trailing: Option<AnyElement>,
-    theme: &Theme,
-    action: impl Fn(&mut Window, &mut App) + 'static,
-) -> Stateful<Div> {
-    let foreground = if enabled {
-        theme.text
-    } else if active {
-        theme.text_secondary
-    } else {
-        theme.text_ghost
-    };
-    let icon_foreground = if enabled || active {
-        theme.text_secondary
-    } else {
-        theme.text_ghost
-    };
-    let indicator = if active {
-        motion::spin_slow(icon("icons/loader-circle.svg", 14.0, theme.text_secondary))
-    } else {
-        icon(icon_path, 14.0, icon_foreground).into_any_element()
-    };
-    let action: Rc<dyn Fn(&mut Window, &mut App)> = Rc::new(action);
-    let key_action = action.clone();
-    div()
-        .id(id)
-        .track_focus(focus)
-        .when(enabled, |row| row.tab_index(0))
-        .min_h(px(32.0))
-        .w_full()
-        .px(px(8.0))
-        .rounded(px(8.0))
-        .flex()
-        .items_center()
-        .gap(px(10.0))
-        .cursor_default()
-        .focus_visible(|style| style.border_1().border_color(theme.accent))
-        .when(enabled, |row| {
-            row.hover(|style| style.bg(theme.overlay_strong))
-        })
-        .child(indicator)
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .truncate()
-                .text_size(sp(13.5))
-                .text_color(foreground)
-                .child(label),
-        )
-        .children(trailing)
-        .when(enabled, |row| {
-            row.on_click(move |_, window, cx| action(window, cx))
-                .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                        key_action(window, cx);
-                        cx.stop_propagation();
-                    }
-                })
-        })
 }
 
 fn render_background_summary_section(
@@ -1987,24 +1454,6 @@ mod tests {
         assert_eq!(
             single_line_label("/bin/zsh -lc 'set -euo pipefail\n  for n in one two'"),
             "/bin/zsh -lc 'set -euo pipefail for n in one two'"
-        );
-    }
-
-    #[test]
-    fn info_popover_uses_waku_task_and_native_agent_ids() {
-        let task_id = Uuid::parse_str("ed28ee51-43cf-4a83-a52f-04c509ca2c09").unwrap();
-        let mut session = AgentSession::new(Uuid::nil(), ProviderKind::Codex);
-        session.id = task_id;
-        session.provider_cursor = Some(ProviderResumeCursor::Codex {
-            thread_id: "019cfd7a-6942-78b1-9d47-30576c562321".into(),
-        });
-
-        assert_eq!(
-            TaskIdentifiers::from(&session),
-            TaskIdentifiers {
-                task_id,
-                agent_cli_thread_id: Some("019cfd7a-6942-78b1-9d47-30576c562321".into()),
-            }
         );
     }
 
