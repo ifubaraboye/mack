@@ -780,6 +780,12 @@ fn session_projection_precedes(
 }
 
 fn merge_stale_session_metadata(existing: &mut AgentSession, incoming: AgentSession) {
+    // Group membership is copied unconditionally: assigning a chat does not
+    // bump `updated_at`, so recency says nothing about it, and the client is
+    // the only writer — an incoming id is always at least as fresh as the
+    // stored one, even when the rest of the snapshot is stale (e.g. grouping
+    // a chat mid-stream must survive the turn's own saves).
+    existing.group_id = incoming.group_id;
     if incoming.updated_at >= existing.updated_at {
         existing.title = incoming.title;
         existing.project_id = incoming.project_id;

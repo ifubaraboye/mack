@@ -1149,6 +1149,7 @@ pub struct Waku {
     commit_dialog: Option<commit_dialog::CommitDialogState>,
     goal_dialog: Option<goal_dialog::GoalDialogState>,
     goal_dialog_request: Option<goal_dialog::GoalDialogRequest>,
+    group_dialog: Option<group_dialog::GroupDialogState>,
     /// Goal operations accepted before the session's runtime exists. Goals
     /// attach to the provider thread, not to any turn, so `/goal` on a fresh
     /// task starts the provider and these drain once it installs.
@@ -1487,6 +1488,7 @@ mod components;
 mod composer;
 mod drafts;
 mod goal_dialog;
+mod group_dialog;
 mod image_preview;
 mod render;
 mod right_panel;
@@ -1511,6 +1513,8 @@ pub use command_palette::init as init_command_palette;
 pub use commit_dialog::init as init_commit_dialog_keys;
 use components::*;
 pub use goal_dialog::init as init_goal_dialog_keys;
+pub use group_dialog::init as init_group_dialog_keys;
+use group_dialog::GroupDialogMode;
 pub use image_preview::init as init_image_preview_keys;
 pub use settings::init as init_settings_keys;
 pub use sidebar::init as init_sidebar_keys;
@@ -2641,6 +2645,7 @@ impl Waku {
                 commit_dialog: None,
                 goal_dialog: None,
                 goal_dialog_request: None,
+                group_dialog: None,
                 pending_goal_operations: HashMap::new(),
                 goal_runtime_starts: HashSet::new(),
                 goal_observed_at: HashMap::new(),

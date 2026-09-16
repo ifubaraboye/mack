@@ -1148,7 +1148,7 @@ impl StateStore {
         let mut sessions = connection
             .prepare(
                 "SELECT id, project_id, title, auto_title, provider, model, status,
-                        created_at, updated_at, last_reply_at
+                        created_at, updated_at, last_reply_at, group_id
                  FROM sessions ORDER BY updated_at",
             )
             .map_err(to_io_error)?;
@@ -1166,6 +1166,7 @@ impl StateStore {
                     row.get::<_, i64>(7)?,
                     row.get::<_, i64>(8)?,
                     row.get::<_, Option<i64>>(9)?,
+                    row.get::<_, Option<String>>(10)?,
                 ))
             })
             .map_err(to_io_error)?
@@ -1512,6 +1513,7 @@ type SessionColumns = (
     i64,
     i64,
     Option<i64>,
+    Option<String>,
 );
 
 /// Builds a list-only session from its columns. `messages`,
@@ -1531,6 +1533,7 @@ fn session_skeleton(row: SessionColumns) -> Option<AgentSession> {
         created_at,
         updated_at,
         last_reply_at,
+        group_id,
     ) = row;
     let provider: ProviderKind =
         serde_json::from_value(serde_json::Value::String(provider)).ok()?;
@@ -1538,12 +1541,15 @@ fn session_skeleton(row: SessionColumns) -> Option<AgentSession> {
     if provider != ProviderKind::ChatGpt {
         return None;
     }
+    // A missing group reads as ungrouped; deleting a group entry can never
+    // strand a chat, and an unparseable id is treated the same way.
+    let group_id: Option<Uuid> = group_id.and_then(|id| Uuid::parse_str(&id).ok());
     Some(AgentSession {
         id: Uuid::parse_str(&id).ok()?,
         title,
         auto_title,
         project_id: Uuid::parse_str(&project_id).ok()?,
-        group_id: None,
+        group_id,
         workspace: SessionWorkspace::Local,
         provider,
         model,
@@ -1765,8 +1771,8 @@ fn message_fingerprint(message: &Message, position: usize) -> u64 {
 /// listing sessions never has to deserialize a transcript.
 const UPSERT_SESSION: &str = "INSERT INTO sessions(
          id, project_id, title, auto_title, provider, model, status,
-         created_at, updated_at, last_reply_at
-     ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         created_at, updated_at, last_reply_at, group_id
+     ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
      ON CONFLICT(id) DO UPDATE SET
          project_id    = excluded.project_id,
          title         = excluded.title,
@@ -1776,7 +1782,8 @@ const UPSERT_SESSION: &str = "INSERT INTO sessions(
          status        = excluded.status,
          created_at    = excluded.created_at,
          updated_at    = excluded.updated_at,
-         last_reply_at = excluded.last_reply_at";
+         last_reply_at = excluded.last_reply_at,
+         group_id      = excluded.group_id";
 
 const INSERT_PROJECT: &str = "INSERT INTO projects(id, name, path, position, created_at)
      VALUES(?1, ?2, ?3, ?4, ?5)
@@ -1815,6 +1822,9 @@ fn session_params(session: &AgentSession) -> Vec<rusqlite::types::Value> {
         session
             .last_reply_at
             .map_or(Value::Null, |at| Value::Integer(at as i64)),
+        session
+            .group_id
+            .map_or(Value::Null, |id| Value::Text(id.to_string())),
     ]
 }
 

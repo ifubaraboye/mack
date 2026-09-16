@@ -29,6 +29,8 @@ export const sessions = sqliteTable(
   {
     id: text("id").primaryKey(),
     projectId: text("project_id").notNull(),
+    /** User-defined chat group; NULL means the chat is ungrouped. */
+    groupId: text("group_id"),
     /** Explicit user title; "New task" means the automatic fallback is active. */
     title: text("title").notNull(),
     /** Provider-generated title, with the first prompt as a local fallback. */

@@ -1784,7 +1784,25 @@ impl Waku {
                     let remove_waku = waku.clone();
                     let move_waku = waku.clone();
                     let move_value_waku = waku.clone();
-                    vec![
+                    let rename_group_waku = waku.clone();
+                    // Membership snapshot shared by the submenu value row
+                    // and the rename affordance below.
+                    let membership: Option<(Uuid, String)> = move_value_waku
+                        .upgrade()
+                        .and_then(|entity| {
+                            entity.update(cx, |waku, _| {
+                                waku.state
+                                    .sessions
+                                    .iter()
+                                    .find(|session| session.id == session_id)
+                                    .and_then(|session| session.group_id)
+                                    .and_then(|group_id| {
+                                        waku.chat_group(group_id)
+                                            .map(|group| (group_id, group.name.clone()))
+                                    })
+                            })
+                        });
+                    let mut items = vec![
                         MenuItem::new(tr!("common.rename"), move |window, cx| {
                             let _ = rename_waku.update(cx, |waku, cx| {
                                 waku.begin_session_rename(session_id, window, cx);
@@ -1792,22 +1810,9 @@ impl Waku {
                         }),
                         MenuItem::submenu_with_value(
                             tr!("sidebar.move_to_group"),
-                            move_value_waku
-                                .upgrade()
-                                .map(|entity| {
-                                    entity.update(cx, |waku, _| {
-                                        waku.state
-                                            .sessions
-                                            .iter()
-                                            .find(|session| session.id == session_id)
-                                            .and_then(|session| session.group_id)
-                                            .and_then(|group_id| {
-                                                waku.chat_group(group_id)
-                                                    .map(|group| group.name.clone())
-                                            })
-                                            .unwrap_or_default()
-                                    })
-                                })
+                            membership
+                                .as_ref()
+                                .map(|(_, name)| name.clone())
                                 .unwrap_or_default(),
                             move |cx| {
                                 let snapshot = move_waku.upgrade().map(|entity| {
@@ -1834,7 +1839,11 @@ impl Waku {
                                     tr!("sidebar.new_group"),
                                     move |window, cx| {
                                         let _ = new_group_waku.update(cx, |waku, cx| {
-                                            waku.create_chat_group(session_id, cx);
+                                            waku.open_group_dialog(
+                                                GroupDialogMode::CreateGroup { session_id },
+                                                window,
+                                                cx,
+                                            );
                                         });
                                     },
                                 )];
@@ -1869,12 +1878,27 @@ impl Waku {
                                 items
                             },
                         ),
-                        MenuItem::Separator,
-                        MenuItem::new(tr!("common.remove"), move |_, cx| {
-                            let _ = remove_waku
-                                .update(cx, |waku, cx| waku.remove_session(session_id, cx));
-                        }),
-                    ]
+                    ];
+                    if let Some((group_id, _)) = membership {
+                        items.push(MenuItem::new(
+                            tr!("sidebar.rename_group"),
+                            move |window, cx| {
+                                let _ = rename_group_waku.update(cx, |waku, cx| {
+                                    waku.open_group_dialog(
+                                        GroupDialogMode::RenameGroup { group_id },
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            },
+                        ));
+                    }
+                    items.push(MenuItem::Separator);
+                    items.push(MenuItem::new(tr!("common.remove"), move |_, cx| {
+                        let _ = remove_waku
+                            .update(cx, |waku, cx| waku.remove_session(session_id, cx));
+                    }));
+                    items
                 },
             )
         };

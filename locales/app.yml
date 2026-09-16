@@ -557,6 +557,8 @@ sidebar.unknown_project:
   en: Unknown project
 sidebar.move_to_group:
   en: Move to group
+sidebar.rename_group:
+  en: Rename Group
 sidebar.new_group:
   en: New group
 sidebar.new_group_name:
@@ -567,6 +569,8 @@ sidebar.delete_group:
   en: Delete group
 sidebar.untitled_group:
   en: Untitled group
+group_dialog.name_placeholder:
+  en: Group name…
 sidebar.close:
   en: Close sidebar
 sidebar.hide:

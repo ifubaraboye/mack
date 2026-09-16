@@ -185,6 +185,14 @@ enum CommandPaletteView {
     GroupChats,
 }
 
+impl CommandPaletteView {
+    /// The GroupChats view is already scoped to one group, so its rows
+    /// render without a redundant section header (e.g. "Tasks").
+    fn hides_section_headers(self) -> bool {
+        matches!(self, Self::GroupChats)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct CommandPaletteItem {
     section: PaletteSection,
@@ -336,7 +344,11 @@ fn same_provider_session(left: &ProviderResumeCursor, right: &ProviderResumeCurs
     left.provider() == right.provider() && left.native_id() == right.native_id()
 }
 
-fn command_palette_results_height(results: &[CommandPaletteItem], show_empty_state: bool) -> f32 {
+fn command_palette_results_height(
+    results: &[CommandPaletteItem],
+    show_empty_state: bool,
+    hide_section_headers: bool,
+) -> f32 {
     let content_height = if show_empty_state {
         EMPTY_RESULTS_HEIGHT
     } else {
@@ -345,7 +357,9 @@ fn command_palette_results_height(results: &[CommandPaletteItem], show_empty_sta
             .iter()
             .map(|item| {
                 let section_leading_height = if previous_section != Some(item.section) {
-                    if item.section == PaletteSection::Providers {
+                    if hide_section_headers {
+                        0.0
+                    } else if item.section == PaletteSection::Providers {
                         PROVIDER_SECTION_TOP_MARGIN
                     } else {
                         SECTION_HEADER_HEIGHT
@@ -380,9 +394,6 @@ pub(super) struct CommandPaletteUi {
     /// Group whose chats the GroupChats view lists. `None` outside that
     /// view, mirroring how `resume_provider` scopes ResumeProviders.
     group_view_group: Option<Uuid>,
-    /// Group being renamed inline: the search field holds the draft name
-    /// while set, and confirming applies it instead of running a row.
-    renaming_group: Option<Uuid>,
     provider_sessions_pending: bool,
     provider_session_import: Option<ProviderResumeCursor>,
     provider_session_error: Option<String>,
@@ -409,7 +420,6 @@ impl CommandPaletteUi {
             provider_sessions: Vec::new(),
             resume_provider: ProviderKind::default(),
             group_view_group: None,
-            renaming_group: None,
             provider_sessions_pending: false,
             provider_session_import: None,
             provider_session_error: None,
@@ -621,10 +631,6 @@ impl Waku {
     /// query keeps Delete for text editing, so this only runs on an empty
     /// query — the same guard as the keybinding comment above.
     fn delete_command_palette_group(&mut self, cx: &mut Context<Self>) {
-        if self.command_palette.renaming_group.is_some() {
-            self.cancel_palette_group_rename(cx);
-            return;
-        }
         if self.command_palette.view != CommandPaletteView::Groups {
             return;
         }
@@ -651,56 +657,6 @@ impl Waku {
         };
         self.delete_chat_group(group_id, cx);
         self.refresh_command_palette_after_group_deleted(cx);
-    }
-
-    /// Start renaming a group: the search field becomes the name
-    /// editor, prefilled with the current name. Focus already lives in
-    /// the field, so typing replaces the selection immediately.
-    fn begin_palette_group_rename(&mut self, group_id: Uuid, cx: &mut Context<Self>) {
-        let Some(name) = self.chat_group(group_id).map(|group| group.name.clone()) else {
-            return;
-        };
-        self.command_palette.renaming_group = Some(group_id);
-        self.command_palette.search.update(cx, |input, cx| {
-            input.set_content(name, cx);
-            input.select_all_text(cx);
-        });
-        self.refresh_command_palette_results("", false, cx);
-        cx.notify();
-    }
-
-    /// Apply the drafted name, keeping the old one on empty input. Runs on
-    /// Enter and on row activation while renaming.
-    fn commit_palette_group_rename(&mut self, cx: &mut Context<Self>) {
-        let Some(group_id) = self.command_palette.renaming_group.take() else {
-            return;
-        };
-        let name = self
-            .command_palette
-            .search
-            .read(cx)
-            .content()
-            .trim()
-            .to_owned();
-        if !name.is_empty() {
-            self.rename_chat_group(group_id, name, cx);
-        }
-        self.command_palette.search.update(cx, |input, cx| {
-            input.clear(cx);
-        });
-        self.refresh_command_palette_results("", false, cx);
-        cx.notify();
-    }
-
-    fn cancel_palette_group_rename(&mut self, cx: &mut Context<Self>) {
-        if self.command_palette.renaming_group.take().is_none() {
-            return;
-        }
-        self.command_palette.search.update(cx, |input, cx| {
-            input.clear(cx);
-        });
-        self.refresh_command_palette_results("", false, cx);
-        cx.notify();
     }
 
     /// Re-list the Groups view after a deletion, falling back from a
@@ -731,6 +687,22 @@ impl Waku {
         cx.notify();
     }
 
+    /// Re-list whatever the palette shows, if it is open. Dialog confirms
+    /// call this after renaming so rows behind the modal stay current.
+    pub(super) fn refresh_command_palette_visible_results(&mut self, cx: &mut Context<Self>) {
+        if !self.command_palette.open {
+            return;
+        }
+        let query = self
+            .command_palette
+            .search
+            .read(cx)
+            .content()
+            .to_owned();
+        self.refresh_command_palette_results(&query, false, cx);
+        cx.notify();
+    }
+
     fn command_palette_group_name(&self) -> String {
         self.command_palette
             .group_view_group
@@ -740,10 +712,6 @@ impl Waku {
     }
 
     fn dismiss_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.command_palette.renaming_group.is_some() {
-            self.cancel_palette_group_rename(cx);
-            return;
-        }
         match self.command_palette.view {
             CommandPaletteView::Commands => self.close_command_palette(window, cx),
             CommandPaletteView::Resume => self.leave_command_palette_resume_view(cx),
@@ -1618,6 +1586,9 @@ impl Waku {
     }
 
     fn command_palette_scroll_index(&self, selected: usize) -> usize {
+        if self.command_palette.view.hides_section_headers() {
+            return selected;
+        }
         let mut headers = 0;
         let mut previous = None;
         for item in self.command_palette.results.iter().take(selected + 1) {
@@ -1888,10 +1859,6 @@ impl Waku {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.command_palette.renaming_group.is_some() {
-            self.commit_palette_group_rename(cx);
-            return;
-        }
         let index = index.unwrap_or(self.command_palette.selected);
         let Some(action) = self
             .command_palette
@@ -2027,9 +1994,13 @@ impl Waku {
             && resume_session_count == 0
             && self.command_palette.provider_sessions_pending;
         let show_placeholder_state = show_empty_state || show_loading_state;
-        let results_height =
-            command_palette_results_height(&self.command_palette.results, show_placeholder_state)
-                .min((card_max_height - SEARCH_ROW_HEIGHT).max(0.0));
+        let hide_section_headers = self.command_palette.view.hides_section_headers();
+        let results_height = command_palette_results_height(
+            &self.command_palette.results,
+            show_placeholder_state,
+            hide_section_headers,
+        )
+        .min((card_max_height - SEARCH_ROW_HEIGHT).max(0.0));
         let card_height = SEARCH_ROW_HEIGHT + results_height;
 
         let mut results = div()
@@ -2169,7 +2140,7 @@ impl Waku {
             for (index, item) in self.command_palette.results.iter().enumerate() {
                 let starts_section = previous_section != Some(item.section);
                 if starts_section {
-                    if item.section != PaletteSection::Providers {
+                    if !hide_section_headers && item.section != PaletteSection::Providers {
                         results = results.child(
                             div()
                                 .h(px(SECTION_HEADER_HEIGHT))
@@ -2371,9 +2342,13 @@ impl Waku {
                                         MouseButton::Left,
                                         |_, _, cx| cx.stop_propagation(),
                                     )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(cx.listener(move |this, _, window, cx| {
                                         cx.stop_propagation();
-                                        this.begin_palette_group_rename(group_id, cx);
+                                        this.open_group_dialog(
+                                            GroupDialogMode::RenameGroup { group_id },
+                                            window,
+                                            cx,
+                                        );
                                     })),
                             )
                         })
@@ -2405,9 +2380,6 @@ impl Waku {
                                     )
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
-                                        if this.command_palette.renaming_group == Some(group_id) {
-                                            this.cancel_palette_group_rename(cx);
-                                        }
                                         this.delete_chat_group(group_id, cx);
                                         this.refresh_command_palette_after_group_deleted(cx);
                                     })),
@@ -2635,11 +2607,11 @@ mod tests {
             item(PaletteSection::Commands, 2),
         ];
         assert_eq!(
-            command_palette_results_height(&items, false),
+            command_palette_results_height(&items, false, false),
             SECTION_HEADER_HEIGHT * 2.0 + RESULT_ROW_HEIGHT * 3.0 + RESULTS_BOTTOM_PADDING
         );
         assert_eq!(
-            command_palette_results_height(&[], true),
+            command_palette_results_height(&[], true, false),
             EMPTY_RESULTS_HEIGHT + RESULTS_BOTTOM_PADDING
         );
         let providers = vec![
@@ -2647,8 +2619,14 @@ mod tests {
             item(PaletteSection::Providers, 1),
         ];
         assert_eq!(
-            command_palette_results_height(&providers, false),
+            command_palette_results_height(&providers, false, false),
             PROVIDER_SECTION_TOP_MARGIN + RESULT_ROW_HEIGHT * 2.0 + RESULTS_BOTTOM_PADDING
+        );
+        // The GroupChats view hides its section header, so rows hug with no
+        // leading header height.
+        assert_eq!(
+            command_palette_results_height(&items, false, true),
+            RESULT_ROW_HEIGHT * 3.0 + RESULTS_BOTTOM_PADDING
         );
     }
 
