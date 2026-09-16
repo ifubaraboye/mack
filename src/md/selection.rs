@@ -139,6 +139,12 @@ impl Selection {
         (!self.is_empty()).then(|| self.text())
     }
 
+    /// Resolved spans in document order. Selection-fork reads these to map a
+    /// selection back to the messages it came from.
+    pub fn spans(&self) -> &[Span] {
+        &self.spans
+    }
+
     /// The full selected text, spans joined in document order.
     pub fn text(&self) -> String {
         let mut out = String::new();

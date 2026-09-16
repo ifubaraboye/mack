@@ -1814,6 +1814,9 @@ fn session_skeleton(row: SessionColumns) -> Option<AgentSession> {
         context_usage: None,
         runtime_event_cursor: None,
         provider_session_id: None,
+        // Detail (including fork metadata) loads from session_details on
+        // hydrate; the list never reads it.
+        fork_metadata: None,
         messages: Vec::new(),
         transcript_blocks: Vec::new(),
         turns: Vec::new(),

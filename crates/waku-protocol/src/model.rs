@@ -843,6 +843,18 @@ pub struct RuntimeEventCursor {
     pub sequence: u64,
 }
 
+/// Provenance for a selection fork: the parent session, the assistant
+/// message the selection was anchored at, and the exact selected text.
+/// Informational (future UI/navigation) — the fork owns full copies of its
+/// messages and never reads back through these IDs.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+pub struct ForkMetadata {
+    pub parent_session_id: Uuid,
+    pub parent_message_id: Uuid,
+    pub selected_text: String,
+    pub created_at: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 pub struct AgentSession {
     pub id: Uuid,
@@ -909,6 +921,11 @@ pub struct AgentSession {
     /// Read-only compatibility field for v1 state files. New saves omit it.
     #[serde(default, skip_serializing)]
     pub provider_session_id: Option<String>,
+    /// Selection-fork provenance: which session/message/selection this chat
+    /// was branched from. `None` for original chats and whole-turn forks.
+    /// Lives in the existing `session_details` JSON — no new tables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_metadata: Option<ForkMetadata>,
     /// Not stored in the session JSON — these are rows in the `messages`
     /// table, reattached when the session is hydrated.
     #[serde(default)]
@@ -965,6 +982,7 @@ impl AgentSession {
             context_usage: None,
             runtime_event_cursor: None,
             provider_session_id: None,
+            fork_metadata: None,
             messages: Vec::new(),
             transcript_blocks: Vec::new(),
             turns: Vec::new(),
@@ -1002,6 +1020,7 @@ impl AgentSession {
             context_usage: None,
             runtime_event_cursor: None,
             provider_session_id: None,
+            fork_metadata: None,
             messages: Vec::new(),
             transcript_blocks: Vec::new(),
             turns: Vec::new(),
@@ -1523,6 +1542,76 @@ impl AgentSession {
         fork.updated_at = now;
         fork.provider_cursor = Some(provider_cursor);
         fork.provider_session_id = None;
+        // A fork snapshots the conversation, not the pending follow-ups its
+        // source session is still holding for the live agent.
+        fork.queued_messages.clear();
+        Some(fork)
+    }
+
+    /// Branches an independent session from the conversation prefix ending at
+    /// `message_index` (inclusive). The selection fork's message boundary:
+    /// everything after the anchor message stays in the parent only.
+    ///
+    /// Mirrors [`Self::fork_through_turn`] — same clone, same ID reminting,
+    /// same reset state — but truncates at a message instead of a turn, and
+    /// records [`ForkMetadata`] instead of taking a provider cursor (ChatGPT
+    /// is stateless, so history resends from the copied messages).
+    /// Returns `None` when the index is out of bounds.
+    pub fn fork_from_message(&self, message_index: usize, metadata: ForkMetadata) -> Option<Self> {
+        if message_index >= self.messages.len() {
+            return None;
+        }
+
+        let mut fork = self.clone();
+        let retained_turns = fork.messages[..=message_index]
+            .iter()
+            .filter_map(|message| message.turn_id)
+            .collect::<std::collections::HashSet<_>>();
+        fork.messages.truncate(message_index + 1);
+        fork.turns.retain(|turn| retained_turns.contains(&turn.id));
+        fork.transcript_blocks.retain(|block| {
+            block
+                .turn_id
+                .is_none_or(|turn_id| retained_turns.contains(&turn_id))
+        });
+        let message_count = fork.messages.len();
+        for block in &mut fork.transcript_blocks {
+            block.after_message = block.after_message.min(message_count);
+        }
+
+        let fork_id = Uuid::new_v4();
+        let turn_ids = fork
+            .turns
+            .iter()
+            .map(|turn| (turn.id, Uuid::new_v4()))
+            .collect::<std::collections::HashMap<_, _>>();
+
+        for turn in &mut fork.turns {
+            turn.id = turn_ids[&turn.id];
+        }
+        for message in &mut fork.messages {
+            message.id = Uuid::new_v4();
+            if let Some(turn_id) = message.turn_id {
+                message.turn_id = turn_ids.get(&turn_id).copied();
+            }
+            message.streaming = false;
+        }
+        for block in &mut fork.transcript_blocks {
+            if let Some(turn_id) = block.turn_id {
+                block.turn_id = turn_ids.get(&turn_id).copied();
+            }
+        }
+
+        let now = unix_time();
+        fork.id = fork_id;
+        fork.title = Self::DEFAULT_TITLE.to_owned();
+        fork.auto_title = None;
+        fork.status = SessionStatus::Idle;
+        fork.created_at = now;
+        fork.updated_at = now;
+        fork.provider_cursor = None;
+        fork.provider_session_id = None;
+        fork.fork_metadata = Some(metadata);
         // A fork snapshots the conversation, not the pending follow-ups its
         // source session is still holding for the live agent.
         fork.queued_messages.clear();
@@ -4297,6 +4386,272 @@ mod tests {
 
         assert_eq!(session.queued_messages.len(), 1);
         assert!(fork.queued_messages.is_empty());
+    }
+
+    fn selection_fork_fixture() -> (AgentSession, Vec<Uuid>) {
+        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
+        let mut ids = Vec::new();
+        session.begin_turn("Teach me linear regression.");
+        ids.push(session.messages[0].id);
+        ids.push(session.push_message(MessageRole::Assistant, "Linear regression finds weights."));
+        session.transcript_blocks.push(TranscriptBlock {
+            after_message: 2,
+            turn_id: session.turns.last().map(|turn| turn.id),
+            activities: Vec::new(),
+        });
+        session.finish_active_turn(TurnStatus::Completed);
+        session.begin_turn("How does gradient descent update the weights?");
+        ids.push(session.messages[2].id);
+        ids.push(session.push_message(
+            MessageRole::Assistant,
+            "dw = (2/m) XT(Xw-y), from differentiating the MSE.",
+        ));
+        session.transcript_blocks.push(TranscriptBlock {
+            after_message: 4,
+            turn_id: session.turns.last().map(|turn| turn.id),
+            activities: Vec::new(),
+        });
+        session.finish_active_turn(TurnStatus::Completed);
+        (session, ids)
+    }
+
+    fn fork_metadata_for(session: &AgentSession, message_id: Uuid) -> ForkMetadata {
+        ForkMetadata {
+            parent_session_id: session.id,
+            parent_message_id: message_id,
+            selected_text: "dw = (2/m) XT(Xw-y)".to_owned(),
+            created_at: unix_time(),
+        }
+    }
+
+    #[test]
+    fn selection_fork_copies_the_prefix_through_the_anchor_message() {
+        let (mut session, ids) = selection_fork_fixture();
+        session
+            .queued_messages
+            .push(QueuedMessage::new("pending follow-up"));
+        let parent_ids: Vec<Uuid> = session.messages.iter().map(|message| message.id).collect();
+
+        let fork = session
+            .fork_from_message(1, fork_metadata_for(&session, ids[1]))
+            .unwrap();
+
+        // New identity, default title state, idle.
+        assert_ne!(fork.id, session.id);
+        assert_eq!(fork.title, AgentSession::DEFAULT_TITLE);
+        assert_eq!(fork.auto_title, None);
+        assert_eq!(fork.status, SessionStatus::Idle);
+        assert_eq!(fork.provider_cursor, None);
+        assert!(fork.queued_messages.is_empty());
+        // Prefix kept with order, roles, and content intact.
+        assert_eq!(fork.messages.len(), 2);
+        let roles: Vec<MessageRole> = fork.messages.iter().map(|message| message.role).collect();
+        assert_eq!(roles, vec![MessageRole::User, MessageRole::Assistant]);
+        assert_eq!(fork.messages[0].content, "Teach me linear regression.");
+        assert_eq!(fork.messages[1].content, "Linear regression finds weights.");
+        // Everything after the anchor is gone.
+        assert!(
+            !fork
+                .messages
+                .iter()
+                .any(|message| message.content.contains("gradient descent"))
+        );
+        // Every copied ID is fresh, and the turn linkage still resolves.
+        assert!(
+            fork.messages
+                .iter()
+                .all(|message| !parent_ids.contains(&message.id))
+        );
+        assert_eq!(fork.turns.len(), 1);
+        assert!(
+            fork.messages
+                .iter()
+                .all(|message| message.turn_id == Some(fork.turns[0].id))
+        );
+        assert_eq!(fork.transcript_blocks.len(), 1);
+        assert_eq!(fork.transcript_blocks[0].turn_id, Some(fork.turns[0].id));
+        assert_eq!(fork.transcript_blocks[0].after_message, 2);
+        // Metadata is exact.
+        let metadata = fork.fork_metadata.clone().unwrap();
+        assert_eq!(metadata.parent_session_id, session.id);
+        assert_eq!(metadata.parent_message_id, ids[1]);
+        assert_eq!(metadata.selected_text, "dw = (2/m) XT(Xw-y)");
+        // The parent is byte-identical apart from time moving on.
+        assert_eq!(session.messages.len(), 4);
+        assert_eq!(
+            session
+                .messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            parent_ids
+        );
+        assert_eq!(session.turns.len(), 2);
+        assert_eq!(session.queued_messages.len(), 1);
+    }
+
+    #[test]
+    fn selection_fork_rejects_out_of_bounds_anchors() {
+        let (session, ids) = selection_fork_fixture();
+        assert!(
+            session
+                .fork_from_message(4, fork_metadata_for(&session, ids[1]))
+                .is_none()
+        );
+        assert!(
+            session
+                .fork_from_message(99, fork_metadata_for(&session, ids[1]))
+                .is_none()
+        );
+        // The last message forks the whole conversation.
+        let fork = session
+            .fork_from_message(3, fork_metadata_for(&session, ids[3]))
+            .unwrap();
+        assert_eq!(fork.messages.len(), 4);
+        assert_eq!(fork.turns.len(), 2);
+    }
+
+    #[test]
+    fn selection_fork_preserves_attachments() {
+        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
+        session.begin_turn("Explain this file.");
+        session.push_user_message_with_presentation(
+            "Explain this file.",
+            None,
+            vec![MessageAttachment {
+                path: PathBuf::from("/tmp/work/model.py"),
+                mention: "model.py".to_owned(),
+                name: "model.py".to_owned(),
+                is_dir: false,
+                is_image: false,
+                blob_reference: Some("blob-1".to_owned()),
+            }],
+        );
+        session.push_message(MessageRole::Assistant, "It trains a model.");
+        session.finish_active_turn(TurnStatus::Completed);
+        let anchor = session.messages[2].id;
+
+        let fork = session
+            .fork_from_message(2, fork_metadata_for(&session, anchor))
+            .unwrap();
+        assert_eq!(fork.messages.len(), 3);
+        assert_eq!(fork.messages[1].attachments.len(), 1);
+        assert_eq!(fork.messages[1].attachments[0].name, "model.py");
+        assert_eq!(
+            fork.messages[1].attachments[0].blob_reference.as_deref(),
+            Some("blob-1")
+        );
+    }
+
+    #[test]
+    fn fork_metadata_round_trips_and_old_sessions_still_load() {
+        let (session, ids) = selection_fork_fixture();
+        let fork = session
+            .fork_from_message(1, fork_metadata_for(&session, ids[1]))
+            .unwrap();
+        let json = serde_json::to_value(&fork).unwrap();
+        assert_eq!(
+            json["fork_metadata"]["selected_text"],
+            "dw = (2/m) XT(Xw-y)"
+        );
+        let back: AgentSession = serde_json::from_value(json).unwrap();
+        assert_eq!(back.fork_metadata, fork.fork_metadata);
+
+        // Saves written before the field existed load with no metadata.
+        let mut old = serde_json::to_value(&session).unwrap();
+        old.as_object_mut().unwrap().remove("fork_metadata");
+        let back: AgentSession = serde_json::from_value(old).unwrap();
+        assert_eq!(back.fork_metadata, None);
+    }
+
+    #[test]
+    fn fork_and_parent_evolve_independently() {
+        let (mut session, ids) = selection_fork_fixture();
+        let mut fork = session
+            .fork_from_message(1, fork_metadata_for(&session, ids[1]))
+            .unwrap();
+        session.begin_turn("Parent follow-up.");
+        session.push_message(MessageRole::Assistant, "Parent answer.");
+        session.finish_active_turn(TurnStatus::Completed);
+        fork.begin_turn("Fork follow-up.");
+        fork.push_message(MessageRole::Assistant, "Fork answer.");
+        fork.finish_active_turn(TurnStatus::Completed);
+
+        assert!(
+            session
+                .messages
+                .iter()
+                .any(|message| message.content == "Parent follow-up.")
+        );
+        assert!(
+            !session
+                .messages
+                .iter()
+                .any(|message| message.content == "Fork follow-up.")
+        );
+        assert!(
+            fork.messages
+                .iter()
+                .any(|message| message.content == "Fork follow-up.")
+        );
+        assert!(
+            !fork
+                .messages
+                .iter()
+                .any(|message| message.content == "Parent follow-up.")
+        );
+    }
+
+    #[test]
+    fn fork_from_fork_keeps_three_independent_sessions() {
+        let (session, ids) = selection_fork_fixture();
+        let fork_a = session
+            .fork_from_message(1, fork_metadata_for(&session, ids[1]))
+            .unwrap();
+        let anchor_a = fork_a.messages[1].id;
+        let fork_b = fork_a
+            .fork_from_message(
+                1,
+                ForkMetadata {
+                    parent_session_id: fork_a.id,
+                    parent_message_id: anchor_a,
+                    selected_text: "weights".to_owned(),
+                    created_at: unix_time(),
+                },
+            )
+            .unwrap();
+        assert_ne!(fork_b.id, fork_a.id);
+        assert_ne!(fork_b.id, session.id);
+        assert_eq!(fork_b.messages.len(), 2);
+        let metadata_b = fork_b.fork_metadata.clone().unwrap();
+        assert_eq!(metadata_b.parent_session_id, fork_a.id);
+        assert_eq!(metadata_b.parent_message_id, anchor_a);
+        // The grandchild's message IDs are fresh again.
+        let ids_a: Vec<Uuid> = fork_a.messages.iter().map(|message| message.id).collect();
+        assert!(
+            fork_b
+                .messages
+                .iter()
+                .all(|message| !ids_a.contains(&message.id))
+        );
+    }
+
+    #[test]
+    fn fork_history_matches_the_parent_prefix() {
+        let (session, ids) = selection_fork_fixture();
+        let fork = session
+            .fork_from_message(1, fork_metadata_for(&session, ids[1]))
+            .unwrap();
+        let fork_history = ChatGptHistorySeed::from_messages(&fork.messages);
+        let prefix_history = ChatGptHistorySeed::from_messages(&session.messages[..2]);
+        assert_eq!(fork_history, prefix_history);
+        assert_eq!(fork_history.len(), 2);
+        // No search-call state can leak: persisted messages are text, and the
+        // fork copies nothing else into its history.
+        let serialized = serde_json::to_string(&fork.messages).unwrap();
+        assert!(!serialized.contains("web_search_call"));
     }
 
     #[test]

@@ -1871,6 +1871,105 @@ impl Waku {
         cx.notify();
     }
 
+    /// Maps selection spans to the earliest selected message in `session`.
+    /// Returns the message index and id, or `None` when the selection is
+    /// empty or any span fails to resolve to one of the session's messages.
+    /// Never guesses: an unresolvable span refuses the fork.
+    pub(super) fn resolve_fork_anchor(
+        session: &AgentSession,
+        spans: &[crate::md::selection::Span],
+    ) -> Option<(usize, Uuid)> {
+        if spans.is_empty() {
+            return None;
+        }
+        let mut anchor: Option<(usize, Uuid)> = None;
+        for span in spans {
+            let id_text = span.key.row.strip_prefix("message-")?;
+            let id = Uuid::parse_str(id_text).ok()?;
+            let index = session
+                .messages
+                .iter()
+                .position(|message| message.id == id)?;
+            if anchor.is_none_or(|(earliest, _)| index < earliest) {
+                anchor = Some((index, id));
+            }
+        }
+        anchor
+    }
+
+    /// Forks the conversation prefix ending at `message_id` (inclusive) into
+    /// an independent session carrying `ForkMetadata`. Pure in-memory
+    /// clone/truncate — no background work, no network — followed by the
+    /// normal persist-and-open path. The parent session is never mutated.
+    pub(super) fn fork_session_from_selection(
+        &mut self,
+        session_id: Uuid,
+        message_id: Uuid,
+        selected_text: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.response_fork_preparations.contains_key(&session_id)
+            || self.submission_preparations.contains(&session_id)
+        {
+            self.show_toast(tr!("session.response_cannot_fork"));
+            cx.notify();
+            return;
+        }
+        let Some(source) = self
+            .state
+            .sessions
+            .iter()
+            .find(|session| session.id == session_id)
+            .cloned()
+        else {
+            self.show_toast(tr!("session.response_unavailable"));
+            cx.notify();
+            return;
+        };
+        if self.state.selected_session != Some(session_id)
+            || !matches!(source.status, SessionStatus::Idle | SessionStatus::Failed)
+        {
+            self.show_toast(tr!("session.response_cannot_fork"));
+            cx.notify();
+            return;
+        }
+        let Some(message_index) = source
+            .messages
+            .iter()
+            .position(|message| message.id == message_id)
+        else {
+            self.show_toast(tr!("session.response_unavailable"));
+            cx.notify();
+            return;
+        };
+        let message = &source.messages[message_index];
+        if message.streaming
+            || message.role != MessageRole::Assistant
+            || selected_text.trim().is_empty()
+        {
+            self.show_toast(tr!("session.response_cannot_fork"));
+            cx.notify();
+            return;
+        }
+        let metadata = ForkMetadata {
+            parent_session_id: session_id,
+            parent_message_id: message_id,
+            selected_text,
+            created_at: unix_time(),
+        };
+        let Some(forked) = source.fork_from_message(message_index, metadata) else {
+            self.show_toast(tr!("session.response_cannot_fork"));
+            cx.notify();
+            return;
+        };
+
+        let fork_id = forked.id;
+        self.state.push_session(forked);
+        self.select_session(fork_id, cx);
+        self.show_success_toast(tr!("session.forked_from_selection"));
+        cx.notify();
+    }
+
     /// Composer Enter clears the field after emitting its event. A response
     /// fork temporarily owns the source provider, so restore a keyboard
     /// submission on the next task turn instead of racing it against the fork.

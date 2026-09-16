@@ -33,7 +33,7 @@ use crate::md;
 use crate::model::{
     ActivityItem, ActivityKind, AgentSession, BackgroundWorkEvent, BackgroundWorkItem,
     BackgroundWorkKey, BackgroundWorkKind, BackgroundWorkStatus, ChatGptHistorySeed, ChatGroup,
-    Checkpoint, CheckpointStatus, ContextUsage, DriverEvent, FavoriteModel, Message,
+    Checkpoint, CheckpointStatus, ContextUsage, DriverEvent, FavoriteModel, ForkMetadata, Message,
     MessageAttachment, MessageRole, PendingPermission, Project, ProviderKind, ProviderModel,
     ProviderProbe, ProviderResumeCursor, ProviderSessionHistory, ProviderSessionSummary,
     QueuedMessage, ReasoningBlock, RuntimeMode, SessionStatus, SessionWorkspace, TranscriptBlock,

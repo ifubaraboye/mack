@@ -1920,6 +1920,59 @@ fn memory_settings_page_is_searchable_and_localized() {
 }
 
 #[test]
+fn selection_fork_anchors_at_the_earliest_selected_message() {
+    use super::Waku;
+    use crate::md::selection::{Span, TextKey};
+    use std::rc::Rc;
+
+    let project_id = Uuid::new_v4();
+    let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
+    session.begin_turn("first");
+    session.push_message(MessageRole::Assistant, "first answer");
+    session.finish_active_turn(TurnStatus::Completed);
+    session.begin_turn("second");
+    session.push_message(MessageRole::Assistant, "second answer");
+    session.finish_active_turn(TurnStatus::Completed);
+
+    let span_for = |index: usize| Span {
+        key: TextKey::new(format!("message-{}", session.messages[index].id), 0),
+        range: 0..4,
+        text: Rc::from("sel"),
+        block_break: false,
+    };
+    // Spans in either order resolve to the earliest message.
+    assert_eq!(
+        Waku::resolve_fork_anchor(&session, &[span_for(3), span_for(1)]),
+        Some((1, session.messages[1].id))
+    );
+    assert_eq!(
+        Waku::resolve_fork_anchor(&session, &[span_for(1)]),
+        Some((1, session.messages[1].id))
+    );
+    // Empty selection refuses.
+    assert_eq!(Waku::resolve_fork_anchor(&session, &[]), None);
+    // A span from another session refuses the whole fork.
+    let foreign = Span {
+        key: TextKey::new(format!("message-{}", Uuid::new_v4()), 0),
+        range: 0..4,
+        text: Rc::from("sel"),
+        block_break: false,
+    };
+    assert_eq!(
+        Waku::resolve_fork_anchor(&session, &[span_for(1), foreign]),
+        None
+    );
+    // A malformed row refuses too.
+    let malformed = Span {
+        key: TextKey::new("composer-1", 0),
+        range: 0..4,
+        text: Rc::from("sel"),
+        block_break: false,
+    };
+    assert_eq!(Waku::resolve_fork_anchor(&session, &[malformed]), None);
+}
+
+#[test]
 fn hidden_settings_pages_stay_out_of_navigation() {
     use super::SettingsPage;
 
