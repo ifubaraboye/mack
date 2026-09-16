@@ -698,7 +698,8 @@ pub struct ResponsesDefaults {
 /// - `reasoning` must be configured (Codex models always reason);
 /// - `include` must request `reasoning.encrypted_content` so reasoning
 ///   carries across turns without server-side storage;
-/// - input items must not carry server-side ids; `item_reference` items
+/// - input items must not carry server-side ids, except `web_search_call`
+///   items (their `ws_...` id round-trips); `item_reference` items
 ///   (an AI-SDK construct) are removed;
 /// - `max_output_tokens` / `max_completion_tokens` are rejected.
 pub fn normalize_responses_body(
@@ -795,12 +796,17 @@ pub fn normalize_responses_body(
 }
 
 /// Strips server-side ids from input items and removes `item_reference`
-/// entries, which the stateless Codex API does not accept.
+/// entries, which the stateless Codex API does not accept. The one exception
+/// is `web_search_call` items: they record a provider-side search whose
+/// `ws_...` id must round-trip verbatim so the resend keeps its identity.
 pub fn filter_codex_input(input: &[Value]) -> Vec<Value> {
     input
         .iter()
         .filter(|item| item.get("type").and_then(Value::as_str) != Some("item_reference"))
         .map(|item| {
+            if item.get("type").and_then(Value::as_str) == Some("web_search_call") {
+                return item.clone();
+            }
             if let Some(object) = item.as_object() {
                 let mut rest = object.clone();
                 rest.remove("id");
@@ -1514,6 +1520,27 @@ mod tests {
                 json!("plain"),
                 json!(42),
             ]
+        );
+    }
+
+    #[test]
+    fn input_filtering_preserves_web_search_call_ids() {
+        // The `ws_...` id is the prior search's identity on resend; every
+        // other server-side id is still stripped.
+        let search = json!({
+            "id": "ws_keep_me",
+            "type": "web_search_call",
+            "status": "completed",
+            "action": {"type": "search", "queries": ["q"]},
+        });
+        let input = vec![
+            json!({"type": "message", "id": "a", "role": "user"}),
+            search.clone(),
+            json!({"type": "item_reference", "id": "b"}),
+        ];
+        assert_eq!(
+            filter_codex_input(&input),
+            vec![json!({"type": "message", "role": "user"}), search,]
         );
     }
 

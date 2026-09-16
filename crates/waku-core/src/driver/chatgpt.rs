@@ -45,7 +45,9 @@ use crate::chatgpt_session::{
     CURL_PATH, ChatGptSessionManager, FreshAuth, default_session_manager,
 };
 use crate::model::CHATGPT_HISTORY_SEED_LIMIT;
-use crate::model::{ChatGptHistoryRole, ChatGptHistorySeed, DriverEvent, ProviderResumeCursor};
+use crate::model::{
+    ActivityKind, ChatGptHistoryRole, ChatGptHistorySeed, DriverEvent, ProviderResumeCursor,
+};
 
 /// Total curl wall-clock budget per turn attempt. Streaming turns run for
 /// minutes; unary auth calls keep their own 20s budget elsewhere.
@@ -295,17 +297,29 @@ fn network_error(message: &str) -> ChatGptError {
 /// Builds one `/responses` request body: selected model, full client-side
 /// input history, `stream: true`, then Stage 1 normalization (stateless
 /// `store: false`, reasoning defaults, encrypted-content include, id
-/// stripping, token-cap rejection). Returns the model and the JSON text.
+/// stripping, token-cap rejection). When `web_search` is set, the
+/// provider-managed `web_search` tool rides along (`tool_choice` defaults to
+/// `auto`, so the model searches only when it judges it useful); the search
+/// executes inside the provider — Waku never sees credentials for it and
+/// runs no tool loop. Title generation passes `false`: a 6-word title must
+/// never spend a search. Returns the model and the JSON text.
 fn build_responses_body(
     model: &str,
     input: Vec<Value>,
     reasoning_effort: Option<&str>,
     service_tier: Option<&str>,
+    web_search: bool,
 ) -> Result<(String, String), ChatGptError> {
     let mut body = Map::new();
     body.insert("model".to_owned(), Value::String(model.to_owned()));
     body.insert("input".to_owned(), Value::Array(input));
     body.insert("stream".to_owned(), Value::Bool(true));
+    if web_search {
+        body.insert(
+            "tools".to_owned(),
+            serde_json::json!([{"type": "web_search"}]),
+        );
+    }
     let resolved = validate_responses_request(&mut body, model, None)?;
     let normalized = normalize_responses_body(
         body,
@@ -617,7 +631,7 @@ impl Worker {
         let input = vec![
             serde_json::json!({"role":"user","content":[{"type":"input_text","text":title_prompt}]}),
         ];
-        let Ok((_, body)) = build_responses_body(&model, input, None, None) else {
+        let Ok((_, body)) = build_responses_body(&model, input, None, None, false) else {
             return;
         };
         let config = self.manager.config();
@@ -704,6 +718,7 @@ impl Worker {
                 input.clone(),
                 options.reasoning_effort.as_deref(),
                 tier.as_deref(),
+                true,
             ) {
                 Ok(built) => built,
                 Err(_) => {
@@ -712,8 +727,12 @@ impl Worker {
                 }
             };
             match self.post_once(&auth, &body, tier.as_deref(), turn_generation) {
-                PostOutcome::Done { output, text } => {
-                    self.commit_history(user_message.clone(), output, text);
+                PostOutcome::Done {
+                    output,
+                    text,
+                    search_calls,
+                } => {
+                    self.commit_history(user_message.clone(), output, text, search_calls);
                     return TurnEnd::Completed;
                 }
                 PostOutcome::Interrupted => {
@@ -804,10 +823,14 @@ impl Worker {
     }
 
     /// Reads SSE chunks to completion, emitting deltas as they arrive.
+    /// Provider search items accumulate here: the observed backend leaves
+    /// `response.completed.response.output` empty, so the streaming
+    /// `output_item.done` events are the authoritative search record.
     fn consume_stream(&mut self, generation: u64) -> PostOutcome {
         let mut parser = ResponsesSseParser::new();
         let mut decoder = Utf8StreamDecoder::new();
         let mut text = String::new();
+        let mut search_calls = Vec::new();
         let mut buf = [0_u8; 8192];
         loop {
             let read = match self.shared.body.lock().as_mut() {
@@ -840,16 +863,15 @@ impl Worker {
                                 return PostOutcome::Done {
                                     output: completed_output_items(&payload),
                                     text: std::mem::take(&mut text),
+                                    search_calls: std::mem::take(&mut search_calls),
                                 };
                             }
                             ResponsesStreamEvent::Failed => {
                                 return PostOutcome::Fatal(RESPONSE_FAILED_MESSAGE.to_owned());
                             }
-                            ResponsesStreamEvent::WebSearchCall(_) => {
-                                // Phase 1: recognized at the protocol layer so
-                                // the search item is no longer dropped.
-                                // History capture lands in the activation
-                                // phase; no behavior change yet.
+                            ResponsesStreamEvent::WebSearchCall(item) => {
+                                self.emit_search_activity(&item);
+                                search_calls.push(item);
                             }
                         }
                     }
@@ -862,6 +884,38 @@ impl Worker {
                 }
             }
         }
+    }
+
+    /// Surfaces one completed provider search as a transcript activity row.
+    /// The `output_item.done` event arrives when the search already
+    /// finished, so the row lands complete — no start/progress events are
+    /// needed. The title is the model's own query text (joined when the
+    /// provider ran several); the `ws_...` id links the row for updates.
+    fn emit_search_activity(&self, item: &Value) {
+        let queries: Vec<&str> = item
+            .get("action")
+            .and_then(|action| action.get("queries"))
+            .and_then(Value::as_array)
+            .map(|queries| {
+                queries
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter(|query| !query.trim().is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let title = if queries.is_empty() {
+            "Web search".to_owned()
+        } else {
+            queries.join(" · ")
+        };
+        self.emit(DriverEvent::Activity {
+            id: item.get("id").and_then(Value::as_str).map(str::to_owned),
+            kind: ActivityKind::Search,
+            title,
+            detail: None,
+            complete: true,
+        });
     }
 
     /// Rebuilds the worker's resend-history from the persisted-transcript
@@ -894,18 +948,29 @@ impl Worker {
         (history, turn_starts)
     }
 
-    /// Appends a completed turn (user message plus endpoint output items) to
-    /// the client-side history. When the completed payload carries no output
-    /// items, the streamed text rebuilds the assistant message so the next
-    /// turn still sees it. Ids are stripped: the stateless endpoint rejects
-    /// server-side ids on resubmission.
-    fn commit_history(&mut self, user_message: Value, output: Vec<Value>, text: String) {
-        let items = if output.is_empty() && !text.is_empty() {
-            vec![
+    /// Appends a completed turn (user message, any provider search items,
+    /// plus endpoint output items) to the client-side history. When the
+    /// completed payload carries no output items, the streamed text rebuilds
+    /// the assistant message so the next turn still sees it. Search items
+    /// keep their `ws_...` ids: they are history of a provider-side action,
+    /// not server-side reasoning ids, and the resend must link them.
+    /// (Restart reseeding drops them by design — the persisted transcript
+    /// holds only user/assistant text, and the grounded answer text carries
+    /// the semantic context forward.)
+    fn commit_history(
+        &mut self,
+        user_message: Value,
+        output: Vec<Value>,
+        text: String,
+        search_calls: Vec<Value>,
+    ) {
+        let mut items = search_calls;
+        if output.is_empty() && !text.is_empty() {
+            items.push(
                 serde_json::json!({"role":"assistant","content":[{"type":"output_text","text":text}]}),
-            ]
+            );
         } else {
-            filter_codex_input(&output)
+            items.extend(filter_codex_input(&output));
         };
         self.turn_starts.push(self.history.len());
         self.history.push(user_message);
@@ -943,7 +1008,11 @@ enum TurnEnd {
 }
 
 enum PostOutcome {
-    Done { output: Vec<Value>, text: String },
+    Done {
+        output: Vec<Value>,
+        text: String,
+        search_calls: Vec<Value>,
+    },
     Interrupted,
     Fatal(String),
     RetryAuth,
@@ -1395,6 +1464,119 @@ mod tests {
         assert_eq!(input.last().unwrap()["content"][0]["text"], "And again");
         // Stateless resubmission carries no server-side ids.
         for item in input {
+            assert!(
+                item.get("id").is_none(),
+                "history item carries id: {item:?}"
+            );
+        }
+    }
+
+    fn sse_search_done_frame(id: &str, query: &str) -> String {
+        format!(
+            "data: {{\"type\":\"response.output_item.done\",\"item\":{}}}\n\n",
+            serde_json::json!({
+                "id": id,
+                "type": "web_search_call",
+                "status": "completed",
+                "action": {"type": "search", "queries": [query]},
+            })
+        )
+    }
+
+    #[test]
+    fn chat_turns_carry_the_web_search_tool() {
+        let completed = sse_completed_frame();
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![completed.as_bytes()],
+        )]));
+        let (driver, receiver) =
+            start_driver(authenticated_manager(), transport.clone(), Some("gpt-5.5"));
+        driver.prompt("Hello".to_owned());
+        collect_until_finished(&receiver);
+        let requests = transport.requests.lock();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].body["tools"],
+            serde_json::json!([{"type": "web_search"}])
+        );
+    }
+
+    #[test]
+    fn title_requests_carry_no_web_search_tool() {
+        // Unit-level: title generation must never spend a provider search.
+        for web_search in [false, true] {
+            let (_, body) =
+                build_responses_body("gpt-5.5", Vec::new(), None, None, web_search).unwrap();
+            let body: Value = serde_json::from_str(&body).unwrap();
+            if web_search {
+                assert_eq!(body["tools"], serde_json::json!([{"type": "web_search"}]));
+            } else {
+                assert!(body.get("tools").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn search_turn_commits_ws_item_and_resends_its_id() {
+        // Turn 1 performs a provider search (Completed carries `output: []`,
+        // the search record arrives via streaming `output_item.done`). Turn 2
+        // must resend [user, search (id intact), assistant, user].
+        let search = sse_search_done_frame("ws_live_1", "current president of Nigeria 2026");
+        let first = format!("{search}{}", sse_text_frame("Tinubu"));
+        let completed = sse_completed_frame();
+        let second_text = sse_text_frame("Thanks");
+        let transport = Arc::new(MockTransport::with_streams(vec![
+            MockTransport::ok(200, vec![first.as_bytes(), completed.as_bytes()]),
+            MockTransport::ok(200, vec![second_text.as_bytes(), completed.as_bytes()]),
+        ]));
+        let (driver, receiver) =
+            start_driver(authenticated_manager(), transport.clone(), Some("gpt-5.5"));
+        driver.prompt("Who is the president of Nigeria?".to_owned());
+        let events = collect_until_finished(&receiver);
+        assert!(matches!(
+            events.last(),
+            Some(DriverEvent::TurnFinished { success: true, .. })
+        ));
+        // The completed search surfaces as a transcript activity row.
+        let search_activities: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                DriverEvent::Activity {
+                    kind,
+                    title,
+                    complete,
+                    ..
+                } => (*kind == ActivityKind::Search).then(|| (title.clone(), *complete)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            search_activities,
+            vec![("current president of Nigeria 2026".to_owned(), true)]
+        );
+
+        driver.prompt("And his deputy?".to_owned());
+        collect_until_finished(&receiver);
+        let requests = transport.requests.lock();
+        assert_eq!(requests.len(), 2);
+        let input = requests[1].body["input"].as_array().unwrap();
+        assert_eq!(
+            input.len(),
+            4,
+            "user + search + assistant + user: {input:?}"
+        );
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[1]["type"], "web_search_call");
+        assert_eq!(
+            input[1].get("id").and_then(Value::as_str),
+            Some("ws_live_1"),
+            "search id survives commit + request normalization: {input:?}"
+        );
+        assert_eq!(input[2]["role"], "assistant");
+        assert_eq!(input[3]["content"][0]["text"], "And his deputy?");
+        // Every other item still carries no server-side id.
+        for item in [&input[0], &input[2], &input[3]] {
             assert!(
                 item.get("id").is_none(),
                 "history item carries id: {item:?}"
@@ -1854,7 +2036,12 @@ mod tests {
                 "role": "user",
                 "content": [{"type": "input_text", "text": *user}],
             });
-            worker.commit_history(user_message, Vec::new(), (*assistant).to_owned());
+            worker.commit_history(
+                user_message,
+                Vec::new(),
+                (*assistant).to_owned(),
+                Vec::new(),
+            );
         }
         (worker.history, worker.turn_starts)
     }
