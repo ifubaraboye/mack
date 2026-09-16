@@ -2048,7 +2048,6 @@ impl Waku {
                     cx,
                 ),
             )
-            .child(self.render_background_work_summary(cx))
             .when(!self.right_panel_visible, |element| {
                 element
                     .when(self.fps_counter_visible, |element| {

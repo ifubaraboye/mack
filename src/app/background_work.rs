@@ -7,7 +7,6 @@ const OUTPUT_CACHE_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 /// last detached work settled. Claude re-enters the model a few seconds after
 /// the settle; a first token that slow is a wake in progress, not a no-show.
 const BACKGROUND_RESUME_GRACE: Duration = Duration::from_secs(30);
-const BACKGROUND_SUMMARY_MENU_ID: &str = "background-work-summary";
 
 #[derive(Default)]
 pub(super) struct BackgroundWorkRegistry {
@@ -35,13 +34,6 @@ impl Default for BackgroundOutputViewport {
             scrollbar: ScrollbarState::new(),
         }
     }
-}
-
-#[derive(Clone)]
-struct BackgroundSummaryEntry {
-    item: BackgroundWorkItem,
-    row_focus: FocusHandle,
-    stop_focus: FocusHandle,
 }
 
 impl BackgroundWorkRegistry {
@@ -277,26 +269,6 @@ impl BackgroundWorkRegistry {
             .any(|item| item.background && item.status.is_live())
     }
 
-    fn counts(&self) -> (usize, usize) {
-        self.items
-            .values()
-            .filter(|item| item.status.is_live())
-            .fold((0, 0), |(processes, agents), item| match item.key.kind {
-                BackgroundWorkKind::Subagent => (processes, agents + 1),
-                BackgroundWorkKind::Process | BackgroundWorkKind::Monitor => {
-                    (processes + 1, agents)
-                }
-            })
-    }
-
-    fn ordered_items(&self) -> Vec<&BackgroundWorkItem> {
-        self.order
-            .iter()
-            .rev()
-            .filter_map(|key| self.items.get(key))
-            .collect()
-    }
-
     pub(super) fn selected_text(&self) -> Option<String> {
         self.selection.selection.borrow().selected_text()
     }
@@ -393,27 +365,6 @@ fn work_status_icon(status: BackgroundWorkStatus) -> &'static str {
         BackgroundWorkStatus::Completed => "icons/check.svg",
         BackgroundWorkStatus::Failed => "icons/x.svg",
         BackgroundWorkStatus::Lost => "icons/alert.svg",
-    }
-}
-
-fn background_summary_process_status_icon(
-    kind: BackgroundWorkKind,
-    status: BackgroundWorkStatus,
-) -> Option<&'static str> {
-    if !matches!(
-        kind,
-        BackgroundWorkKind::Process | BackgroundWorkKind::Monitor
-    ) {
-        return None;
-    }
-
-    match status {
-        BackgroundWorkStatus::Starting
-        | BackgroundWorkStatus::Running
-        | BackgroundWorkStatus::Monitoring
-        | BackgroundWorkStatus::Completed
-        | BackgroundWorkStatus::Failed => Some(work_status_icon(status)),
-        _ => None,
     }
 }
 
@@ -546,13 +497,6 @@ impl Waku {
         self.background_work
             .get(&session_id)
             .is_some_and(BackgroundWorkRegistry::has_live_detached)
-    }
-
-    pub(super) fn background_work_counts(&self, session_id: Uuid) -> (usize, usize) {
-        self.background_work
-            .get(&session_id)
-            .map(BackgroundWorkRegistry::counts)
-            .unwrap_or_default()
     }
 
     pub(super) fn background_work_for_activity(
@@ -688,102 +632,6 @@ impl Waku {
             self.select_session(session_id, cx);
         }
         self.open_right_panel_surface(RightPanelSurface::BackgroundWork { key, title }, cx);
-    }
-
-    pub(super) fn render_background_work_summary(&self, cx: &mut Context<Self>) -> AnyElement {
-        let session = self.selected_session();
-        let session_id = session.map(|session| session.id);
-        let entries = session_id
-            .and_then(|session_id| self.background_work.get(&session_id))
-            .map(|registry| {
-                registry
-                    .ordered_items()
-                    .into_iter()
-                    .cloned()
-                    .map(|item| {
-                        let kind = item.key.kind as u8;
-                        let provider_id = &item.key.provider_id;
-                        BackgroundSummaryEntry {
-                            row_focus: self.transcript_control_focus(
-                                format!("background-summary-row-{provider_id}-{kind}"),
-                                cx,
-                            ),
-                            stop_focus: self.transcript_control_focus(
-                                format!("background-summary-stop-{provider_id}-{kind}"),
-                                cx,
-                            ),
-                            item,
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let (processes, agents) = session_id
-            .map(|session_id| self.background_work_counts(session_id))
-            .unwrap_or_default();
-        let has_live_work = processes > 0 || agents > 0;
-        let summary = background_work_count_summary(processes, agents);
-        let theme = Theme::current(cx);
-        let handle = self.menu_handle(BACKGROUND_SUMMARY_MENU_ID, cx);
-        let trigger = div()
-            .id("background-summary-trigger")
-            .size(px(28.0))
-            .relative()
-            .rounded(px(7.0))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_default()
-            .focus_visible(|style| {
-                style
-                    .bg(theme.overlay)
-                    .border_1()
-                    .border_color(theme.accent)
-            })
-            .hover(|style| style.bg(theme.overlay))
-            .when(handle.is_open(), |style| style.bg(theme.overlay_strong))
-            .tooltip(Tooltip::text(if summary.is_empty() {
-                tr!("background.title")
-            } else {
-                summary
-            }))
-            .child(icon("icons/info.svg", 15.0, theme.text_tertiary))
-            .when(has_live_work, |trigger| {
-                trigger.child(
-                    div()
-                        .absolute()
-                        .top(px(4.0))
-                        .right(px(4.0))
-                        .child(pulse_dot(5.0, theme.accent)),
-                )
-            });
-        let entries = Rc::new(entries);
-        let weak = cx.entity().downgrade();
-        let info = popover(
-            trigger,
-            &handle,
-            MenuAlign::BelowRight,
-            move |handle, _, cx| {
-                render_background_summary_card(
-                    handle,
-                    session_id.unwrap_or_else(Uuid::nil),
-                    entries.clone(),
-                    weak.clone(),
-                    cx,
-                )
-            },
-        );
-        div()
-            .id("header-background-controls")
-            .tab_group()
-            .tab_stop(false)
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .child(info)
-            .into_any_element()
     }
 
     /// Resolve the "open project in app" targets once, off-thread; the header
@@ -1123,264 +971,6 @@ fn background_work_selection_input(selection: TranscriptSelection) -> impl IntoE
     .h(px(0.0))
 }
 
-fn background_work_count_summary(processes: usize, agents: usize) -> String {
-    let mut parts = Vec::new();
-    if processes > 0 {
-        parts.push(if processes == 1 {
-            tr!("background.process_count_one")
-        } else {
-            tr!("background.process_count", count = processes)
-        });
-    }
-    if agents > 0 {
-        parts.push(if agents == 1 {
-            tr!("background.agent_count_one")
-        } else {
-            tr!("background.agent_count", count = agents)
-        });
-    }
-    parts.join(" · ")
-}
-
-fn render_background_summary_card(
-    handle: &ContextMenuHandle,
-    session_id: Uuid,
-    entries: Rc<Vec<BackgroundSummaryEntry>>,
-    weak: WeakEntity<Waku>,
-    cx: &mut App,
-) -> AnyElement {
-    let theme = Theme::current(cx);
-    let processes = entries
-        .iter()
-        .filter(|entry| entry.item.key.kind != BackgroundWorkKind::Subagent)
-        .cloned()
-        .collect::<Vec<_>>();
-    let agents = entries
-        .iter()
-        .filter(|entry| entry.item.key.kind == BackgroundWorkKind::Subagent)
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut content = div()
-        .id("background-summary-scroll")
-        .max_h(px(420.0))
-        .overflow_y_scroll()
-        .p(px(8.0))
-        .flex()
-        .flex_col()
-        .gap(px(8.0));
-    if !processes.is_empty() {
-        content = content.child(render_background_summary_section(
-            tr!("background.processes"),
-            processes,
-            session_id,
-            handle.clone(),
-            weak.clone(),
-            &theme,
-        ));
-    }
-    if !agents.is_empty() {
-        content = content.child(render_background_summary_section(
-            tr!("background.agents"),
-            agents,
-            session_id,
-            handle.clone(),
-            weak.clone(),
-            &theme,
-        ));
-    }
-    div()
-        .id("background-summary-card")
-        .track_focus(handle.focus_handle())
-        .w(px(300.0))
-        .rounded(px(12.0))
-        .border_1()
-        .border_color(theme.border_strong)
-        .overflow_hidden()
-        .bg(theme.raised)
-        .shadow_lg()
-        .child(content)
-        .into_any_element()
-}
-
-fn render_background_summary_section(
-    label: String,
-    entries: Vec<BackgroundSummaryEntry>,
-    session_id: Uuid,
-    handle: ContextMenuHandle,
-    weak: WeakEntity<Waku>,
-    theme: &Theme,
-) -> Div {
-    let mut rows = div().w_full().flex().flex_col().gap(px(2.0));
-    for entry in entries {
-        rows = rows.child(render_background_summary_row(
-            entry,
-            session_id,
-            handle.clone(),
-            weak.clone(),
-            theme,
-        ));
-    }
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap(px(5.0))
-        .child(
-            div()
-                .px(px(8.0))
-                .text_size(sp(13.0))
-                .text_color(theme.text_tertiary)
-                .child(label),
-        )
-        .child(rows)
-}
-
-fn render_background_summary_row(
-    entry: BackgroundSummaryEntry,
-    session_id: Uuid,
-    handle: ContextMenuHandle,
-    weak: WeakEntity<Waku>,
-    theme: &Theme,
-) -> Stateful<Div> {
-    let item = entry.item;
-    let group_name = SharedString::from(format!(
-        "background-summary-group-{}-{}",
-        item.key.provider_id, item.key.kind as u8
-    ));
-    let status = background_summary_process_status_icon(item.key.kind, item.status).map(|_| {
-        div()
-            .absolute()
-            .inset_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .when(item.status.is_stoppable() && item.can_stop, |status| {
-                status.group_hover(group_name.clone(), |style| style.invisible())
-            })
-            .child(rendered_work_status_icon(
-                item.status,
-                12.0,
-                work_status_color(item.status, *theme),
-            ))
-    });
-    let stop = (item.status.is_stoppable() && item.can_stop).then(|| {
-        let click_key = item.key.clone();
-        let click_weak = weak.clone();
-        let key_key = item.key.clone();
-        let key_weak = weak.clone();
-        div()
-            .id(SharedString::from(format!(
-                "background-summary-stop-{}-{}",
-                item.key.provider_id, item.key.kind as u8
-            )))
-            .track_focus(&entry.stop_focus)
-            .tab_index(0)
-            .size(px(24.0))
-            .rounded(px(6.0))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_default()
-            .opacity(0.0)
-            .group_hover(group_name.clone(), |style| style.opacity(1.0))
-            .hover(|style| style.bg(theme.overlay_strong))
-            .focus_visible(|style| {
-                style
-                    .opacity(1.0)
-                    .bg(theme.raised)
-                    .border_1()
-                    .border_color(theme.accent)
-            })
-            .tooltip(Tooltip::text(tr!("background.stop")))
-            .child(icon("icons/stop-filled.svg", 12.0, theme.text_tertiary))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, _, cx| {
-                cx.stop_propagation();
-                let _ = click_weak.update(cx, |this, cx| {
-                    this.stop_background_work(session_id, click_key.clone(), cx);
-                });
-            })
-            .on_key_down(move |event: &KeyDownEvent, _, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    let _ = key_weak.update(cx, |this, cx| {
-                        this.stop_background_work(session_id, key_key.clone(), cx);
-                    });
-                    cx.stop_propagation();
-                }
-            })
-    });
-    let trailing = (status.is_some() || stop.is_some()).then(|| {
-        div()
-            .relative()
-            .size(px(24.0))
-            .flex_none()
-            .children(status)
-            .children(stop)
-    });
-    let is_process = item.key.kind != BackgroundWorkKind::Subagent;
-    let open_key = item.key.clone();
-    let key_key = open_key.clone();
-    let click_handle = handle.clone();
-    let click_weak = weak.clone();
-    let key_handle = handle;
-    let key_weak = weak;
-    div()
-        .id(SharedString::from(format!(
-            "background-summary-row-{}-{}",
-            item.key.provider_id, item.key.kind as u8
-        )))
-        .group(group_name)
-        .track_focus(&entry.row_focus)
-        .tab_index(0)
-        .h(px(32.0))
-        .w_full()
-        .px(px(8.0))
-        .rounded(px(8.0))
-        .flex()
-        .items_center()
-        .gap(px(9.0))
-        .cursor_default()
-        .focus_visible(|style| style.border_1().border_color(theme.accent))
-        .hover(|style| style.bg(theme.overlay_strong))
-        .child(icon(
-            work_kind_icon(item.key.kind),
-            14.0,
-            theme.text_secondary,
-        ))
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .truncate()
-                .text_size(px(if is_process { 12.5 } else { 13.5 }))
-                .text_color(if is_process {
-                    theme.text_secondary
-                } else {
-                    theme.text
-                })
-                .child(single_line_label(&item.title)),
-        )
-        .children(trailing)
-        .on_click(move |_, window, cx| {
-            click_handle.close(window, cx);
-            window.refresh();
-            let _ = click_weak.update(cx, |this, cx| {
-                this.open_background_work_surface(session_id, open_key.clone(), cx);
-            });
-        })
-        .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                key_handle.close(window, cx);
-                window.refresh();
-                let _ = key_weak.update(cx, |this, cx| {
-                    this.open_background_work_surface(session_id, key_key.clone(), cx);
-                });
-                cx.stop_propagation();
-            }
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1394,58 +984,6 @@ mod tests {
         );
         item.background = background;
         item
-    }
-
-    #[test]
-    fn info_popover_uses_distinct_process_status_icons() {
-        assert_eq!(
-            background_summary_process_status_icon(
-                BackgroundWorkKind::Process,
-                BackgroundWorkStatus::Completed,
-            ),
-            Some("icons/check.svg")
-        );
-        assert_eq!(
-            background_summary_process_status_icon(
-                BackgroundWorkKind::Monitor,
-                BackgroundWorkStatus::Failed,
-            ),
-            Some("icons/x.svg")
-        );
-        assert_eq!(
-            background_summary_process_status_icon(
-                BackgroundWorkKind::Process,
-                BackgroundWorkStatus::Running,
-            ),
-            Some("icons/loader-circle.svg")
-        );
-        assert_eq!(
-            background_summary_process_status_icon(
-                BackgroundWorkKind::Subagent,
-                BackgroundWorkStatus::Completed,
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn info_popover_background_titles_stay_on_one_line() {
-        let source = include_str!("background_work.rs");
-        let row = source
-            .split_once("\nfn render_background_summary_row(")
-            .expect("background summary row renderer")
-            .1
-            .split_once("\n#[cfg(test)]")
-            .expect("background summary row renderer end")
-            .0;
-
-        assert!(row.contains(".truncate()"));
-        assert!(row.contains(".child(single_line_label(&item.title))"));
-        assert!(!row.contains(".line_clamp(1)"));
-        assert_eq!(
-            single_line_label("/bin/zsh -lc 'set -euo pipefail\n  for n in one two'"),
-            "/bin/zsh -lc 'set -euo pipefail for n in one two'"
-        );
     }
 
     #[test]

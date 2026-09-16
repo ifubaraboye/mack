@@ -32,24 +32,23 @@ updater.updating: アップデート中…
 updater.up_to_date: Waku は最新です
 updater.failed: "アップデートに失敗しました：%{error}"
 
-command_palette.placeholder: タスクを検索、またはコマンドを実行…
+command_palette.placeholder: チャットを検索、またはコマンドを実行…
 command_palette.resume_placeholder: ターミナルセッションを検索…
 command_palette.resume_provider_placeholder: プロバイダーを選択…
 command_palette.suggested: おすすめ
-command_palette.tasks: タスク
 command_palette.chats: チャット
 command_palette.sessions: ターミナルセッション
 command_palette.providers: プロバイダー
 command_palette.commands: コマンド
 command_palette.settings: 設定
-command_palette.new_task: 新規タスク
+command_palette.new_task: 新規チャット
 command_palette.resume: 再開…
 command_palette.change_provider: プロバイダーを変更
 command_palette.current_provider: 現在のプロバイダー
 command_palette.choose_model: モデルを選択…
-command_palette.copy_task_id: タスク ID をコピー
+command_palette.copy_task_id: チャット ID をコピー
 command_palette.copy_agent_cli_thread_id: エージェント CLI スレッド ID をコピー
-command_palette.task_id_copied: タスク ID をコピーしました
+command_palette.task_id_copied: チャット ID をコピーしました
 command_palette.agent_cli_thread_id_copied: エージェント CLI スレッド ID をコピーしました
 command_palette.collapse_sidebar_groups: サイドバーのすべてのグループを折りたたむ
 command_palette.show_sidebar: サイドバーを表示
@@ -59,8 +58,8 @@ command_palette.hide_right_panel: 右パネルを隠す
 command_palette.current: 現在
 command_palette.you: あなた
 command_palette.agent: エージェント
-command_palette.no_results: 一致するタスクやコマンドはありません
-command_palette.no_results_hint: タスク名、メッセージ、プロジェクト、設定、コマンドで検索してください
+command_palette.no_results: 一致するチャットやコマンドはありません
+command_palette.no_results_hint: チャット名、メッセージ、プロジェクト、設定、コマンドで検索してください
 command_palette.no_matching_providers: 一致するプロバイダーはありません
 command_palette.loading_sessions: ターミナルセッションを読み込み中…
 command_palette.no_resume_sessions: 再開できるターミナルセッションはありません

@@ -88,7 +88,7 @@ impl PaletteSection {
     fn label(self) -> String {
         crate::i18n::translate(match self {
             Self::Suggested => "command_palette.suggested",
-            Self::Tasks => "command_palette.tasks",
+            Self::Tasks => "command_palette.chats",
             Self::Chats => "command_palette.chats",
             Self::Sessions => "command_palette.sessions",
             Self::Providers => "command_palette.providers",
@@ -861,16 +861,7 @@ impl Waku {
                 "icons/pencil.svg",
                 Some(crate::platform::primary_shortcut("⌘N", "Ctrl+N")),
                 PaletteAction::NewTask,
-                "new task session chat conversation start",
-                next(),
-            ),
-            CommandPaletteItem::command(
-                display_section(PaletteSection::Suggested),
-                tr!("command_palette.resume"),
-                "icons/rotate-cw.svg",
-                None,
-                PaletteAction::Resume,
-                "resume continue restore import external terminal cli session conversation",
+                "new chat session conversation start",
                 next(),
             ),
         ];
@@ -931,7 +922,7 @@ impl Waku {
                 "icons/panel-left.svg",
                 Some(crate::platform::primary_shortcut("⌘B", "Ctrl+B")),
                 PaletteAction::ToggleSidebar,
-                "toggle show hide left sidebar history tasks",
+                "toggle show hide left sidebar history chats",
                 next(),
             ),
             CommandPaletteItem::command(
@@ -1051,7 +1042,7 @@ impl Waku {
                 CommandPaletteItem {
                     section: PaletteSection::Tasks,
                     search_text: format!(
-                        "{label} {project} {project_path} {} {} {} task session chat conversation",
+                        "{label} {project} {project_path} {} {} {} chat session conversation",
                         session.provider.short_name(),
                         session.provider.display_name(),
                         session.model.as_deref().unwrap_or_default(),
