@@ -304,14 +304,16 @@ fn network_error(message: &str) -> ChatGptError {
 /// provider-managed `web_search` tool rides along (`tool_choice` defaults to
 /// `auto`, so the model searches only when it judges it useful); the search
 /// executes inside the provider — Waku never sees credentials for it and
-/// runs no tool loop. Title generation passes `false`: a 6-word title must
-/// never spend a search. Returns the model and the JSON text.
+/// runs no tool loop. `instructions` overrides the default Codex system
+/// instructions when set (memory context); title generation passes `None`.
+/// Returns the model and the JSON text.
 fn build_responses_body(
     model: &str,
     input: Vec<Value>,
     reasoning_effort: Option<&str>,
     service_tier: Option<&str>,
     web_search: bool,
+    instructions: Option<String>,
 ) -> Result<(String, String), ChatGptError> {
     let mut body = Map::new();
     body.insert("model".to_owned(), Value::String(model.to_owned()));
@@ -329,6 +331,7 @@ fn build_responses_body(
         &crate::chatgpt_protocol::ResponsesDefaults {
             reasoning_effort: reasoning_effort.map(str::to_owned),
             service_tier: service_tier.map(str::to_owned),
+            instructions,
             ..Default::default()
         },
     );
@@ -648,7 +651,7 @@ impl Worker {
         let input = vec![
             serde_json::json!({"role":"user","content":[{"type":"input_text","text":title_prompt}]}),
         ];
-        let Ok((_, body)) = build_responses_body(&model, input, None, None, false) else {
+        let Ok((_, body)) = build_responses_body(&model, input, None, None, false, None) else {
             return;
         };
         let config = self.manager.config();
@@ -694,6 +697,35 @@ impl Worker {
     /// turn. Gated synchronously (no thread for trivial turns); the thread
     /// itself is fire-and-forget and emits no driver events, so the next
     /// prompt never waits on it.
+    /// Resolves the memory database handle: the daemon-plumbed path when
+    /// present, otherwise the default location (same database either way).
+    fn memory_store(&self) -> StateStore {
+        let db_path = self
+            .memory_db_path
+            .clone()
+            .unwrap_or_else(StateStore::default_path);
+        StateStore::daemon(db_path)
+    }
+
+    /// Retrieves the current turn's memory context, if any. Runs on the
+    /// worker thread (never the UI thread) over a short-lived read-only
+    /// connection. Every failure — no path, no table, no match — degrades to
+    /// `None` so the normal request proceeds exactly as without memories.
+    /// Memory contents are never logged.
+    fn retrieve_memory_instructions(&self, prompt: &str, account_id: &str) -> Option<String> {
+        let terms = memory::memory_search_terms(prompt);
+        if terms.is_empty() {
+            return None;
+        }
+        let memories = self.memory_store().search_memories_job(
+            terms,
+            account_id.to_owned(),
+            memory::MEMORY_RETRIEVAL_LIMIT,
+        )()
+        .unwrap_or_default();
+        memory::compose_memory_instructions(None, &memories)
+    }
+
     fn spawn_memory_extraction(&self) {
         if !memory::should_extract(&self.last_turn_user, &self.last_turn_assistant) {
             return;
@@ -701,11 +733,7 @@ impl Worker {
         let transport = Arc::clone(&self.transport);
         let manager = Arc::clone(&self.manager);
         let model = self.options.lock().model.clone().unwrap_or_default();
-        let db_path = self
-            .memory_db_path
-            .clone()
-            .unwrap_or_else(StateStore::default_path);
-        let store = StateStore::daemon(db_path);
+        let store = self.memory_store();
         let account_id = self.last_turn_account.clone();
         let user_text = self.last_turn_user.clone();
         let assistant_text = self.last_turn_assistant.clone();
@@ -763,6 +791,10 @@ impl Worker {
             serde_json::json!({"role":"user","content":[{"type":"input_text","text":prompt}]});
         input.push(user_message.clone());
 
+        // Cross-chat memories ride in `instructions`, never in `input`: the
+        // history below stays exactly what the conversation produced.
+        let instructions = self.retrieve_memory_instructions(prompt, auth.account_id());
+
         let mut auth = auth;
         let mut tier = options.service_tier.clone();
         let mut retried_auth = false;
@@ -774,6 +806,7 @@ impl Worker {
                 options.reasoning_effort.as_deref(),
                 tier.as_deref(),
                 true,
+                instructions.clone(),
             ) {
                 Ok(built) => built,
                 Err(_) => {
@@ -1089,7 +1122,7 @@ fn run_memory_extraction(
     let input = vec![
         serde_json::json!({"role":"user","content":[{"type":"input_text","text":memory::extraction_prompt(user_text, assistant_text)}]}),
     ];
-    let Ok((_, body)) = build_responses_body(model, input, None, None, false) else {
+    let Ok((_, body)) = build_responses_body(model, input, None, None, false, None) else {
         return;
     };
     let config = manager.config();
@@ -1507,6 +1540,7 @@ mod tests {
             computer_use_enabled: false,
             provider_cursor: None,
             chatgpt_history: None,
+            memory_db_path: None,
         }
     }
 
@@ -1665,7 +1699,7 @@ mod tests {
         // Unit-level: title generation must never spend a provider search.
         for web_search in [false, true] {
             let (_, body) =
-                build_responses_body("gpt-5.5", Vec::new(), None, None, web_search).unwrap();
+                build_responses_body("gpt-5.5", Vec::new(), None, None, web_search, None).unwrap();
             let body: Value = serde_json::from_str(&body).unwrap();
             if web_search {
                 assert_eq!(body["tools"], serde_json::json!([{"type": "web_search"}]));
@@ -1996,6 +2030,274 @@ mod tests {
             Some(DriverEvent::TurnFinished { success: false, .. })
         ));
         assert_eq!(transport.requests.lock().len(), 1);
+    }
+
+    fn worker_with_memory_db(
+        transport: Arc<MockTransport>,
+        db_path: std::path::PathBuf,
+    ) -> (Worker, Receiver<DriverEvent>) {
+        let (events, receiver) = test_event_channel();
+        let worker = Worker {
+            manager: authenticated_manager(),
+            transport: transport as Arc<dyn ResponsesStreamTransport>,
+            events,
+            shared: Arc::new(Shared {
+                body: Mutex::new(None),
+                generation: AtomicU64::new(0),
+                busy: AtomicBool::new(false),
+            }),
+            options: Arc::new(Mutex::new(LiveOptions {
+                model: Some("gpt-5.5".to_owned()),
+                ..Default::default()
+            })),
+            history: Vec::new(),
+            turn_starts: Vec::new(),
+            last_turn_user: String::new(),
+            last_turn_assistant: String::new(),
+            last_turn_account: String::new(),
+            memory_db_path: Some(db_path),
+        };
+        (worker, receiver)
+    }
+
+    #[test]
+    fn memory_retrieval_is_account_scoped() {
+        let (store, directory) = temp_memory_store();
+        let db_path = directory.join("app.db");
+        store
+            .insert_memory("The user likes noodles", "acct-A", None)
+            .unwrap();
+        store
+            .insert_memory("The user likes pizza", "acct-B", None)
+            .unwrap();
+        let (worker, _receiver) =
+            worker_with_memory_db(Arc::new(MockTransport::with_streams(Vec::new())), db_path);
+        let instructions_a = worker
+            .retrieve_memory_instructions("What food do I like?", "acct-A")
+            .unwrap();
+        assert!(instructions_a.contains("noodles"));
+        assert!(!instructions_a.contains("pizza"));
+        let instructions_b = worker
+            .retrieve_memory_instructions("What food do I like?", "acct-B")
+            .unwrap();
+        assert!(instructions_b.contains("pizza"));
+        assert!(!instructions_b.contains("noodles"));
+
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn memory_retrieval_ignores_deleted_memories() {
+        let (store, directory) = temp_memory_store();
+        let db_path = directory.join("app.db");
+        let id = store
+            .insert_memory("The user likes noodles", "acct-A", None)
+            .unwrap();
+        store.delete_memory(id).unwrap();
+        let (worker, _receiver) =
+            worker_with_memory_db(Arc::new(MockTransport::with_streams(Vec::new())), db_path);
+        assert!(
+            worker
+                .retrieve_memory_instructions("What food do I like?", "acct-A")
+                .is_none()
+        );
+
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn memory_context_enters_instructions_not_history() {
+        let (store, directory) = temp_memory_store();
+        let db_path = directory.join("app.db");
+        store
+            .insert_memory("The user likes noodles", TEST_ACCOUNT_ID, None)
+            .unwrap();
+        // Short answer keeps the combined turn under the extraction gate, so
+        // no background thread can interfere with the assertions below.
+        let chat = format!(
+            "{}{}",
+            sse_text_frame("You like noodles."),
+            sse_completed_frame()
+        );
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![chat.as_bytes()],
+        )]));
+        let (mut worker, receiver) = worker_with_memory_db(transport.clone(), db_path);
+        worker.run_turn("What food do I like?".to_owned());
+        let events = collect_until_finished(&receiver);
+        assert!(matches!(
+            events.last(),
+            Some(DriverEvent::TurnFinished { success: true, .. })
+        ));
+
+        let requests = transport.requests.lock();
+        assert_eq!(requests.len(), 1);
+        let body = &requests[0].body;
+        let instructions = body["instructions"].as_str().unwrap();
+        assert!(instructions.starts_with(crate::chatgpt_protocol::DEFAULT_CODEX_INSTRUCTIONS));
+        assert!(instructions.contains("Relevant memories about the user"));
+        assert!(instructions.contains("The user likes noodles"));
+        // History carries only the conversation: one user item in, user plus
+        // rebuilt assistant in memory — the stored fact appears nowhere else.
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        assert!(!input[0].to_string().contains("The user likes noodles"));
+        assert_eq!(worker.history.len(), 2);
+        assert!(
+            !worker
+                .history
+                .iter()
+                .any(|item| item.to_string().contains("The user likes noodles"))
+        );
+
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn turn_without_matching_memories_keeps_default_instructions() {
+        let (_store, directory) = temp_memory_store();
+        let db_path = directory.join("app.db");
+        let chat = format!(
+            "{}{}",
+            sse_text_frame("Nothing stored."),
+            sse_completed_frame()
+        );
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![chat.as_bytes()],
+        )]));
+        let (mut worker, receiver) = worker_with_memory_db(transport.clone(), db_path);
+        worker.run_turn("What food do I like?".to_owned());
+        collect_until_finished(&receiver);
+        let requests = transport.requests.lock();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].body["instructions"],
+            serde_json::json!(crate::chatgpt_protocol::DEFAULT_CODEX_INSTRUCTIONS)
+        );
+
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn title_generation_receives_no_memory_context() {
+        let (store, directory) = temp_memory_store();
+        let db_path = directory.join("app.db");
+        store
+            .insert_memory("The user likes noodles", TEST_ACCOUNT_ID, None)
+            .unwrap();
+        let title = format!(
+            "{}{}",
+            sse_text_frame("Food question"),
+            sse_completed_frame()
+        );
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![title.as_bytes()],
+        )]));
+        let (mut worker, _receiver) = worker_with_memory_db(transport.clone(), db_path);
+        worker.generate_title("What food do I like?".to_owned());
+        let requests = transport.requests.lock();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].body["instructions"],
+            serde_json::json!(crate::chatgpt_protocol::DEFAULT_CODEX_INSTRUCTIONS)
+        );
+        assert!(requests[0].body.get("tools").is_none());
+
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn broken_memory_database_still_sends_the_request() {
+        // A directory is not a database: every memory lookup fails, and the
+        // turn must proceed with default instructions regardless.
+        let directory = std::env::temp_dir().join(format!("waku-memory-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let chat = format!(
+            "{}{}",
+            sse_text_frame("Nothing stored."),
+            sse_completed_frame()
+        );
+        let transport = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![chat.as_bytes()],
+        )]));
+        let (mut worker, receiver) = worker_with_memory_db(transport.clone(), directory.clone());
+        worker.run_turn("What food do I like?".to_owned());
+        let events = collect_until_finished(&receiver);
+        assert!(matches!(
+            events.last(),
+            Some(DriverEvent::TurnFinished { success: true, .. })
+        ));
+        let requests = transport.requests.lock();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].body["instructions"],
+            serde_json::json!(crate::chatgpt_protocol::DEFAULT_CODEX_INSTRUCTIONS)
+        );
+
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn memory_created_in_one_session_is_retrieved_in_another() {
+        let (store, directory) = temp_memory_store();
+        let db_path = directory.join("app.db");
+        // Session A: background extraction stores the fact (scripted model
+        // answer, real persist path).
+        let extraction = format!(
+            "data: {{\"type\":\"response.output_text.delta\",\"delta\":{}}}\n\n{}",
+            serde_json::to_string("[\"The user likes noodles\"]").unwrap(),
+            sse_completed_frame(),
+        );
+        let transport_a = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![extraction.as_bytes()],
+        )]));
+        run_memory_extraction(
+            transport_a.as_ref(),
+            &authenticated_manager(),
+            "gpt-5.5",
+            &store,
+            TEST_ACCOUNT_ID,
+            None,
+            "My favorite food is noodles, just so you know.",
+            "Noted — noodles are your favorite!",
+        );
+        assert_eq!(store.list_memories(TEST_ACCOUNT_ID).unwrap().len(), 1);
+
+        // Session B: a different worker, same account and database. Its
+        // request carries the memory; neither session's history does.
+        let chat = format!(
+            "{}{}",
+            sse_text_frame("Noodles, obviously."),
+            sse_completed_frame()
+        );
+        let transport_b = Arc::new(MockTransport::with_streams(vec![MockTransport::ok(
+            200,
+            vec![chat.as_bytes()],
+        )]));
+        let (mut worker_b, receiver_b) = worker_with_memory_db(transport_b.clone(), db_path);
+        worker_b.run_turn("What food do I like?".to_owned());
+        collect_until_finished(&receiver_b);
+        let requests = transport_b.requests.lock();
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0].body["instructions"]
+                .as_str()
+                .is_some_and(|instructions| instructions.contains("The user likes noodles"))
+        );
+        assert_eq!(worker_b.history.len(), 2);
+        assert!(
+            !worker_b
+                .history
+                .iter()
+                .any(|item| item.to_string().contains("The user likes noodles"))
+        );
+
+        std::fs::remove_dir_all(directory).ok();
     }
 
     #[test]

@@ -192,6 +192,10 @@ pub struct DriverStartOptions {
     /// transcript. Consumed only by the ChatGPT driver; every other driver
     /// ignores it and keeps its native resume path.
     pub chatgpt_history: Option<Vec<ChatGptHistorySeed>>,
+    /// Daemon-owned database path for the cross-chat memory store. Filled by
+    /// the daemon at start (never sent over the wire); `None` falls back to
+    /// `StateStore::default_path()`. Consumed only by the ChatGPT driver.
+    pub memory_db_path: Option<PathBuf>,
 }
 
 /// The subset of `DriverStartOptions` a user can change without starting a new

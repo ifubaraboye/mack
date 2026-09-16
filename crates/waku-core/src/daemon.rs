@@ -667,6 +667,7 @@ impl Backend for WakuBackend {
                         .transpose()
                         .context("daemon received an invalid provider cursor")?,
                     chatgpt_history: options.chatgpt_history,
+                    memory_db_path: Some(self.task_store.path().to_owned()),
                 };
                 let (wake, _wake_events) = smol::channel::bounded(1);
                 let (event_sender, event_receiver) = driver::event_channel(wake);
@@ -1121,6 +1122,7 @@ impl WakuBackend {
                 // here. ChatGPT seeding happens only on the normal start
                 // path from the hydrated Waku transcript.
                 chatgpt_history: None,
+                memory_db_path: Some(self.task_store.path().to_owned()),
             },
             event_sender,
         )?;
@@ -1180,6 +1182,7 @@ impl WakuBackend {
                 // Same as the fork path above: no transcript seeding on
                 // rollback restarts.
                 chatgpt_history: None,
+                memory_db_path: Some(self.task_store.path().to_owned()),
             },
             event_sender,
         )?;
