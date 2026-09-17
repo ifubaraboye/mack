@@ -121,7 +121,7 @@ fi
 mkdir -p "$(dirname "$out")"
 rm -f "$out"
 ARCH="$arch" "$appimagetool_bin" --appimage-extract-and-run \
-  --comp gzip --no-appstream "$appdir" "$out"
+  --comp zstd --no-appstream "$appdir" "$out"
 chmod +x "$out"
 sha256sum "$out" | sed "s| .*|  $(basename "$out")|" >"$out.sha256"
 
