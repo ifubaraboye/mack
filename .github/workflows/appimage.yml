@@ -3,6 +3,10 @@ name: AppImage
 # Builds a Linux AppImage from main (plus tags and manual runs) and uploads
 # it as a workflow artifact. Download it from the Actions run summary.
 #
+# On v* tags, the AppImages are additionally attached to the same draft
+# GitHub release that release.yml creates (softprops/action-gh-release
+# updates the existing draft if there is one, or creates it otherwise).
+#
 # The AppImage intentionally omits the managed-install marker, so the in-app
 # updater stays dormant (a squashfs mount cannot swap itself in place) —
 # updates mean downloading a newer AppImage.
@@ -106,3 +110,31 @@ jobs:
             target/release/Waku-*.AppImage
             target/release/Waku-*.AppImage.sha256
           if-no-files-found: error
+
+  publish:
+    name: Attach AppImages to release
+    needs: build
+    # Run on tags even if one arch failed, so a good x86_64 build still
+    # reaches the release when e.g. the arm runner has issues.
+    if: startsWith(github.ref, 'refs/tags/v') && !cancelled() && needs.build.result != 'cancelled' && needs.build.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: appimage-*
+          merge-multiple: true
+          path: dist
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          tag_name: ${{ github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/Waku-*.AppImage
+            dist/Waku-*.AppImage.sha256
