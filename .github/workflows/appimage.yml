@@ -1,0 +1,108 @@
+name: AppImage
+
+# Builds a Linux AppImage from main (plus tags and manual runs) and uploads
+# it as a workflow artifact. Download it from the Actions run summary.
+#
+# The AppImage intentionally omits the managed-install marker, so the in-app
+# updater stays dormant (a squashfs mount cannot swap itself in place) —
+# updates mean downloading a newer AppImage.
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appimage-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: AppImage (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runs-on: ubuntu-22.04
+          - arch: aarch64
+            runs-on: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            clang \
+            cmake \
+            curl \
+            desktop-file-utils \
+            file \
+            libfontconfig-dev \
+            libvulkan1 \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libxi-dev \
+            libxtst-dev \
+            libxkbcommon-x11-dev \
+            patchelf \
+            pkg-config \
+            xdg-desktop-portal
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.runs-on }}-rust-1.96.0-appimage-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.runs-on }}-rust-1.96.0-appimage-
+
+      # `target/` is restored from cache, so a previous run's AppImage may
+      # still be sitting in `target/release`. Cargo does not own it.
+      - name: Clear stale AppImages
+        run: rm -f target/release/Waku-*.AppImage target/release/Waku-*.AppImage.sha256
+
+      - name: Bundle AppImage
+        env:
+          WAKU_ANALYTICS_ENDPOINT: ${{ secrets.WAKU_ANALYTICS_ENDPOINT }}
+          WAKU_ANALYTICS_WEBSITE_ID: ${{ secrets.WAKU_ANALYTICS_WEBSITE_ID }}
+        run: ./scripts/bundle-appimage.sh
+
+      - name: Validate AppImage
+        run: |
+          ls -la target/release/Waku-*.AppImage*
+          file target/release/Waku-*.AppImage
+          desktop-file-validate resources/linux/sh.waku.desktop
+          # The runtime handles --appimage-help itself, so this proves the
+          # squashfs + runtime work without launching the app (headless-safe).
+          appimage=(target/release/Waku-*.AppImage)
+          "${appimage[0]}" --appimage-help >/dev/null
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: appimage-${{ matrix.arch }}
+          path: |
+            target/release/Waku-*.AppImage
+            target/release/Waku-*.AppImage.sha256
+          if-no-files-found: error
