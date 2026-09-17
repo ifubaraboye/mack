@@ -275,6 +275,41 @@ pub(super) fn render_message_footer(
         footer = footer.child(timestamp).child(copy_button);
     } else {
         footer = footer.child(copy_button);
+        // Selection fork for this reply: branches the conversation prefix
+        // through this message, using the full reply as the recorded
+        // selection. (Text selections use the "Fork to new chat" menu item
+        // instead.) Independent from the whole-turn fork action below, which
+        // stays gated on provider support.
+        if message.role == MessageRole::Assistant && !message.streaming {
+            let fork_waku = waku.clone();
+            let fork_content = message.visible_content().to_owned();
+            footer = footer.child(
+                div()
+                    .id(SharedString::from(format!("fork-message-{message_id}")))
+                    .w(px(27.0))
+                    .h(px(27.0))
+                    .rounded(px(8.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_default()
+                    .hover(|element| element.bg(theme.overlay_strong))
+                    .child(icon("icons/fork.svg", 14.0, footer_color))
+                    .tooltip(Tooltip::text(tr_cow!("session.fork_selection")))
+                    .on_click(move |_, _, cx| {
+                        let _ = fork_waku.update(cx, |this, cx| {
+                            if let Some(session_id) = this.state.selected_session {
+                                this.fork_session_from_selection(
+                                    session_id,
+                                    message_id,
+                                    fork_content.clone(),
+                                    cx,
+                                );
+                            }
+                        });
+                    }),
+            );
+        }
         if let Some(action) = assistant_message_action {
             let fork_waku = waku.clone();
             let fork_icon = if action.preparing {
