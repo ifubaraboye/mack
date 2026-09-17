@@ -373,6 +373,9 @@ pub fn provider_color(theme: &Theme, provider: ProviderKind) -> Hsla {
                 rgb(0x34363B).into()
             }
         }
+        // Anthropic's coral keeps its hue in both themes; it holds contrast
+        // against raised surfaces dark and light without a theme split.
+        ProviderKind::Claude => rgb(0xD97757).into(),
     }
 }
 
@@ -381,6 +384,8 @@ pub fn provider_icon(provider: ProviderKind) -> &'static str {
     match provider {
         // ChatGPT keeps the OpenAI blossom.
         ProviderKind::ChatGpt => "icons/provider-openai.svg",
+        // Claude keeps Anthropic's starburst, tinted by the provider color.
+        ProviderKind::Claude => "icons/provider-claude.svg",
     }
 }
 

@@ -1601,6 +1601,15 @@ impl Waku {
                     .child(SharedString::from(summary))
                     .into_any_element();
             }
+            // Claude likewise: a subscription sign-in, not a CLI probe.
+            if kind == ProviderKind::Claude {
+                let (dot, summary) = self.claude_row_summary(theme, model_count, disabled);
+                dot_color = dot;
+                detail = div()
+                    .truncate()
+                    .child(SharedString::from(summary))
+                    .into_any_element();
+            }
 
             let toggle_on = !disabled;
             let toggle = toggle_switch(
@@ -1783,6 +1792,9 @@ impl Waku {
     ) -> Div {
         if kind == ProviderKind::ChatGpt {
             return self.render_chatgpt_settings(theme, cx);
+        }
+        if kind == ProviderKind::Claude {
+            return self.render_claude_settings(theme, cx);
         }
         let override_value = self.state.provider_binary_overrides.get(&kind).cloned();
         let full_path = self
@@ -2173,6 +2185,328 @@ impl Waku {
             Some(ChatGptLoginStatus::Expired) => tr!("chatgpt.expired"),
             _ if self.chatgpt.connecting => tr!("chatgpt.connecting"),
             _ => tr!("chatgpt.not_connected"),
+        };
+        (dot, text)
+    }
+
+    /// Claude sign-in panel: PKCE status plus Connect / authorize-URL /
+    /// pasted-code / Disconnect actions. Tokens never appear here — the
+    /// daemon only sends status, display material, and the public profile.
+    fn render_claude_settings(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        use waku_client::claude::ClaudeLoginStatus;
+        let session = self.claude.session.clone();
+        let status = session.as_ref().map(|session| session.status);
+
+        let mut body = div()
+            .mt(px(10.0))
+            .pl(px(42.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .text_size(sp(12.5))
+                    .line_height(sp(18.0))
+                    .text_color(theme.text_tertiary)
+                    .child(tr!("claude.description")),
+            );
+
+        match status {
+            Some(ClaudeLoginStatus::Pending) => {
+                body = body.child(self.render_claude_pending(theme, session, cx));
+            }
+            Some(ClaudeLoginStatus::Authenticated) => {
+                body = body.child(self.render_claude_connected(theme, session, cx));
+            }
+            Some(ClaudeLoginStatus::Expired) => {
+                body = body
+                    .child(
+                        div()
+                            .text_size(sp(12.5))
+                            .text_color(theme.text_secondary)
+                            .child(tr!("claude.expired_description")),
+                    )
+                    .child(
+                        self.claude_action_button(
+                            "claude-sign-in-again",
+                            tr!("claude.sign_in_again"),
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.start_claude_login();
+                            cx.notify();
+                        })),
+                    );
+            }
+            _ => {
+                if self.claude.connecting {
+                    body = body.child(
+                        div()
+                            .text_size(sp(12.5))
+                            .text_color(theme.text_secondary)
+                            .child(tr!("claude.connecting")),
+                    );
+                } else {
+                    body = body.child(
+                        self.claude_action_button("claude-connect", tr!("claude.connect"), theme)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.start_claude_login();
+                                cx.notify();
+                            })),
+                    );
+                }
+            }
+        }
+
+        if let Some(error) = self.claude.error.clone() {
+            body = body.child(
+                div()
+                    .text_size(sp(12.5))
+                    .text_color(theme.danger)
+                    .child(SharedString::from(error)),
+            );
+        }
+        body
+    }
+
+    /// Waiting state: the authorize URL to open in the external browser,
+    /// plus the field for the pasted authorization code. The code is
+    /// cleared on submit and never echoed back anywhere.
+    fn render_claude_pending(
+        &self,
+        theme: Theme,
+        session: Option<waku_client::claude::ClaudePublicSession>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let authorize_url = session
+            .as_ref()
+            .and_then(|session| session.authorize_url.clone())
+            .unwrap_or_default();
+        let open_url = authorize_url.clone();
+        let copy_url = authorize_url.clone();
+        let has_url = !authorize_url.is_empty();
+        let completing = self.claude.completing;
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .text_size(sp(12.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.text)
+                    .child(tr!("claude.waiting")),
+            )
+            .child(
+                div()
+                    .text_size(sp(12.5))
+                    .text_color(theme.text_tertiary)
+                    .child(tr!("claude.waiting_description")),
+            )
+            .when(has_url, |element| {
+                element.child(
+                    div()
+                        .font_family(crate::md::render::MONO_FAMILY)
+                        .text_size(sp(12.0))
+                        .text_color(theme.text_secondary)
+                        .child(SharedString::from(authorize_url.clone())),
+                )
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .when(has_url, |element| {
+                        element
+                            .child(
+                                self.claude_action_button(
+                                    "claude-copy-url",
+                                    tr!("claude.copy_url"),
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    move |_, _, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            copy_url.clone(),
+                                        ));
+                                    },
+                                )),
+                            )
+                            .child(
+                                self.claude_action_button(
+                                    "claude-open-browser",
+                                    tr!("claude.open_browser"),
+                                    theme,
+                                )
+                                .on_click(move |_, _, cx| {
+                                    cx.open_url(&open_url);
+                                }),
+                            )
+                    })
+                    .child(
+                        self.claude_action_button("claude-cancel", tr!("claude.cancel"), theme)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.disconnect_claude();
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .mt(px(4.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        TextField::new(
+                            SharedString::from("claude-code-field"),
+                            self.claude_code_input.clone(),
+                        )
+                        .flex_1()
+                        .max_w(px(430.0)),
+                    )
+                    .child(if completing {
+                        div()
+                            .text_size(sp(12.5))
+                            .text_color(theme.text_secondary)
+                            .child(tr!("claude.connecting"))
+                            .into_any_element()
+                    } else {
+                        self.claude_action_button(
+                            "claude-complete",
+                            tr!("claude.complete_login"),
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.complete_claude_login(cx);
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                    }),
+            )
+            .into_any_element()
+    }
+
+    /// Connected state: who is signed in, plus model refresh and Disconnect.
+    fn render_claude_connected(
+        &self,
+        theme: Theme,
+        session: Option<waku_client::claude::ClaudePublicSession>,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let account = session
+            .as_ref()
+            .and_then(|session| session.user.as_ref())
+            .and_then(|user| user.email.clone().or_else(|| user.plan.clone()));
+        let connected = match account {
+            Some(email) => tr!("claude.connected_as", email = email),
+            None => tr!("claude.connected"),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .text_size(sp(12.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.text)
+                    .child(SharedString::from(connected)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        self.claude_action_button(
+                            "claude-refresh-models",
+                            tr!("claude.refresh_models"),
+                            theme,
+                        )
+                        .on_click(_cx.listener(|this, _, _, cx| {
+                            this.refresh_claude_models();
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        self.claude_action_button(
+                            "claude-disconnect",
+                            tr!("claude.disconnect"),
+                            theme,
+                        )
+                        .on_click(_cx.listener(|this, _, _, cx| {
+                            this.disconnect_claude();
+                            cx.notify();
+                        })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// Ghost-style action button matching the Providers page refresh control.
+    fn claude_action_button(&self, id: &str, label: String, theme: Theme) -> Stateful<Div> {
+        div()
+            .id(SharedString::from(id.to_owned()))
+            .tab_index(0)
+            .focus_visible(|style| style.border_color(theme.accent))
+            .h(px(28.0))
+            .px(px(11.0))
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(theme.border_strong)
+            .flex()
+            .items_center()
+            .cursor_default()
+            .text_size(sp(12.5))
+            .text_color(theme.text_secondary)
+            .hover(|element| element.bg(theme.overlay))
+            .child(label)
+    }
+
+    /// Providers-page row summary for Claude: connection state instead of a
+    /// binary path, since there is no CLI to detect.
+    fn claude_row_summary(
+        &self,
+        theme: Theme,
+        model_count: usize,
+        disabled: bool,
+    ) -> (Hsla, String) {
+        use waku_client::claude::ClaudeLoginStatus;
+        let session = self.claude.session.as_ref();
+        let status = session.map(|session| session.status);
+        let dot = match status {
+            Some(ClaudeLoginStatus::Authenticated) if !disabled => theme.success,
+            Some(ClaudeLoginStatus::Authenticated) => theme.warning,
+            Some(ClaudeLoginStatus::Pending) => theme.warning,
+            Some(ClaudeLoginStatus::Expired) => theme.danger,
+            _ => theme.text_ghost,
+        };
+        let text = match status {
+            Some(ClaudeLoginStatus::Authenticated) => {
+                let account = session
+                    .and_then(|session| session.user.as_ref())
+                    .and_then(|user| user.email.clone().or_else(|| user.plan.clone()));
+                let mut parts = vec![match account {
+                    Some(email) => tr!("claude.connected_as", email = email),
+                    None => tr!("claude.connected"),
+                }];
+                if disabled {
+                    parts.push(tr!("providers.disabled_for_new_tasks"));
+                } else if model_count > 0 {
+                    parts.push(if model_count == 1 {
+                        tr!("providers.model_count_one", count = model_count)
+                    } else {
+                        tr!("providers.model_count_many", count = model_count)
+                    });
+                }
+                parts.join("  ·  ")
+            }
+            Some(ClaudeLoginStatus::Pending) => tr!("claude.waiting"),
+            Some(ClaudeLoginStatus::Expired) => tr!("claude.expired"),
+            _ if self.claude.connecting => tr!("claude.connecting"),
+            _ => tr!("claude.not_connected"),
         };
         (dot, text)
     }

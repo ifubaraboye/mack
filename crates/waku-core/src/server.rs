@@ -1413,6 +1413,7 @@ mod tests {
                         computer_use_enabled: false,
                         provider_cursor: None,
                         chatgpt_history: None,
+                        claude_history: None,
                     },
                 },
             )
@@ -1481,6 +1482,7 @@ mod tests {
                         computer_use_enabled: false,
                         provider_cursor: None,
                         chatgpt_history: None,
+                        claude_history: None,
                     },
                 },
             )
@@ -1599,6 +1601,7 @@ mod tests {
                         computer_use_enabled: false,
                         provider_cursor: None,
                         chatgpt_history: None,
+                        claude_history: None,
                     },
                 },
             )
@@ -2259,6 +2262,7 @@ mod tests {
             computer_use_enabled: false,
             provider_cursor: None,
             chatgpt_history: None,
+            claude_history: None,
         }
     }
 }

@@ -2,6 +2,7 @@
 
 mod activity;
 mod chatgpt;
+mod claude;
 mod computer_use;
 mod support;
 mod title_refresh;
@@ -13,8 +14,8 @@ use crossbeam_channel::{Receiver, SendError, Sender, unbounded};
 
 use crate::computer_use::ComputerToolRequest;
 use crate::model::{
-    BackgroundWorkKey, ChatGptHistorySeed, DriverEvent, GoalOperation, ProviderKind,
-    ProviderResumeCursor, RuntimeMode, UserInputAnswer,
+    BackgroundWorkKey, ChatGptHistorySeed, ClaudeHistorySeed, DriverEvent, GoalOperation,
+    ProviderKind, ProviderResumeCursor, RuntimeMode, UserInputAnswer,
 };
 
 /// Provider events remain synchronous to send from reader threads, while the
@@ -192,6 +193,10 @@ pub struct DriverStartOptions {
     /// transcript. Consumed only by the ChatGPT driver; every other driver
     /// ignores it and keeps its native resume path.
     pub chatgpt_history: Option<Vec<ChatGptHistorySeed>>,
+    /// Claude-only resume history, seeded from the persisted Waku
+    /// transcript. Consumed only by the Claude driver; every other driver
+    /// ignores it and keeps its native resume path.
+    pub claude_history: Option<Vec<ClaudeHistorySeed>>,
     /// Daemon-owned database path for the cross-chat memory store. Filled by
     /// the daemon at start (never sent over the wire); `None` falls back to
     /// `StateStore::default_path()`. Consumed only by the ChatGPT driver.
@@ -227,6 +232,7 @@ pub(crate) fn start_local(
         crate::computer_use::resolve_enabled(options.computer_use_enabled);
     let inner: Arc<dyn DriverControl> = match provider {
         ProviderKind::ChatGpt => Arc::new(chatgpt::ChatGptDriver::start(options, events)?),
+        ProviderKind::Claude => Arc::new(claude::ClaudeDriver::start(options, events)?),
     };
     Ok(DriverHandle { inner })
 }

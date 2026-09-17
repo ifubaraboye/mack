@@ -7,8 +7,8 @@ use crossbeam_channel::{Receiver, SendError, Sender, unbounded};
 use uuid::Uuid;
 use waku_protocol::computer_use::ComputerToolRequest;
 use waku_protocol::model::{
-    BackgroundWorkKey, ChatGptHistorySeed, DriverEvent, GoalOperation, ProviderResumeCursor,
-    RuntimeMode, UserInputAnswer,
+    BackgroundWorkKey, ChatGptHistorySeed, ClaudeHistorySeed, DriverEvent, GoalOperation,
+    ProviderResumeCursor, RuntimeMode, UserInputAnswer,
 };
 
 #[derive(Clone)]
@@ -156,6 +156,8 @@ pub struct DriverStartOptions {
     /// ChatGPT-only resume history, seeded from the persisted Waku
     /// transcript. Forwarded opaquely to the daemon; ignored otherwise.
     pub chatgpt_history: Option<Vec<ChatGptHistorySeed>>,
+    /// Claude-only resume history. Same contract as `chatgpt_history`.
+    pub claude_history: Option<Vec<ClaudeHistorySeed>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

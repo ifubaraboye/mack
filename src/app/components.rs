@@ -275,11 +275,10 @@ pub(super) fn render_message_footer(
         footer = footer.child(timestamp).child(copy_button);
     } else {
         footer = footer.child(copy_button);
-        // Selection fork for this reply: branches the conversation prefix
-        // through this message, using the full reply as the recorded
-        // selection. (Text selections use the "Fork to new chat" menu item
-        // instead.) Independent from the whole-turn fork action below, which
-        // stays gated on provider support.
+        // Fork for this reply: branches the conversation prefix through
+        // this message, using the full reply as the recorded selection.
+        // Independent from the whole-turn fork action below, which stays
+        // gated on provider support.
         if message.role == MessageRole::Assistant && !message.streaming {
             let fork_waku = waku.clone();
             let fork_content = message.visible_content().to_owned();
@@ -938,35 +937,10 @@ fn message_menu_items(
 ) -> Vec<MenuItem> {
     let mut items = Vec::new();
 
-    {
-        let borrowed = selection.selection.borrow();
-        if let Some(selected) = borrowed.selected_text() {
-            let copy_text = selected.clone();
-            items.push(MenuItem::new(tr!("common.copy_selection"), move |_, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
-            }));
-            // Fork carries the raw spans and text; the runtime resolves the
-            // anchor message and validates eligibility, so the menu never has
-            // to decide which message a selection belongs to.
-            let fork_spans = borrowed.spans().to_vec();
-            let fork_text = selected;
-            let waku = waku.clone();
-            items.push(
-                MenuItem::new(tr!("session.fork_selection"), move |_, cx| {
-                    let _ = waku.update(cx, |this, cx| {
-                        if let Some(session_id) = this.state.selected_session {
-                            this.fork_session_from_span_selection(
-                                session_id,
-                                fork_spans.clone(),
-                                fork_text.clone(),
-                                cx,
-                            );
-                        }
-                    });
-                })
-                .icon("icons/fork.svg"),
-            );
-        }
+    if let Some(selected) = selection.selection.borrow().selected_text() {
+        items.push(MenuItem::new(tr!("common.copy_selection"), move |_, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(selected.clone()));
+        }));
     }
 
     let copy_content = content.to_owned();

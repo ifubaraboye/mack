@@ -30,6 +30,7 @@ pub mod attachments;
 pub mod blob;
 pub mod chatgpt;
 pub mod checkpoint;
+pub mod claude;
 pub mod composer;
 pub mod computer_use;
 mod driver_wire;

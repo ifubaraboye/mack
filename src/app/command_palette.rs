@@ -590,20 +590,13 @@ impl Waku {
         cx.notify();
     }
 
-    fn open_command_palette_group_chats_view(
-        &mut self,
-        group_id: Uuid,
-        cx: &mut Context<Self>,
-    ) {
+    fn open_command_palette_group_chats_view(&mut self, group_id: Uuid, cx: &mut Context<Self>) {
         self.command_palette.view = CommandPaletteView::GroupChats;
         self.command_palette.group_view_group = Some(group_id);
         let group = self.command_palette_group_name();
         self.command_palette.search.update(cx, |input, cx| {
             input.set_placeholder(
-                tr!(
-                    "command_palette.group_chats_placeholder",
-                    group = group
-                ),
+                tr!("command_palette.group_chats_placeholder", group = group),
                 cx,
             );
             input.clear(cx);
@@ -650,10 +643,7 @@ impl Waku {
 
     /// Re-list the Groups view after a deletion, falling back from a
     /// now-missing group's chat list to the group list itself.
-    pub(super) fn refresh_command_palette_after_group_deleted(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn refresh_command_palette_after_group_deleted(&mut self, cx: &mut Context<Self>) {
         if !self.command_palette.open {
             return;
         }
@@ -666,12 +656,7 @@ impl Waku {
             self.open_command_palette_groups_view(cx);
             return;
         }
-        let query = self
-            .command_palette
-            .search
-            .read(cx)
-            .content()
-            .to_owned();
+        let query = self.command_palette.search.read(cx).content().to_owned();
         self.refresh_command_palette_results(&query, false, cx);
         cx.notify();
     }
@@ -682,12 +667,7 @@ impl Waku {
         if !self.command_palette.open {
             return;
         }
-        let query = self
-            .command_palette
-            .search
-            .read(cx)
-            .content()
-            .to_owned();
+        let query = self.command_palette.search.read(cx).content().to_owned();
         self.refresh_command_palette_results(&query, false, cx);
         cx.notify();
     }
@@ -854,17 +834,15 @@ impl Waku {
             order += 1;
             current
         };
-        let mut commands = vec![
-            CommandPaletteItem::command(
-                display_section(PaletteSection::Suggested),
-                tr!("command_palette.new_task"),
-                "icons/pencil.svg",
-                Some(crate::platform::primary_shortcut("⌘N", "Ctrl+N")),
-                PaletteAction::NewTask,
-                "new chat session conversation start",
-                next(),
-            ),
-        ];
+        let mut commands = vec![CommandPaletteItem::command(
+            display_section(PaletteSection::Suggested),
+            tr!("command_palette.new_task"),
+            "icons/pencil.svg",
+            Some(crate::platform::primary_shortcut("⌘N", "Ctrl+N")),
+            PaletteAction::NewTask,
+            "new chat session conversation start",
+            next(),
+        )];
         let can_choose_model = self
             .selected_session()
             .is_some_and(|session| session.can_choose_model(session.provider));
@@ -1162,9 +1140,7 @@ impl Waku {
                     .state
                     .sessions
                     .iter()
-                    .filter(|session| {
-                        session.has_started() && session.group_id == Some(group.id)
-                    })
+                    .filter(|session| session.has_started() && session.group_id == Some(group.id))
                     .collect::<Vec<_>>();
                 chats.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
                 let recency = chats.first().map(|session| session.updated_at).unwrap_or(0);
@@ -1184,10 +1160,7 @@ impl Waku {
                     detail: Some(if chats.len() == 1 {
                         tr!("command_palette.group_chat_count_one")
                     } else {
-                        tr!(
-                            "command_palette.group_chat_count_many",
-                            count = chats.len()
-                        )
+                        tr!("command_palette.group_chat_count_many", count = chats.len())
                     }),
                     icon: PaletteIcon::Asset("icons/folder.svg"),
                     shortcut: None,
@@ -2173,194 +2146,180 @@ impl Waku {
                     _ => None,
                 };
                 let row = div()
-                        .id(SharedString::from(format!("command-palette-row-{index}")))
-                        .when(
-                            starts_section && item.section == PaletteSection::Providers,
-                            |row| row.mt(px(PROVIDER_SECTION_TOP_MARGIN)),
-                        )
-                        .h(px(command_palette_row_height(item)))
-                        .px(px(11.0))
-                        .rounded(px(9.0))
-                        .border_1()
-                        .border_color(if highlighted {
-                            theme.border_strong
-                        } else {
-                            gpui::transparent_black()
-                        })
-                        .flex()
-                        .items_center()
-                        .gap(px(10.0))
-                        .cursor_default()
-                        .when(highlighted, |row| row.bg(theme.overlay_strong))
-                        .hover(|row| row.bg(theme.overlay))
-                        .active(|row| row.opacity(0.82))
-                        .on_hover(cx.listener(move |this, hovering: &bool, _, cx| {
-                            if *hovering {
-                                this.set_command_palette_selection(index, cx);
-                            }
-                        }))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.execute_command_palette_selection(Some(index), window, cx);
-                            cx.stop_propagation();
-                        }))
-                        .child(
+                    .id(SharedString::from(format!("command-palette-row-{index}")))
+                    .when(
+                        starts_section && item.section == PaletteSection::Providers,
+                        |row| row.mt(px(PROVIDER_SECTION_TOP_MARGIN)),
+                    )
+                    .h(px(command_palette_row_height(item)))
+                    .px(px(11.0))
+                    .rounded(px(9.0))
+                    .border_1()
+                    .border_color(if highlighted {
+                        theme.border_strong
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .cursor_default()
+                    .when(highlighted, |row| row.bg(theme.overlay_strong))
+                    .hover(|row| row.bg(theme.overlay))
+                    .active(|row| row.opacity(0.82))
+                    .on_hover(cx.listener(move |this, hovering: &bool, _, cx| {
+                        if *hovering {
+                            this.set_command_palette_selection(index, cx);
+                        }
+                    }))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.execute_command_palette_selection(Some(index), window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        div()
+                            .size(px(20.0))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(if importing {
+                                motion::spin(icon("icons/loader-circle.svg", 16.0, icon_color))
+                            } else {
+                                row_mark
+                            }),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .justify_center()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex()
+                                    .items_baseline()
+                                    .gap(px(7.0))
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_size(sp(14.0))
+                                            .font_weight(if highlighted {
+                                                FontWeight::MEDIUM
+                                            } else {
+                                                FontWeight::NORMAL
+                                            })
+                                            .text_color(if highlighted {
+                                                theme.text
+                                            } else {
+                                                theme.text_secondary
+                                            })
+                                            .child(item.label.clone()),
+                                    )
+                                    .when_some(detail, |row, detail| {
+                                        row.child(
+                                            div()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_size(sp(12.5))
+                                                .text_color(theme.text_tertiary)
+                                                .child(detail),
+                                        )
+                                    }),
+                            )
+                            .when_some(content_match, |column, matched| {
+                                column.child(
+                                    div()
+                                        .min_w_0()
+                                        .w_full()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_size(sp(12.5))
+                                        .child(palette_content_match_text(
+                                            &matched,
+                                            &search_query,
+                                            window,
+                                            theme,
+                                        )),
+                                )
+                            }),
+                    )
+                    .when_some(shortcut, |row, shortcut| {
+                        row.child(
                             div()
-                                .size(px(20.0))
+                                .h(px(22.0))
+                                .min_w(px(28.0))
+                                .px(px(7.0))
+                                .rounded(px(7.0))
                                 .flex_none()
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(if importing {
-                                    motion::spin(icon("icons/loader-circle.svg", 16.0, icon_color))
-                                } else {
-                                    row_mark
-                                }),
+                                .bg(theme.overlay_strong)
+                                .text_size(sp(12.5))
+                                .text_color(theme.text_tertiary)
+                                .child(shortcut),
                         )
-                        .child(
+                    })
+                    .when_some(deletable_group, |row, group_id| {
+                        row.child(
                             div()
-                                .min_w_0()
-                                .flex_1()
+                                .id(SharedString::from(format!(
+                                    "palette-rename-group-{group_id}"
+                                )))
+                                .flex_none()
+                                .w(px(24.0))
+                                .h(px(24.0))
                                 .flex()
-                                .flex_col()
+                                .items_center()
                                 .justify_center()
-                                .gap(px(2.0))
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .flex()
-                                        .items_baseline()
-                                        .gap(px(7.0))
-                                        .child(
-                                            div()
-                                                .min_w_0()
-                                                .truncate()
-                                                .text_size(sp(14.0))
-                                                .font_weight(if highlighted {
-                                                    FontWeight::MEDIUM
-                                                } else {
-                                                    FontWeight::NORMAL
-                                                })
-                                                .text_color(if highlighted {
-                                                    theme.text
-                                                } else {
-                                                    theme.text_secondary
-                                                })
-                                                .child(item.label.clone()),
-                                        )
-                                        .when_some(detail, |row, detail| {
-                                            row.child(
-                                                div()
-                                                    .min_w_0()
-                                                    .truncate()
-                                                    .text_size(sp(12.5))
-                                                    .text_color(theme.text_tertiary)
-                                                    .child(detail),
-                                            )
-                                        }),
-                                )
-                                .when_some(content_match, |column, matched| {
-                                    column.child(
-                                        div()
-                                            .min_w_0()
-                                            .w_full()
-                                            .overflow_hidden()
-                                            .whitespace_nowrap()
-                                            .text_size(sp(12.5))
-                                            .child(palette_content_match_text(
-                                                &matched,
-                                                &search_query,
-                                                window,
-                                                theme,
-                                            )),
-                                    )
-                                }),
+                                .rounded(px(6.0))
+                                .cursor_default()
+                                .tooltip(Tooltip::text(tr!("common.rename")))
+                                .child(icon("icons/pencil.svg", 13.0, theme.text_tertiary))
+                                .hover(|style| style.bg(theme.overlay))
+                                .active(|style| style.bg(theme.overlay_strong))
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.open_group_dialog(
+                                        GroupDialogMode::RenameGroup { group_id },
+                                        window,
+                                        cx,
+                                    );
+                                })),
                         )
-                        .when_some(shortcut, |row, shortcut| {
-                            row.child(
-                                div()
-                                    .h(px(22.0))
-                                    .min_w(px(28.0))
-                                    .px(px(7.0))
-                                    .rounded(px(7.0))
-                                    .flex_none()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .bg(theme.overlay_strong)
-                                    .text_size(sp(12.5))
-                                    .text_color(theme.text_tertiary)
-                                    .child(shortcut),
-                            )
-                        })
-                        .when_some(deletable_group, |row, group_id| {
-                            row.child(
-                                div()
-                                    .id(SharedString::from(format!(
-                                        "palette-rename-group-{group_id}"
-                                    )))
-                                    .flex_none()
-                                    .w(px(24.0))
-                                    .h(px(24.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(6.0))
-                                    .cursor_default()
-                                    .tooltip(Tooltip::text(tr!("common.rename")))
-                                    .child(icon(
-                                        "icons/pencil.svg",
-                                        13.0,
-                                        theme.text_tertiary,
-                                    ))
-                                    .hover(|style| style.bg(theme.overlay))
-                                    .active(|style| style.bg(theme.overlay_strong))
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        |_, _, cx| cx.stop_propagation(),
-                                    )
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        cx.stop_propagation();
-                                        this.open_group_dialog(
-                                            GroupDialogMode::RenameGroup { group_id },
-                                            window,
-                                            cx,
-                                        );
-                                    })),
-                            )
-                        })
-                        .when_some(deletable_group, |row, group_id| {
-                            row.child(
-                                div()
-                                    .id(SharedString::from(format!(
-                                        "palette-delete-group-{group_id}"
-                                    )))
-                                    .flex_none()
-                                    .w(px(24.0))
-                                    .h(px(24.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(6.0))
-                                    .cursor_default()
-                                    .tooltip(Tooltip::text(tr!("sidebar.delete_group")))
-                                    .child(icon(
-                                        "icons/trash.svg",
-                                        13.0,
-                                        theme.text_tertiary,
-                                    ))
-                                    .hover(|style| style.bg(theme.overlay))
-                                    .active(|style| style.bg(theme.overlay_strong))
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        |_, _, cx| cx.stop_propagation(),
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.delete_chat_group(group_id, cx);
-                                        this.refresh_command_palette_after_group_deleted(cx);
-                                    })),
-                            )
-                        });
+                    })
+                    .when_some(deletable_group, |row, group_id| {
+                        row.child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "palette-delete-group-{group_id}"
+                                )))
+                                .flex_none()
+                                .w(px(24.0))
+                                .h(px(24.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(6.0))
+                                .cursor_default()
+                                .tooltip(Tooltip::text(tr!("sidebar.delete_group")))
+                                .child(icon("icons/trash.svg", 13.0, theme.text_tertiary))
+                                .hover(|style| style.bg(theme.overlay))
+                                .active(|style| style.bg(theme.overlay_strong))
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.delete_chat_group(group_id, cx);
+                                    this.refresh_command_palette_after_group_deleted(cx);
+                                })),
+                        )
+                    });
                 results = results.child(row.into_any_element());
             }
         }
@@ -2391,9 +2350,11 @@ impl Waku {
                 .on_action(cx.listener(|this, _: &Confirm, window, cx| {
                     this.execute_command_palette_selection(None, window, cx)
                 }))
-                .on_action(cx.listener(|this, _: &DeleteGroup, _, cx| {
-                    this.delete_command_palette_group(cx)
-                }))
+                .on_action(
+                    cx.listener(|this, _: &DeleteGroup, _, cx| {
+                        this.delete_command_palette_group(cx)
+                    }),
+                )
                 .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
                     this.dismiss_command_palette(window, cx)
                 }))

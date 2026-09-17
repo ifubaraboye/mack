@@ -60,6 +60,10 @@ pub struct WakuBackend {
     /// Lazily created on the first ChatGPT command so unit tests and
     /// non-ChatGPT daemons never touch the credential directory.
     chatgpt: OnceLock<crate::chatgpt_session::ChatGptSessionManager>,
+    /// Lazily created on the first Claude command so unit tests and
+    /// non-Claude daemons never touch the credential directory. Isolated
+    /// from the Claude Code CLI's own credentials by design.
+    claude: OnceLock<crate::claude_session::ClaudeSessionManager>,
 }
 
 impl WakuBackend {
@@ -97,6 +101,7 @@ impl WakuBackend {
             usage_rates_dir,
             default_cwd: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
             chatgpt: OnceLock::new(),
+            claude: OnceLock::new(),
         })
     }
 
@@ -252,17 +257,28 @@ impl Backend for WakuBackend {
                 Ok(ResponsePayload::Ack)
             }
             Command::ProbeProvider { provider, .. } => {
-                // ChatGPT-only: no CLI to probe. It is always "installed",
-                // and its models come from the last authenticated discovery
-                // (cached daemon-side) rather than a subprocess probe.
-                let _ = provider;
+                // Subscription providers need no CLI to probe. They are
+                // always "installed", and their models come from the last
+                // authenticated discovery (cached daemon-side) rather than
+                // a subprocess probe.
+                let (provider, models) = match provider {
+                    ProviderKind::ChatGpt => (
+                        ProviderKind::ChatGpt,
+                        crate::model_catalog::cached_models(ProviderKind::ChatGpt)
+                            .unwrap_or_default(),
+                    ),
+                    ProviderKind::Claude => (
+                        ProviderKind::Claude,
+                        crate::model_catalog::cached_models(ProviderKind::Claude)
+                            .unwrap_or_default(),
+                    ),
+                };
                 Ok(ResponsePayload::ProviderProbe {
                     probe: crate::model::ProviderProbe {
-                        provider: ProviderKind::ChatGpt,
+                        provider,
                         installed: true,
                         path: None,
-                        models: crate::model_catalog::cached_models(ProviderKind::ChatGpt)
-                            .unwrap_or_default(),
+                        models,
                         agent_presets: Vec::new(),
                     },
                     version: None,
@@ -321,6 +337,53 @@ impl Backend for WakuBackend {
                         Ok(ResponsePayload::ChatGptModels { models })
                     }
                     Err(error) => Err(chatgpt_rpc_error(error)),
+                }
+            }
+            Command::ClaudeStartLogin => {
+                let manager = self.claude();
+                match manager.start_login() {
+                    Ok(pending) => Ok(ResponsePayload::ClaudeSession {
+                        session: claude_pending_session(&pending, None),
+                    }),
+                    Err(error) => Err(claude_rpc_error(error)),
+                }
+            }
+            Command::ClaudeCompleteLogin { code } => {
+                let manager = self.claude();
+                match manager.complete_login(&code) {
+                    Ok(public) => Ok(ResponsePayload::ClaudeSession {
+                        session: claude_polled_session(manager, &public),
+                    }),
+                    Err(error) => Err(claude_rpc_error(error)),
+                }
+            }
+            Command::ClaudeLogout => {
+                let manager = self.claude();
+                manager.logout().map_err(claude_rpc_error)?;
+                Ok(ResponsePayload::ClaudeSession {
+                    session: claude_wire_session(
+                        &manager.public_session().map_err(claude_rpc_error)?,
+                        None,
+                        None,
+                    ),
+                })
+            }
+            Command::ClaudeSession => {
+                let manager = self.claude();
+                let public = manager.public_session().map_err(claude_rpc_error)?;
+                Ok(ResponsePayload::ClaudeSession {
+                    session: claude_polled_session(manager, &public),
+                })
+            }
+            Command::ClaudeDiscoverModels => {
+                let manager = self.claude();
+                match manager.discover_models() {
+                    Ok(slugs) => {
+                        let models = claude_catalog_models(&slugs);
+                        crate::model_catalog::write_cached_models(ProviderKind::Claude, &models);
+                        Ok(ResponsePayload::ClaudeModels { models })
+                    }
+                    Err(error) => Err(claude_rpc_error(error)),
                 }
             }
             Command::ListMemories => {
@@ -704,6 +767,7 @@ impl Backend for WakuBackend {
                         .transpose()
                         .context("daemon received an invalid provider cursor")?,
                     chatgpt_history: options.chatgpt_history,
+                    claude_history: options.claude_history,
                     memory_db_path: Some(self.task_store.path().to_owned()),
                     memory_enabled: self.settings.get().memory_enabled,
                 };
@@ -1160,6 +1224,7 @@ impl WakuBackend {
                 // here. ChatGPT seeding happens only on the normal start
                 // path from the hydrated Waku transcript.
                 chatgpt_history: None,
+                claude_history: None,
                 memory_db_path: Some(self.task_store.path().to_owned()),
                 memory_enabled: self.settings.get().memory_enabled,
             },
@@ -1221,6 +1286,7 @@ impl WakuBackend {
                 // Same as the fork path above: no transcript seeding on
                 // rollback restarts.
                 chatgpt_history: None,
+                claude_history: None,
                 memory_db_path: Some(self.task_store.path().to_owned()),
                 memory_enabled: self.settings.get().memory_enabled,
             },
@@ -1246,6 +1312,13 @@ impl WakuBackend {
     fn chatgpt(&self) -> &crate::chatgpt_session::ChatGptSessionManager {
         self.chatgpt
             .get_or_init(crate::chatgpt_session::default_session_manager)
+    }
+
+    /// Daemon-owned Claude session manager, created on first use so tests
+    /// and non-Claude daemons never touch the credential directory.
+    fn claude(&self) -> &crate::claude_session::ClaudeSessionManager {
+        self.claude
+            .get_or_init(crate::claude_session::default_session_manager)
     }
 
     /// ChatGPT account scoping for the cross-chat memory store, read from
@@ -1464,7 +1537,12 @@ fn handle_driver_command(
         | Command::ChatGptPoll
         | Command::ChatGptLogout
         | Command::ChatGptSession
-        | Command::ChatGptDiscoverModels => {
+        | Command::ChatGptDiscoverModels
+        | Command::ClaudeStartLogin
+        | Command::ClaudeCompleteLogin { .. }
+        | Command::ClaudeLogout
+        | Command::ClaudeSession
+        | Command::ClaudeDiscoverModels => {
             bail!("daemon received a command in the wrong dispatch path")
         }
     }
@@ -1611,9 +1689,149 @@ fn chatgpt_safe_message(error: &crate::chatgpt_protocol::ChatGptError) -> String
 
 /// Builds picker-ready catalog models from discovered slugs. The first slug
 /// becomes the default so the picker has a selection before the user picks.
-/// No reasoning/service-tier menus: the `/models` endpoint reports slugs
-/// only, and inventing capabilities would offer what the account may lack.
+/// No reasoning/service-tier menus: the catalog reports slugs only, and
+/// inventing capabilities would offer what the account may lack.
 fn chatgpt_catalog_models(slugs: &[String]) -> Vec<crate::model::ProviderModel> {
+    slugs
+        .iter()
+        .enumerate()
+        .map(|(index, slug)| {
+            let model = crate::model::ProviderModel::new(
+                slug.clone(),
+                crate::model_catalog::display_name_from_slug(slug),
+            );
+            if index == 0 { model.default() } else { model }
+        })
+        .collect()
+}
+
+/// Maps daemon Claude state onto the client-safe wire session. Pending
+/// display material (authorize URL) attaches only while the login is pending;
+/// authenticated state carries the public profile only. No bearer material
+/// exists in either input, so none can leak into output.
+fn claude_wire_session(
+    public: &crate::claude_session::PublicSession,
+    pending: Option<&crate::claude_session::PendingLogin>,
+    error: Option<String>,
+) -> waku_protocol::claude::ClaudePublicSession {
+    use crate::claude_session::LoginStatus as SessionStatus;
+    use waku_protocol::claude::{ClaudeLoginStatus, ClaudePublicSession, ClaudeUserInfo};
+    let status = match public.status {
+        SessionStatus::Unauthenticated => ClaudeLoginStatus::Unauthenticated,
+        SessionStatus::Pending => ClaudeLoginStatus::Pending,
+        SessionStatus::Authenticated => ClaudeLoginStatus::Authenticated,
+        SessionStatus::Expired => ClaudeLoginStatus::Expired,
+    };
+    ClaudePublicSession {
+        status,
+        authorize_url: pending.map(|pending| pending.authorize_url.clone()),
+        state: pending.map(|pending| pending.state.clone()),
+        expires_at_ms: pending.map(|pending| pending.expires_at_ms),
+        user: public.user.as_ref().map(|user| ClaudeUserInfo {
+            account_id: user.account_id.clone(),
+            email: user.email.clone(),
+            plan: user.plan.clone(),
+        }),
+        error,
+    }
+}
+
+/// Wire session for a fresh `ClaudeStartLogin`: pending display plus an
+/// optional safe error is impossible here, so callers pass `None`.
+fn claude_pending_session(
+    pending: &crate::claude_session::PendingLogin,
+    error: Option<String>,
+) -> waku_protocol::claude::ClaudePublicSession {
+    claude_wire_session(
+        &crate::claude_session::PublicSession {
+            status: crate::claude_session::LoginStatus::Pending,
+            user: None,
+        },
+        Some(pending),
+        error,
+    )
+}
+
+/// Wire session for `ClaudeCompleteLogin`/`ClaudeSession`: re-attaches pending
+/// display data when the login is still pending, so a restarted desktop can
+/// re-render the authorize URL without starting the PKCE flow over.
+fn claude_polled_session(
+    manager: &crate::claude_session::ClaudeSessionManager,
+    public: &crate::claude_session::PublicSession,
+) -> waku_protocol::claude::ClaudePublicSession {
+    use crate::claude_session::LoginStatus as SessionStatus;
+    let pending = matches!(public.status, SessionStatus::Pending)
+        .then(|| manager.pending_login_display().ok().flatten())
+        .flatten();
+    claude_wire_session(public, pending.as_ref(), None)
+}
+
+/// Converts a typed Claude error into a client-safe RPC error. The full
+/// code and HTTP status go to daemon stderr for diagnostics; user-facing
+/// text is static per category. Raw server bodies are never retained by the
+/// session layer, so there is nothing credential-adjacent to scrub here —
+/// and `ClaudeError` messages by construction interpolate no secrets.
+fn claude_rpc_error(error: crate::claude_protocol::ClaudeError) -> anyhow::Error {
+    eprintln!(
+        "claude request failed: kind={:?} code={:?} status={:?}",
+        claude_error_kind(&error),
+        error.code,
+        error.status
+    );
+    anyhow!(claude_safe_message(&error))
+}
+
+/// Maps a typed Claude error onto the client-safe [`ClaudeErrorKind`]
+/// taxonomy the UI may branch on. HTTP 429 wins over the code: rate limiting
+/// is a response status, not an error domain.
+fn claude_error_kind(
+    error: &crate::claude_protocol::ClaudeError,
+) -> waku_protocol::claude::ClaudeErrorKind {
+    use crate::claude_protocol::ClaudeErrorCode as Code;
+    use waku_protocol::claude::ClaudeErrorKind as Kind;
+    if error.status == Some(429) {
+        return Kind::RateLimited;
+    }
+    match error.code {
+        Code::LoginStartFailed | Code::InvalidAuthorizationCode | Code::TokenExchangeFailed => {
+            Kind::AuthenticationFailed
+        }
+        Code::TokenRefreshFailed | Code::RefreshTokenInvalid | Code::NotAuthenticated => {
+            Kind::SessionExpired
+        }
+        Code::NetworkError => Kind::NetworkError,
+        Code::ProfileRequestFailed | Code::ModelsRequestFailed => Kind::ModelDiscoveryFailed,
+        Code::MessagesRequestFailed
+        | Code::InvalidRequest
+        | Code::InvalidResponse
+        | Code::StorageError => Kind::ServiceUnavailable,
+    }
+}
+
+fn claude_safe_message(error: &crate::claude_protocol::ClaudeError) -> String {
+    use crate::claude_protocol::ClaudeErrorCode as Code;
+    match error.code {
+        Code::LoginStartFailed => "Could not start Claude sign-in".to_owned(),
+        Code::InvalidAuthorizationCode => {
+            "That Claude code was not accepted. Check the pasted code and try again".to_owned()
+        }
+        Code::TokenExchangeFailed => "Claude sign-in failed. Try again".to_owned(),
+        Code::TokenRefreshFailed => "Could not refresh the Claude session".to_owned(),
+        Code::RefreshTokenInvalid => "Claude session expired. Sign in again".to_owned(),
+        Code::NotAuthenticated => "Claude is not connected".to_owned(),
+        Code::NetworkError => "Could not reach the Claude service".to_owned(),
+        Code::ProfileRequestFailed => "Could not load the Claude account".to_owned(),
+        Code::ModelsRequestFailed => "Could not load Claude models".to_owned(),
+        Code::MessagesRequestFailed => "Claude request failed".to_owned(),
+        Code::InvalidRequest => "Claude request was rejected".to_owned(),
+        Code::InvalidResponse => "Claude sent an unexpected response".to_owned(),
+        Code::StorageError => "Could not read the Claude session".to_owned(),
+    }
+}
+
+/// Builds picker-ready catalog models from discovered slugs. The first slug
+/// becomes the default so the picker has a selection before the user picks.
+fn claude_catalog_models(slugs: &[String]) -> Vec<crate::model::ProviderModel> {
     slugs
         .iter()
         .enumerate()

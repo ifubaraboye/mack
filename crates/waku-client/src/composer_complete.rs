@@ -304,6 +304,9 @@ pub fn resolved_skill_submission(
     }
     Some(match provider {
         ProviderKind::ChatGpt => format!("${invocation}"),
+        // Subscription providers share the transcript-native skill form:
+        // the driver resolves the invocation, never a CLI binary.
+        ProviderKind::Claude => format!("${invocation}"),
     })
 }
 

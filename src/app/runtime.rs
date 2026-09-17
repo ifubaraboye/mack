@@ -33,7 +33,9 @@ pub(super) fn start_binary_for_provider(
     probes: &[ProviderProbe],
     provider: ProviderKind,
 ) -> anyhow::Result<PathBuf> {
-    if provider == ProviderKind::ChatGpt {
+    if provider == ProviderKind::ChatGpt || provider == ProviderKind::Claude {
+        // Subscription drivers are native to the daemon: no probe path,
+        // no error.
         return Ok(PathBuf::new());
     }
     probes
@@ -1295,6 +1297,264 @@ impl Waku {
         changed
     }
 
+    /// Desktop-side Claude panel state. Render reads only this; the login
+    /// and discovery threads report through [`ClaudeClientEvent`] and the
+    /// transitions below, so the full table is unit-testable without a
+    /// GPUI entity or a daemon.
+    pub(super) fn reduce_claude_event(
+        state: &mut ClaudePanelState,
+        event: &ClaudeClientEvent,
+    ) -> ClaudeEffect {
+        use waku_client::claude::ClaudeLoginStatus;
+        match event {
+            ClaudeClientEvent::Session(session) => {
+                let discover = session.status == ClaudeLoginStatus::Authenticated;
+                state.session = Some(session.clone());
+                state.error = None;
+                state.connecting = false;
+                state.completing = false;
+                if discover {
+                    ClaudeEffect::DiscoverModels
+                } else {
+                    ClaudeEffect::None
+                }
+            }
+            ClaudeClientEvent::Models(_) => {
+                state.models_pending = false;
+                ClaudeEffect::None
+            }
+            ClaudeClientEvent::Failed(error) => {
+                state.models_pending = false;
+                state.connecting = false;
+                state.completing = false;
+                state.error = Some(error.clone());
+                ClaudeEffect::None
+            }
+        }
+    }
+
+    /// Merges discovered Claude models into the probe catalog the model
+    /// picker reads. Pure over the probe list so tests need no app state.
+    /// ChatGPT probes are left untouched: the catalogs are independent.
+    pub(super) fn merge_claude_probe_models(
+        probes: &mut Vec<ProviderProbe>,
+        models: Vec<ProviderModel>,
+    ) {
+        if let Some(probe) = probes
+            .iter_mut()
+            .find(|probe| probe.provider == ProviderKind::Claude)
+        {
+            probe.models = models;
+        } else {
+            probes.push(ProviderProbe {
+                provider: ProviderKind::Claude,
+                installed: true,
+                path: None,
+                models,
+                agent_presets: Vec::new(),
+            });
+        }
+    }
+
+    /// One-shot Claude session read: startup restore and post-failure
+    /// resync. The daemon answers from stored state without network (except
+    /// a transparent refresh when the token is stale but alive).
+    pub(super) fn refresh_claude_session(&mut self) {
+        let tx = self.claude_tx.clone();
+        let wake = self.event_wake_tx.clone();
+        let daemon = self.daemon.client();
+        if std::thread::Builder::new()
+            .name("waku-claude-session".into())
+            .spawn(move || {
+                let event = match daemon.request(
+                    Uuid::nil(),
+                    Uuid::nil(),
+                    waku_client::Command::ClaudeSession,
+                ) {
+                    Ok(waku_client::ResponsePayload::ClaudeSession { session }) => {
+                        ClaudeClientEvent::Session(session)
+                    }
+                    Ok(_) => ClaudeClientEvent::Failed(tr!("claude.session_failed")),
+                    Err(error) => ClaudeClientEvent::Failed(error.to_string()),
+                };
+                if tx.send(event).is_ok() {
+                    signal_event_pump(&wake);
+                }
+            })
+            .is_err()
+        {
+            self.claude.error = Some(tr!("claude.session_failed"));
+        }
+    }
+
+    /// Starts the PKCE login: one daemon round trip that mints the
+    /// authorize URL the user completes in their external browser. Unlike
+    /// the device flow there is nothing to poll — the user pastes the code
+    /// back and `complete_claude_login` finishes the exchange.
+    pub(super) fn start_claude_login(&mut self) {
+        self.claude.error = None;
+        self.claude.connecting = true;
+        let tx = self.claude_tx.clone();
+        let wake = self.event_wake_tx.clone();
+        let daemon = self.daemon.client();
+        if std::thread::Builder::new()
+            .name("waku-claude-login".into())
+            .spawn(move || {
+                let event = match daemon.request(
+                    Uuid::nil(),
+                    Uuid::nil(),
+                    waku_client::Command::ClaudeStartLogin,
+                ) {
+                    Ok(waku_client::ResponsePayload::ClaudeSession { session }) => {
+                        ClaudeClientEvent::Session(session)
+                    }
+                    Ok(_) => ClaudeClientEvent::Failed(tr!("claude.connect_failed")),
+                    Err(error) => ClaudeClientEvent::Failed(error.to_string()),
+                };
+                if tx.send(event).is_ok() {
+                    signal_event_pump(&wake);
+                }
+            })
+            .is_err()
+        {
+            self.claude.connecting = false;
+            self.claude.error = Some(tr!("claude.connect_failed"));
+        }
+    }
+
+    /// Completes the login with the pasted `CODE`/`CODE#STATE`. The input is
+    /// cleared up front so the single-use code never lingers in the UI, even
+    /// when the exchange fails and the user retries with a fresh paste.
+    pub(super) fn complete_claude_login(&mut self, cx: &mut Context<Self>) {
+        let code = self.claude_code_input.read(cx).content().trim().to_owned();
+        self.claude_code_input
+            .update(cx, |input, cx| input.clear(cx));
+        if code.is_empty() {
+            self.claude.error = Some(tr!("claude.invalid_code"));
+            cx.notify();
+            return;
+        }
+        self.claude.error = None;
+        self.claude.completing = true;
+        let tx = self.claude_tx.clone();
+        let wake = self.event_wake_tx.clone();
+        let daemon = self.daemon.client();
+        if std::thread::Builder::new()
+            .name("waku-claude-complete".into())
+            .spawn(move || {
+                let event = match daemon.request(
+                    Uuid::nil(),
+                    Uuid::nil(),
+                    waku_client::Command::ClaudeCompleteLogin { code },
+                ) {
+                    Ok(waku_client::ResponsePayload::ClaudeSession { session }) => {
+                        ClaudeClientEvent::Session(session)
+                    }
+                    Ok(_) => ClaudeClientEvent::Failed(tr!("claude.complete_failed")),
+                    Err(error) => ClaudeClientEvent::Failed(error.to_string()),
+                };
+                if tx.send(event).is_ok() {
+                    signal_event_pump(&wake);
+                }
+            })
+            .is_err()
+        {
+            self.claude.completing = false;
+            self.claude.error = Some(tr!("claude.complete_failed"));
+        }
+    }
+
+    /// Deletes the daemon-side session, for both Cancel (while pending) and
+    /// Disconnect (while authenticated).
+    pub(super) fn disconnect_claude(&mut self) {
+        self.claude.error = None;
+        self.claude.connecting = false;
+        self.claude.completing = false;
+        let tx = self.claude_tx.clone();
+        let wake = self.event_wake_tx.clone();
+        let daemon = self.daemon.client();
+        if std::thread::Builder::new()
+            .name("waku-claude-logout".into())
+            .spawn(move || {
+                let event = match daemon.request(
+                    Uuid::nil(),
+                    Uuid::nil(),
+                    waku_client::Command::ClaudeLogout,
+                ) {
+                    Ok(waku_client::ResponsePayload::ClaudeSession { session }) => {
+                        ClaudeClientEvent::Session(session)
+                    }
+                    Ok(_) => ClaudeClientEvent::Failed(tr!("claude.logout_failed")),
+                    Err(error) => ClaudeClientEvent::Failed(error.to_string()),
+                };
+                if tx.send(event).is_ok() {
+                    signal_event_pump(&wake);
+                }
+            })
+            .is_err()
+        {
+            self.claude.error = Some(tr!("claude.logout_failed"));
+        }
+    }
+
+    /// Discovers the signed-in account's Claude models through the daemon
+    /// (which refreshes first). Coalesces while one is already in flight.
+    pub(super) fn refresh_claude_models(&mut self) {
+        if self.claude.models_pending {
+            return;
+        }
+        self.claude.models_pending = true;
+        let tx = self.claude_tx.clone();
+        let wake = self.event_wake_tx.clone();
+        let daemon = self.daemon.client();
+        if std::thread::Builder::new()
+            .name("waku-claude-models".into())
+            .spawn(move || {
+                let event = match daemon.request(
+                    Uuid::nil(),
+                    Uuid::nil(),
+                    waku_client::Command::ClaudeDiscoverModels,
+                ) {
+                    Ok(waku_client::ResponsePayload::ClaudeModels { models }) => {
+                        ClaudeClientEvent::Models(models)
+                    }
+                    // A dead refresh arrives as the expired session instead
+                    // of models, so the panel reflects Expired, not an error.
+                    Ok(waku_client::ResponsePayload::ClaudeSession { session }) => {
+                        ClaudeClientEvent::Session(session)
+                    }
+                    Ok(_) => ClaudeClientEvent::Failed(tr!("claude.models_failed")),
+                    Err(error) => ClaudeClientEvent::Failed(error.to_string()),
+                };
+                if tx.send(event).is_ok() {
+                    signal_event_pump(&wake);
+                }
+            })
+            .is_err()
+        {
+            self.claude.models_pending = false;
+        }
+    }
+
+    pub(super) fn drain_claude_events(&mut self) -> bool {
+        let mut changed = false;
+        while let Ok(event) = self.claude_events.try_recv() {
+            let models = match &event {
+                ClaudeClientEvent::Models(models) => Some(models.clone()),
+                _ => None,
+            };
+            let effect = Self::reduce_claude_event(&mut self.claude, &event);
+            if let Some(models) = models {
+                Self::merge_claude_probe_models(&mut self.probes, models);
+            }
+            if effect == ClaudeEffect::DiscoverModels {
+                self.refresh_claude_models();
+            }
+            changed = true;
+        }
+        changed
+    }
+
     /// Ask every installed CLI for its version, one short-lived subprocess per
     /// provider on its own thread. Answers land in `provider_versions` through
     /// the drain loop; render reads only that map.
@@ -1869,62 +2129,6 @@ impl Waku {
             None => self.show_success_toast(tr!("session.forked_from_response")),
         }
         cx.notify();
-    }
-
-    /// Maps selection spans to the earliest selected message in `session`.
-    /// Returns the message index and id, or `None` when the selection is
-    /// empty or any span fails to resolve to one of the session's messages.
-    /// Never guesses: an unresolvable span refuses the fork.
-    pub(super) fn resolve_fork_anchor(
-        session: &AgentSession,
-        spans: &[crate::md::selection::Span],
-    ) -> Option<(usize, Uuid)> {
-        if spans.is_empty() {
-            return None;
-        }
-        let mut anchor: Option<(usize, Uuid)> = None;
-        for span in spans {
-            let id_text = span.key.row.strip_prefix("message-")?;
-            let id = Uuid::parse_str(id_text).ok()?;
-            let index = session
-                .messages
-                .iter()
-                .position(|message| message.id == id)?;
-            if anchor.is_none_or(|(earliest, _)| index < earliest) {
-                anchor = Some((index, id));
-            }
-        }
-        anchor
-    }
-
-    /// Forks from a raw text selection: resolves the anchor message through
-    /// [`Self::resolve_fork_anchor`], then delegates to
-    /// [`Self::fork_session_from_selection`], which re-validates everything.
-    /// The UI passes spans and text untouched and never decides message
-    /// ownership itself.
-    pub(super) fn fork_session_from_span_selection(
-        &mut self,
-        session_id: Uuid,
-        spans: Vec<crate::md::selection::Span>,
-        selected_text: String,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(source) = self
-            .state
-            .sessions
-            .iter()
-            .find(|session| session.id == session_id)
-        else {
-            self.show_toast(tr!("session.response_unavailable"));
-            cx.notify();
-            return;
-        };
-        let Some((_, message_id)) = Self::resolve_fork_anchor(source, &spans) else {
-            self.show_toast(tr!("session.response_cannot_fork"));
-            cx.notify();
-            return;
-        };
-        self.fork_session_from_selection(session_id, message_id, selected_text, cx);
     }
 
     /// Forks the conversation prefix ending at `message_id` (inclusive) into
@@ -2665,6 +2869,7 @@ impl Waku {
                 computer_use_enabled: false,
                 provider_cursor: session.provider_cursor.clone(),
                 chatgpt_history: Self::chatgpt_history_seed(session),
+                claude_history: Self::claude_history_seed(session),
             },
             event_wake: self.event_wake_tx.clone(),
             daemon: self.daemon.clone(),
@@ -2681,6 +2886,21 @@ impl Waku {
             return None;
         }
         let history = ChatGptHistorySeed::from_messages(&session.messages);
+        if history.is_empty() {
+            None
+        } else {
+            Some(history)
+        }
+    }
+
+    /// Builds the Claude-only resume seed for a driver start from this
+    /// session's own persisted transcript. Same contract as
+    /// [`Self::chatgpt_history_seed`].
+    fn claude_history_seed(session: &AgentSession) -> Option<Vec<ClaudeHistorySeed>> {
+        if session.provider != ProviderKind::Claude {
+            return None;
+        }
+        let history = ClaudeHistorySeed::from_messages(&session.messages);
         if history.is_empty() {
             None
         } else {
@@ -3414,14 +3634,18 @@ impl Waku {
         // Claude's commands pass through untouched; its CLI owns expansion.
         let prompt = submission.prompt;
         let driver_prompt = self.resolve_provider_submission(provider, &prompt);
-        let generate_chatgpt_title = self
+        // Both subscription drivers generate their own titles from the
+        // first turn's prompt; CLI transcripts arrive pre-titled.
+        let generate_subscription_title = self
             .state
             .sessions
             .iter()
             .find(|session| session.id == session_id)
             .is_some_and(|session| {
-                session.provider == ProviderKind::ChatGpt
-                    && session.turns.len() == 1
+                matches!(
+                    session.provider,
+                    ProviderKind::ChatGpt | ProviderKind::Claude
+                ) && session.turns.len() == 1
                     && session.auto_title.is_some()
             });
         // The turn and its user message landed at accept time. Their ids go
@@ -3438,7 +3662,7 @@ impl Waku {
         match driver {
             Ok(driver) => {
                 driver.prompt(driver_prompt, turn_id, message_id);
-                if generate_chatgpt_title {
+                if generate_subscription_title {
                     driver.generate_title(prompt.clone());
                 }
             }
@@ -3489,6 +3713,7 @@ impl Waku {
             | self.drain_provider_version_events()
             | self.drain_provider_detection_events()
             | self.drain_chatgpt_events()
+            | self.drain_claude_events()
             | self.drain_computer_permission_events()
             | self.drain_task_state_sync_events(cx)
         {

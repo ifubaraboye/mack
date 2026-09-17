@@ -3,4 +3,10 @@ import type { ComputerAppGrant } from "./ComputerAppGrant";
 import type { ProviderKind } from "./ProviderKind";
 import type { JsonValue } from "./serde_json/JsonValue";
 
-export type DaemonSettings = { computer_use_enabled: boolean, computer_use_allowed_apps: Array<ComputerAppGrant>, disabled_providers: Array<ProviderKind>, provider_binary_overrides: { [key in ProviderKind]?: string }, } & ({ [key in string]: number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null });
+export type DaemonSettings = { computer_use_enabled: boolean, computer_use_allowed_apps: Array<ComputerAppGrant>, disabled_providers: Array<ProviderKind>,
+/**
+ * Cross-chat memory extraction and retrieval. Defaults on so existing
+ * behavior is unchanged; the struct-level `#[serde(default)]` keeps old
+ * settings files (which lack the key) parsing to enabled.
+ */
+memory_enabled: boolean, provider_binary_overrides: { [key in ProviderKind]?: string }, } & ({ [key in string]: number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null });

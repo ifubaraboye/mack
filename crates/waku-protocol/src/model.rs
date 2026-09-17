@@ -13,26 +13,31 @@ pub enum ProviderKind {
     #[default]
     #[serde(alias = "chatgpt")]
     ChatGpt,
+    #[serde(alias = "claude")]
+    Claude,
 }
 
 impl ProviderKind {
-    pub const ALL: [Self; 1] = [Self::ChatGpt];
+    pub const ALL: [Self; 2] = [Self::ChatGpt, Self::Claude];
 
     pub fn id(self) -> &'static str {
         match self {
             Self::ChatGpt => "chatgpt",
+            Self::Claude => "claude",
         }
     }
 
     pub fn display_name(self) -> &'static str {
         match self {
             Self::ChatGpt => "ChatGPT",
+            Self::Claude => "Claude",
         }
     }
 
     pub fn short_name(self) -> &'static str {
         match self {
             Self::ChatGpt => "ChatGPT",
+            Self::Claude => "Claude",
         }
     }
 
@@ -41,6 +46,9 @@ impl ProviderKind {
             // ChatGPT needs no CLI: authentication happens through the
             // daemon-owned device flow, so this is display-only.
             Self::ChatGpt => "chatgpt",
+            // Claude needs no CLI either: authentication happens through the
+            // daemon-owned PKCE flow, so this is display-only.
+            Self::Claude => "claude",
         }
     }
 
@@ -48,25 +56,29 @@ impl ProviderKind {
     pub fn supports_conversation_rollback(self) -> bool {
         match self {
             Self::ChatGpt => false,
+            Self::Claude => false,
         }
     }
 
     pub fn supports_conversation_fork(self) -> bool {
         match self {
             Self::ChatGpt => false,
+            Self::Claude => false,
         }
     }
 
     pub fn supports_model_discovery(self) -> bool {
         match self {
             Self::ChatGpt => true,
+            Self::Claude => true,
         }
     }
 
-    /// Only ChatGPT is offered. CLI providers are removed.
+    /// Both subscription providers are offered. CLI providers are removed.
     pub fn is_user_visible(self) -> bool {
         match self {
             Self::ChatGpt => true,
+            Self::Claude => true,
         }
     }
 }
@@ -78,26 +90,34 @@ impl ProviderKind {
     tag = "provider"
 )]
 pub enum ProviderResumeCursor {
-    /// Only ChatGPT remains; CLI cursors removed.
-    ChatGpt { session_id: String },
+    /// Only subscription providers remain; CLI cursors removed.
+    ChatGpt {
+        session_id: String,
+    },
+    Claude {
+        session_id: String,
+    },
 }
 
 impl ProviderResumeCursor {
     pub fn from_session_id(provider: ProviderKind, id: String) -> Self {
         match provider {
             ProviderKind::ChatGpt => Self::ChatGpt { session_id: id },
+            ProviderKind::Claude => Self::Claude { session_id: id },
         }
     }
 
     pub fn provider(&self) -> ProviderKind {
         match self {
             Self::ChatGpt { .. } => ProviderKind::ChatGpt,
+            Self::Claude { .. } => ProviderKind::Claude,
         }
     }
 
     pub fn native_id(&self) -> &str {
         match self {
             Self::ChatGpt { session_id } => session_id,
+            Self::Claude { session_id } => session_id,
         }
     }
 }
@@ -165,6 +185,79 @@ impl ChatGptHistorySeed {
         match seeds
             .iter()
             .position(|seed| seed.role == ChatGptHistoryRole::User)
+        {
+            Some(first_user) => {
+                seeds.drain(..first_user);
+            }
+            // Assistant-only history has no valid conversation boundary.
+            None => seeds.clear(),
+        }
+        seeds
+    }
+}
+
+/// Upper bound on the Claude history seed (items, not tokens). Mirrors the
+/// future Claude driver's live-turn resend cap: one persisted message becomes
+/// one seed item, so the seed never exceeds what a live worker would resend.
+pub const CLAUDE_HISTORY_SEED_LIMIT: usize = 200;
+
+/// Which persisted transcript side a [`ClaudeHistorySeed`] came from. There
+/// is deliberately no `System` variant: the seed restores the user/assistant
+/// conversation only.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ClaudeHistoryRole {
+    User,
+    Assistant,
+}
+
+/// One persisted Waku transcript message in Claude-driver shape. Built
+/// client-side from the hydrated `AgentSession.messages` when a Claude
+/// worker starts, so a restarted worker resends the same conversation a
+/// live worker would have carried in memory. Scoped to a single
+/// conversation: the builder only ever sees that session's messages.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeHistorySeed {
+    pub role: ClaudeHistoryRole,
+    pub text: String,
+}
+
+impl ClaudeHistorySeed {
+    /// Converts persisted messages into seed items, oldest first.
+    ///
+    /// Skips `System` messages, still-streaming messages (partial text must
+    /// never seed a new worker), and empty messages. Keeps the newest
+    /// [`CLAUDE_HISTORY_SEED_LIMIT`] items and aligns the start to a `User`
+    /// message so the seeded history never opens with an orphan assistant
+    /// item.
+    pub fn from_messages(messages: &[Message]) -> Vec<Self> {
+        let mut seeds: Vec<Self> = messages
+            .iter()
+            .filter_map(|message| {
+                if message.streaming {
+                    return None;
+                }
+                if message.content.trim().is_empty() {
+                    return None;
+                }
+                let role = match message.role {
+                    MessageRole::User => ClaudeHistoryRole::User,
+                    MessageRole::Assistant => ClaudeHistoryRole::Assistant,
+                    MessageRole::System => return None,
+                };
+                Some(Self {
+                    role,
+                    text: message.content.clone(),
+                })
+            })
+            .collect();
+        if seeds.len() > CLAUDE_HISTORY_SEED_LIMIT {
+            seeds.drain(..seeds.len() - CLAUDE_HISTORY_SEED_LIMIT);
+        }
+        match seeds
+            .iter()
+            .position(|seed| seed.role == ClaudeHistoryRole::User)
         {
             Some(first_user) => {
                 seeds.drain(..first_user);
@@ -1605,7 +1698,11 @@ impl AgentSession {
         let now = unix_time();
         fork.id = fork_id;
         fork.title = Self::DEFAULT_TITLE.to_owned();
-        fork.auto_title = None;
+        // Seed a placeholder from the selection so the normal first-turn
+        // title generation fires (it only runs when `auto_title` is set).
+        // The provider replaces this with a real title after the fork's
+        // first turn, exactly like a new chat's first-prompt placeholder.
+        fork.auto_title = fork_title_from_selection(&metadata.selected_text);
         fork.status = SessionStatus::Idle;
         fork.created_at = now;
         fork.updated_at = now;
@@ -1617,6 +1714,24 @@ impl AgentSession {
         fork.queued_messages.clear();
         Some(fork)
     }
+}
+
+/// Placeholder fork title from the selection, mirroring
+/// [`AgentSession::set_title_from_prompt`]'s truncation (seven words, 54
+/// characters) so a fork reads like a new chat until the provider titles it.
+fn fork_title_from_selection(selected_text: &str) -> Option<String> {
+    let mut title = selected_text
+        .split_whitespace()
+        .take(7)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if title.is_empty() {
+        return None;
+    }
+    if title.chars().count() > 54 {
+        title = format!("{}…", title.chars().take(53).collect::<String>());
+    }
+    Some(title)
 }
 
 fn strip_legacy_codex_citations(text: &str) -> String {
@@ -4437,10 +4552,12 @@ mod tests {
             .fork_from_message(1, fork_metadata_for(&session, ids[1]))
             .unwrap();
 
-        // New identity, default title state, idle.
+        // New identity, default title plus a selection placeholder the
+        // provider replaces after the fork's first turn, idle.
         assert_ne!(fork.id, session.id);
         assert_eq!(fork.title, AgentSession::DEFAULT_TITLE);
-        assert_eq!(fork.auto_title, None);
+        assert_eq!(fork.auto_title.as_deref(), Some("dw = (2/m) XT(Xw-y)"));
+        assert_eq!(fork.display_title(), "dw = (2/m) XT(Xw-y)");
         assert_eq!(fork.status, SessionStatus::Idle);
         assert_eq!(fork.provider_cursor, None);
         assert!(fork.queued_messages.is_empty());
@@ -4489,6 +4606,19 @@ mod tests {
         );
         assert_eq!(session.turns.len(), 2);
         assert_eq!(session.queued_messages.len(), 1);
+    }
+
+    #[test]
+    fn fork_title_truncates_long_selections() {
+        let long = "supercalifragilisticexpialidocious ".repeat(10);
+        let title = fork_title_from_selection(&long).unwrap();
+        assert_eq!(title.chars().count(), 54);
+        assert!(title.ends_with('…'));
+        assert_eq!(fork_title_from_selection("   "), None);
+        assert_eq!(
+            fork_title_from_selection("line one\nline two"),
+            Some("line one line two".to_owned())
+        );
     }
 
     #[test]

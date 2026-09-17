@@ -516,6 +516,55 @@ chatgpt.logout_failed:
 chatgpt.models_failed:
   en: Could not load ChatGPT models
 
+claude.connect:
+  en: Connect Claude
+claude.connecting:
+  en: Connecting…
+claude.sign_in_again:
+  en: Sign in again
+claude.disconnect:
+  en: Disconnect
+claude.cancel:
+  en: Cancel
+claude.copy_url:
+  en: Copy sign-in URL
+claude.open_browser:
+  en: Open in browser
+claude.complete_login:
+  en: Complete sign-in
+claude.refresh_models:
+  en: Refresh models
+claude.description:
+  en: Use your own Claude subscription in Waku. Authorization happens in your external browser, and the session stays on this computer
+claude.not_connected:
+  en: Not connected
+claude.waiting:
+  en: Waiting for authorization
+claude.waiting_description:
+  en: Open the sign-in page in your browser, authorize Waku, then paste the code here to connect your Claude account
+claude.code_placeholder:
+  en: Paste the authorization code
+claude.connected:
+  en: Connected
+claude.connected_as:
+  en: Connected as %{email}
+claude.expired:
+  en: Session expired
+claude.expired_description:
+  en: Your Claude session expired. Sign in again to keep using your subscription
+claude.invalid_code:
+  en: That code was not accepted. Check the pasted code and try again
+claude.session_failed:
+  en: Could not read the Claude session
+claude.connect_failed:
+  en: Could not start Claude sign-in
+claude.complete_failed:
+  en: Claude sign-in failed
+claude.logout_failed:
+  en: Could not sign out of Claude
+claude.models_failed:
+  en: Could not load Claude models
+
 computer_use.allow_apps:
   en: Let Waku use apps
 computer_use.availability:
@@ -599,6 +648,8 @@ sidebar.days_ago:
   en: "%{count}d"
 sidebar.unknown_project:
   en: Unknown project
+sidebar.fork_of:
+  en: Fork of %{parent}
 sidebar.move_to_group:
   en: Move to group
 sidebar.rename_group:

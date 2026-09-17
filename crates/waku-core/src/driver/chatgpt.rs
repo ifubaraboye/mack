@@ -1550,6 +1550,7 @@ mod tests {
             computer_use_enabled: false,
             provider_cursor: None,
             chatgpt_history: None,
+            claude_history: None,
             memory_db_path: None,
             memory_enabled: true,
         }

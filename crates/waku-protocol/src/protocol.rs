@@ -8,8 +8,9 @@ use uuid::Uuid;
 use crate::attachments::{AttachmentUpload, StoredAttachment};
 use crate::computer_use::ComputerPermissions;
 use crate::model::{
-    AgentSession, ChatGptHistorySeed, GoalOperation, Project, ProviderKind, ProviderProbe,
-    ProviderResumeCursor, ProviderSessionHistory, ProviderSessionSummary, UserInputAnswer,
+    AgentSession, ChatGptHistorySeed, ClaudeHistorySeed, GoalOperation, Project, ProviderKind,
+    ProviderProbe, ProviderResumeCursor, ProviderSessionHistory, ProviderSessionSummary,
+    UserInputAnswer,
 };
 use crate::persistence::{ComposerDraftChange, ComposerDrafts, SessionMessageMatch, StoredMemory};
 use crate::provider_session::{ProviderSessionFork, ProviderSessionForkRequest};
@@ -19,7 +20,7 @@ use crate::usage::PlanUsage;
 use crate::usage_history::{UsageHistory, UsageWindow};
 use crate::workspace::{WorkspaceOperation, WorkspaceResult};
 
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 pub const MAX_WIRE_MESSAGE_BYTES: usize = 48 * 1024 * 1024;
 pub const DAEMON_TOKEN_ENV: &str = "WAKU_DAEMON_TOKEN";
 pub const DAEMON_ADDRESS_ENV: &str = "WAKU_DAEMON_ADDRESS";
@@ -277,6 +278,22 @@ pub enum Command {
     ChatGptSession,
     /// Discover the signed-in account's ChatGPT models (refreshing first).
     ChatGptDiscoverModels,
+    /// Start a Claude PKCE login. Returns the authorize URL the user
+    /// completes in their external browser; the pasted code goes to
+    /// `ClaudeCompleteLogin`.
+    ClaudeStartLogin,
+    /// Complete the Claude login with the user-pasted `CODE`/`CODE#STATE`.
+    /// Single-use and short-lived; tokens stay daemon-side.
+    ClaudeCompleteLogin {
+        code: String,
+    },
+    /// Delete the stored Claude session.
+    ClaudeLogout,
+    /// Read Claude session state without touching the network.
+    ClaudeSession,
+    /// Discover the signed-in account's Claude models (refreshing first,
+    /// with a curated fallback when the catalog rejects the token).
+    ClaudeDiscoverModels,
     /// List cross-chat memories for the signed-in ChatGPT account. Empty
     /// when signed out.
     ListMemories,
@@ -308,6 +325,10 @@ pub struct WireDriverStartOptions {
     /// resume path. `None` (and empty) means a fresh conversation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chatgpt_history: Option<Vec<ChatGptHistorySeed>>,
+    /// Claude-only resume history, seeded client-side from the persisted
+    /// Waku transcript. Same contract as `chatgpt_history`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_history: Option<Vec<ClaudeHistorySeed>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -496,6 +517,12 @@ pub enum ResponsePayload {
     ChatGptModels {
         models: Vec<crate::model::ProviderModel>,
     },
+    ClaudeSession {
+        session: crate::claude::ClaudePublicSession,
+    },
+    ClaudeModels {
+        models: Vec<crate::model::ProviderModel>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -601,7 +628,7 @@ mod tests {
 
         assert_eq!(json["type"], "forkSessionFromResponse");
         assert_eq!(json["turnCount"], 7);
-        assert_eq!(PROTOCOL_VERSION, 7);
+        assert_eq!(PROTOCOL_VERSION, 8);
     }
 
     #[test]
@@ -610,7 +637,7 @@ mod tests {
 
         assert_eq!(json["type"], "rewindSessionToMessage");
         assert_eq!(json["turnCount"], 4);
-        assert_eq!(PROTOCOL_VERSION, 7);
+        assert_eq!(PROTOCOL_VERSION, 8);
     }
 
     #[test]
@@ -677,6 +704,51 @@ mod tests {
         // The session payload is the public shape only; models carry slugs.
         let session = ResponsePayload::ChatGptSession {
             session: crate::chatgpt::ChatGptPublicSession::default(),
+        };
+        let text = serde_json::to_value(&session).unwrap().to_string();
+        for field in forbidden {
+            assert!(!text.contains(field), "session payload leaks {field}");
+        }
+    }
+
+    #[test]
+    fn claude_commands_carry_no_token_material() {
+        // Start/Logout/Session/DiscoverModels take no arguments, so by
+        // construction the client can send no secret. CompleteLogin carries
+        // the single-use pasted code only — never a token or verifier.
+        // Assert the wire shapes name no credential field.
+        let forbidden = [
+            "access_token",
+            "accessToken",
+            "refresh_token",
+            "refreshToken",
+            "authorizationCode",
+            "code_verifier",
+            "codeVerifier",
+            "verifier",
+        ];
+        let commands = [
+            Command::ClaudeStartLogin,
+            Command::ClaudeCompleteLogin {
+                code: "paste-me".to_owned(),
+            },
+            Command::ClaudeLogout,
+            Command::ClaudeSession,
+            Command::ClaudeDiscoverModels,
+        ];
+        for command in commands {
+            let json = serde_json::to_value(&command).unwrap();
+            let text = json.to_string();
+            for field in forbidden {
+                assert!(!text.contains(field), "command wire leaks {field}");
+            }
+            // Round-trips keep the daemon/client dispatch aligned.
+            let back: Command = serde_json::from_value(json).unwrap();
+            assert_eq!(format!("{back:?}"), format!("{command:?}"));
+        }
+        // The session payload is the public shape only; models carry slugs.
+        let session = ResponsePayload::ClaudeSession {
+            session: crate::claude::ClaudePublicSession::default(),
         };
         let text = serde_json::to_value(&session).unwrap().to_string();
         for field in forbidden {

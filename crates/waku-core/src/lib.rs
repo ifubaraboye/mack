@@ -22,6 +22,8 @@ pub mod blob_store;
 pub mod chatgpt_protocol;
 pub mod chatgpt_session;
 pub mod checkpoint;
+pub mod claude_protocol;
+pub mod claude_session;
 pub mod command_env;
 pub mod composer_complete;
 pub mod computer_use;

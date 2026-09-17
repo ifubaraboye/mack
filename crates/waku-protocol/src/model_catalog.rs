@@ -8,6 +8,10 @@ pub fn fallback_models(provider: ProviderKind) -> Vec<ProviderModel> {
         // the authenticated `/models` endpoint. A fabricated fallback would
         // offer models the account cannot use, so discovery is authoritative.
         ProviderKind::ChatGpt => Vec::new(),
+        // Same for Claude: the subscription catalog is authoritative. The
+        // daemon substitutes its curated fallback only after an
+        // authenticated discovery attempt, never here.
+        ProviderKind::Claude => Vec::new(),
     }
 }
 

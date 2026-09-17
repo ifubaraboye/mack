@@ -21,11 +21,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("enter", ConfirmGroupDialog, Some(DIALOG_INPUT_CONTEXT)),
         KeyBinding::new("enter", ConfirmGroupDialog, Some(DIALOG_CONTEXT)),
         KeyBinding::new("escape", DismissGroupDialog, Some(DIALOG_CONTEXT)),
-        KeyBinding::new(
-            "escape",
-            DismissGroupDialog,
-            Some(DIALOG_INPUT_CONTEXT),
-        ),
+        KeyBinding::new("escape", DismissGroupDialog, Some(DIALOG_INPUT_CONTEXT)),
     ]);
 }
 
@@ -52,16 +48,15 @@ impl Waku {
     ) {
         let prefill = match &mode {
             GroupDialogMode::CreateGroup { .. } => None,
-            GroupDialogMode::RenameGroup { group_id } => self
-                .chat_group(*group_id)
-                .map(|group| group.name.clone()),
+            GroupDialogMode::RenameGroup { group_id } => {
+                self.chat_group(*group_id).map(|group| group.name.clone())
+            }
         };
         if matches!(mode, GroupDialogMode::RenameGroup { .. }) && prefill.is_none() {
             return;
         }
-        let name = cx.new(|cx| {
-            TextInput::new(window, cx).placeholder(tr!("group_dialog.name_placeholder"))
-        });
+        let name = cx
+            .new(|cx| TextInput::new(window, cx).placeholder(tr!("group_dialog.name_placeholder")));
         if let Some(prefill) = prefill {
             name.update(cx, |input, cx| {
                 input.set_content(prefill, cx);
@@ -181,62 +176,57 @@ impl Waku {
             )
             .child(div().mx(px(8.0)).mt(px(10.0)).h(px(1.0)).bg(theme.border))
             .child(
-                div()
-                    .p(px(8.0))
-                    .child(
-                        div()
-                            .id("group-dialog-save")
-                            .track_focus(&dialog.save_focus)
-                            .when(can_save, |row| row.tab_index(0))
-                            .h(px(38.0))
-                            .w_full()
-                            .px(px(10.0))
-                            .rounded(px(9.0))
-                            .flex()
-                            .items_center()
-                            .gap(px(10.0))
-                            .cursor_default()
-                            .text_size(sp(14.0))
-                            .text_color(if can_save {
+                div().p(px(8.0)).child(
+                    div()
+                        .id("group-dialog-save")
+                        .track_focus(&dialog.save_focus)
+                        .when(can_save, |row| row.tab_index(0))
+                        .h(px(38.0))
+                        .w_full()
+                        .px(px(10.0))
+                        .rounded(px(9.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(10.0))
+                        .cursor_default()
+                        .text_size(sp(14.0))
+                        .text_color(if can_save {
+                            theme.text
+                        } else {
+                            theme.text_ghost
+                        })
+                        .focus_visible(|style| style.border_1().border_color(theme.accent))
+                        .when(can_save, |row| {
+                            let click_weak = save_weak.clone();
+                            let key_weak = save_weak.clone();
+                            row.hover(|style| style.bg(theme.overlay_strong))
+                                .on_click(move |_, window, cx| {
+                                    let _ = click_weak.update(cx, |waku, cx| {
+                                        waku.confirm_group_dialog(window, cx)
+                                    });
+                                })
+                                .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                                    if !event.keystroke.modifiers.modified()
+                                        && matches!(event.keystroke.key.as_str(), "enter" | "space")
+                                    {
+                                        let _ = key_weak.update(cx, |waku, cx| {
+                                            waku.confirm_group_dialog(window, cx)
+                                        });
+                                        cx.stop_propagation();
+                                    }
+                                })
+                        })
+                        .child(icon(
+                            "icons/check.svg",
+                            15.0,
+                            if can_save {
                                 theme.text
                             } else {
                                 theme.text_ghost
-                            })
-                            .focus_visible(|style| style.border_1().border_color(theme.accent))
-                            .when(can_save, |row| {
-                                let click_weak = save_weak.clone();
-                                let key_weak = save_weak.clone();
-                                row.hover(|style| style.bg(theme.overlay_strong))
-                                    .on_click(move |_, window, cx| {
-                                        let _ = click_weak.update(cx, |waku, cx| {
-                                            waku.confirm_group_dialog(window, cx)
-                                        });
-                                    })
-                                    .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                                        if !event.keystroke.modifiers.modified()
-                                            && matches!(
-                                                event.keystroke.key.as_str(),
-                                                "enter" | "space"
-                                            )
-                                        {
-                                            let _ = key_weak.update(cx, |waku, cx| {
-                                                waku.confirm_group_dialog(window, cx)
-                                            });
-                                            cx.stop_propagation();
-                                        }
-                                    })
-                            })
-                            .child(icon(
-                                "icons/check.svg",
-                                15.0,
-                                if can_save {
-                                    theme.text
-                                } else {
-                                    theme.text_ghost
-                                },
-                            ))
-                            .child(div().min_w_0().flex_1().truncate().child(save_label)),
-                    ),
+                            },
+                        ))
+                        .child(div().min_w_0().flex_1().truncate().child(save_label)),
+                ),
             );
         let scrim = if theme.is_dark {
             gpui::hsla(0.0, 0.0, 0.0, 0.34)

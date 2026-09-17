@@ -11,13 +11,11 @@ const SESSION_RENAME_FIELD_CONTEXT: &str = "SessionRename > TextInput";
 /// Keep Escape inside the focused inline editor so it cancels the rename,
 /// rather than falling through to the window-wide Stop action.
 pub fn init(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new(
-            "escape",
-            CancelSessionRename,
-            Some(SESSION_RENAME_FIELD_CONTEXT),
-        ),
-    ]);
+    cx.bind_keys([KeyBinding::new(
+        "escape",
+        CancelSessionRename,
+        Some(SESSION_RENAME_FIELD_CONTEXT),
+    )]);
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1030,9 +1028,8 @@ impl Waku {
         // Groups palette view instead of folder sections here.
         let mut grouped_sessions: [Vec<Uuid>; 6] = std::array::from_fn(|_| Vec::new());
         for session in sorted_sessions {
-            grouped_sessions
-                [session_date_group(sidebar_session_timestamp(session), today).index()]
-            .push(session.id);
+            grouped_sessions[session_date_group(sidebar_session_timestamp(session), today).index()]
+                .push(session.id);
         }
         let mut groups = SessionDateGroup::ALL;
         if self.state.sidebar_ordering == SidebarOrdering::Oldest {
@@ -1598,7 +1595,22 @@ impl Waku {
             .projects
             .iter()
             .find(|project| project.id == session.project_id);
-        let detail_label = if let Some(group) = session
+        let detail_label = if let Some(parent_title) = session
+            .fork_metadata
+            .as_ref()
+            .and_then(|fork| {
+                self.state
+                    .sessions
+                    .iter()
+                    .find(|session| session.id == fork.parent_session_id)
+            })
+            .map(localized_session_title)
+        {
+            Some(SharedString::from(tr!(
+                "sidebar.fork_of",
+                parent = parent_title
+            )))
+        } else if let Some(group) = session
             .group_id
             .and_then(|group_id| self.chat_group(group_id))
         {
@@ -1611,7 +1623,11 @@ impl Waku {
             ))
         };
         let has_detail_label = detail_label.is_some();
-        let detail_icon = "icons/folder.svg";
+        let detail_icon = if session.fork_metadata.is_some() {
+            "icons/fork.svg"
+        } else {
+            "icons/folder.svg"
+        };
         let rename_input =
             (self.session_rename == Some(session_id)).then(|| self.session_rename_input.clone());
         let renaming = rename_input.is_some();
@@ -1678,6 +1694,9 @@ impl Waku {
                     .gap(px(6.0))
                     .overflow_hidden()
                     .line_height(sp(18.0))
+                    .when(session.fork_metadata.is_some(), |element| {
+                        element.child(icon("icons/fork.svg", 12.0, theme.text_tertiary))
+                    })
                     .child(title)
                     .when(working, |element| {
                         element.child(motion::spin_slow(icon(
@@ -1787,9 +1806,8 @@ impl Waku {
                     let rename_group_waku = waku.clone();
                     // Membership snapshot shared by the submenu value row
                     // and the rename affordance below.
-                    let membership: Option<(Uuid, String)> = move_value_waku
-                        .upgrade()
-                        .and_then(|entity| {
+                    let membership: Option<(Uuid, String)> =
+                        move_value_waku.upgrade().and_then(|entity| {
                             entity.update(cx, |waku, _| {
                                 waku.state
                                     .sessions
@@ -1895,8 +1913,8 @@ impl Waku {
                     }
                     items.push(MenuItem::Separator);
                     items.push(MenuItem::new(tr!("common.remove"), move |_, cx| {
-                        let _ = remove_waku
-                            .update(cx, |waku, cx| waku.remove_session(session_id, cx));
+                        let _ =
+                            remove_waku.update(cx, |waku, cx| waku.remove_session(session_id, cx));
                     }));
                     items
                 },

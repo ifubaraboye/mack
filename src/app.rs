@@ -33,11 +33,12 @@ use crate::md;
 use crate::model::{
     ActivityItem, ActivityKind, AgentSession, BackgroundWorkEvent, BackgroundWorkItem,
     BackgroundWorkKey, BackgroundWorkKind, BackgroundWorkStatus, ChatGptHistorySeed, ChatGroup,
-    Checkpoint, CheckpointStatus, ContextUsage, DriverEvent, FavoriteModel, ForkMetadata, Message,
-    MessageAttachment, MessageRole, PendingPermission, Project, ProviderKind, ProviderModel,
-    ProviderProbe, ProviderResumeCursor, ProviderSessionHistory, ProviderSessionSummary,
-    QueuedMessage, ReasoningBlock, RuntimeMode, SessionStatus, SessionWorkspace, TranscriptBlock,
-    TurnStatus, UserInputAnswer, UserInputQuestion, compact_path, unix_time, unix_time_millis,
+    Checkpoint, CheckpointStatus, ClaudeHistorySeed, ContextUsage, DriverEvent, FavoriteModel,
+    ForkMetadata, Message, MessageAttachment, MessageRole, PendingPermission, Project,
+    ProviderKind, ProviderModel, ProviderProbe, ProviderResumeCursor, ProviderSessionHistory,
+    ProviderSessionSummary, QueuedMessage, ReasoningBlock, RuntimeMode, SessionStatus,
+    SessionWorkspace, TranscriptBlock, TurnStatus, UserInputAnswer, UserInputQuestion,
+    compact_path, unix_time, unix_time_millis,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -211,6 +212,36 @@ struct ChatGptPanelState {
 /// Side effect a ChatGPT event asks the app to perform off-thread.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ChatGptEffect {
+    None,
+    DiscoverModels,
+}
+
+/// Daemon Claude results delivered to the event pump. Sessions carry the
+/// client-safe wire session only — never bearer material. The pasted
+/// authorization code travels the other way (client to daemon) and is
+/// cleared from the input after submit.
+#[derive(Clone, Debug)]
+enum ClaudeClientEvent {
+    Session(waku_client::claude::ClaudePublicSession),
+    Models(Vec<ProviderModel>),
+    Failed(String),
+}
+
+/// Desktop-side Claude panel state: last known session, inline error, and
+/// in-flight flags. Render reads only this; transitions run through
+/// `reduce_claude_event` in runtime so the table is unit-testable.
+#[derive(Clone, Debug, Default)]
+struct ClaudePanelState {
+    session: Option<waku_client::claude::ClaudePublicSession>,
+    error: Option<String>,
+    connecting: bool,
+    completing: bool,
+    models_pending: bool,
+}
+
+/// Side effect a Claude event asks the app to perform off-thread.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClaudeEffect {
     None,
     DiscoverModels,
 }
@@ -1087,6 +1118,15 @@ pub struct Waku {
     /// Supersedes stale login poll loops: Connect/Logout bump it, and each
     /// loop exits when its generation no longer matches.
     chatgpt_poll_generation: Arc<AtomicU64>,
+    /// Last known daemon Claude session (status + public profile only —
+    /// bearer material never leaves the daemon), plus inline error and
+    /// in-flight flags. Transitions run through `reduce_claude_event`.
+    claude: ClaudePanelState,
+    claude_tx: Sender<ClaudeClientEvent>,
+    claude_events: Receiver<ClaudeClientEvent>,
+    /// Single-use PKCE authorization code pasted from the browser. Cleared
+    /// after every submit so the code never lingers in the UI.
+    claude_code_input: Entity<TextInput>,
     computer_permissions: ComputerPermissions,
     computer_permission_tx: Sender<Result<ComputerPermissions, String>>,
     computer_permission_events: Receiver<Result<ComputerPermissions, String>>,
@@ -1540,8 +1580,8 @@ pub use command_palette::init as init_command_palette;
 pub use commit_dialog::init as init_commit_dialog_keys;
 use components::*;
 pub use goal_dialog::init as init_goal_dialog_keys;
-pub use group_dialog::init as init_group_dialog_keys;
 use group_dialog::GroupDialogMode;
+pub use group_dialog::init as init_group_dialog_keys;
 pub use image_preview::init as init_image_preview_keys;
 pub use settings::init as init_settings_keys;
 pub use sidebar::init as init_sidebar_keys;
@@ -1929,6 +1969,11 @@ impl Waku {
                 .select_all_on_focus_click()
                 .placeholder(tr!("input.detected_automatically"))
         });
+        let claude_code_input = cx.new(|cx| {
+            TextInput::new(window, cx)
+                .select_all_on_focus_click()
+                .placeholder(tr!("claude.code_placeholder"))
+        });
         let usage_project_filter =
             cx.new(|cx| TextInput::new(window, cx).placeholder(tr!("input.filter_projects")));
         let navigation_rail = cx.new(|_| ConversationNavigationRail::new());
@@ -2088,6 +2133,7 @@ impl Waku {
         let (provider_detection_tx, provider_detection_events) = unbounded();
         let (computer_permission_tx, computer_permission_events) = unbounded();
         let (chatgpt_tx, chatgpt_events) = unbounded();
+        let (claude_tx, claude_events) = unbounded();
         let (event_wake_tx, event_wake_events) = smol::channel::bounded(1);
         let (task_state_sync_tx, task_state_sync_events) = unbounded();
         #[cfg(target_os = "macos")]
@@ -2630,6 +2676,10 @@ impl Waku {
                 expanded_provider_settings: None,
                 provider_path_input,
                 chatgpt: ChatGptPanelState::default(),
+                claude: ClaudePanelState::default(),
+                claude_tx,
+                claude_events,
+                claude_code_input,
                 chatgpt_tx,
                 chatgpt_events,
                 chatgpt_poll_generation: Arc::new(AtomicU64::new(0)),
@@ -2865,6 +2915,9 @@ impl Waku {
             // refreshes transparently and rediscovers its models, while an
             // expired one simply reports Expired until the user signs in.
             this.refresh_chatgpt_session();
+            // And the Claude session: same restore contract, independent
+            // credentials and catalog.
+            this.refresh_claude_session();
             // The skill library too: the Skills settings page must open onto
             // data, not a scan.
             this.ensure_skills_catalog(false, cx);

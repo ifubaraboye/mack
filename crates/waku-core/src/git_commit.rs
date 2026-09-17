@@ -562,6 +562,11 @@ mod tests {
                 ProviderKind::ChatGpt => {
                     assert!(has(&args, prompt));
                 }
+                // No Claude commit CLI exists either; same shared trailing
+                // prompt push until the subscription driver covers commits.
+                ProviderKind::Claude => {
+                    assert!(has(&args, prompt));
+                }
             }
         }
     }

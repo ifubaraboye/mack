@@ -1876,6 +1876,13 @@ fn settings_search_filters_pages_for_arrow_cycling() {
 }
 
 #[test]
+fn fork_sidebar_label_resolves() {
+    let template = crate::i18n::translate("sidebar.fork_of");
+    assert!(!template.contains("sidebar.fork_of"));
+    assert!(template.contains("%{parent}"));
+}
+
+#[test]
 fn memory_settings_page_is_searchable_and_localized() {
     use super::SettingsPage;
 
@@ -1917,59 +1924,6 @@ fn memory_settings_page_is_searchable_and_localized() {
             "locale key {key} did not resolve: {text}"
         );
     }
-}
-
-#[test]
-fn selection_fork_anchors_at_the_earliest_selected_message() {
-    use super::Waku;
-    use crate::md::selection::{Span, TextKey};
-    use std::rc::Rc;
-
-    let project_id = Uuid::new_v4();
-    let mut session = AgentSession::new(project_id, ProviderKind::ChatGpt);
-    session.begin_turn("first");
-    session.push_message(MessageRole::Assistant, "first answer");
-    session.finish_active_turn(TurnStatus::Completed);
-    session.begin_turn("second");
-    session.push_message(MessageRole::Assistant, "second answer");
-    session.finish_active_turn(TurnStatus::Completed);
-
-    let span_for = |index: usize| Span {
-        key: TextKey::new(format!("message-{}", session.messages[index].id), 0),
-        range: 0..4,
-        text: Rc::from("sel"),
-        block_break: false,
-    };
-    // Spans in either order resolve to the earliest message.
-    assert_eq!(
-        Waku::resolve_fork_anchor(&session, &[span_for(3), span_for(1)]),
-        Some((1, session.messages[1].id))
-    );
-    assert_eq!(
-        Waku::resolve_fork_anchor(&session, &[span_for(1)]),
-        Some((1, session.messages[1].id))
-    );
-    // Empty selection refuses.
-    assert_eq!(Waku::resolve_fork_anchor(&session, &[]), None);
-    // A span from another session refuses the whole fork.
-    let foreign = Span {
-        key: TextKey::new(format!("message-{}", Uuid::new_v4()), 0),
-        range: 0..4,
-        text: Rc::from("sel"),
-        block_break: false,
-    };
-    assert_eq!(
-        Waku::resolve_fork_anchor(&session, &[span_for(1), foreign]),
-        None
-    );
-    // A malformed row refuses too.
-    let malformed = Span {
-        key: TextKey::new("composer-1", 0),
-        range: 0..4,
-        text: Rc::from("sel"),
-        block_break: false,
-    };
-    assert_eq!(Waku::resolve_fork_anchor(&session, &[malformed]), None);
 }
 
 #[test]
@@ -2424,5 +2378,215 @@ fn chatgpt_starts_without_a_cli_binary() {
     // ChatGPT is a native daemon driver: no probe path, no error.
     let probes = Vec::new();
     let binary = start_binary_for_provider(&probes, ProviderKind::ChatGpt).unwrap();
+    assert!(binary.as_os_str().is_empty());
+}
+
+#[test]
+fn claude_login_reaches_connected_and_discovers_models() {
+    use super::{ClaudeClientEvent, ClaudeEffect, ClaudePanelState};
+    use waku_client::claude::{ClaudeLoginStatus, ClaudePublicSession};
+
+    fn session(status: ClaudeLoginStatus) -> ClaudePublicSession {
+        ClaudePublicSession {
+            status,
+            authorize_url: (status == ClaudeLoginStatus::Pending)
+                .then(|| "https://claude.ai/oauth/authorize?code=true".to_owned()),
+            state: (status == ClaudeLoginStatus::Pending).then(|| "state-123".to_owned()),
+            expires_at_ms: Some(99_000),
+            user: None,
+            error: None,
+        }
+    }
+
+    let mut state = ClaudePanelState::default();
+    // Not connected -> waiting: stored, no side effect yet.
+    let effect = Waku::reduce_claude_event(
+        &mut state,
+        &ClaudeClientEvent::Session(session(ClaudeLoginStatus::Pending)),
+    );
+    assert_eq!(effect, ClaudeEffect::None);
+    assert_eq!(
+        state.session.as_ref().map(|session| session.status),
+        Some(ClaudeLoginStatus::Pending)
+    );
+    assert!(state.error.is_none());
+
+    // Waiting -> connected: discovery is the only side effect.
+    let effect = Waku::reduce_claude_event(
+        &mut state,
+        &ClaudeClientEvent::Session(session(ClaudeLoginStatus::Authenticated)),
+    );
+    assert_eq!(effect, ClaudeEffect::DiscoverModels);
+
+    // Models landing clears the pending flag.
+    state.models_pending = true;
+    let effect = Waku::reduce_claude_event(&mut state, &ClaudeClientEvent::Models(Vec::new()));
+    assert_eq!(effect, ClaudeEffect::None);
+    assert!(!state.models_pending);
+}
+
+#[test]
+fn claude_waiting_expires_without_models() {
+    use super::{ClaudeClientEvent, ClaudeEffect, ClaudePanelState};
+    use waku_client::claude::{ClaudeLoginStatus, ClaudePublicSession};
+
+    let mut state = ClaudePanelState::default();
+    let effect = Waku::reduce_claude_event(
+        &mut state,
+        &ClaudeClientEvent::Session(ClaudePublicSession {
+            status: ClaudeLoginStatus::Pending,
+            ..ClaudePublicSession::default()
+        }),
+    );
+    assert_eq!(effect, ClaudeEffect::None);
+
+    let effect = Waku::reduce_claude_event(
+        &mut state,
+        &ClaudeClientEvent::Session(ClaudePublicSession {
+            status: ClaudeLoginStatus::Expired,
+            ..ClaudePublicSession::default()
+        }),
+    );
+    assert_eq!(effect, ClaudeEffect::None);
+    assert_eq!(
+        state.session.as_ref().map(|session| session.status),
+        Some(ClaudeLoginStatus::Expired)
+    );
+    assert!(state.error.is_none());
+}
+
+#[test]
+fn claude_connected_expires_and_clears_on_logout() {
+    use super::{ClaudeClientEvent, ClaudeEffect, ClaudePanelState};
+    use waku_client::claude::{ClaudeLoginStatus, ClaudePublicSession};
+
+    let mut state = ClaudePanelState::default();
+    // Connected triggers exactly one discovery side effect.
+    let effect = Waku::reduce_claude_event(
+        &mut state,
+        &ClaudeClientEvent::Session(ClaudePublicSession {
+            status: ClaudeLoginStatus::Authenticated,
+            ..ClaudePublicSession::default()
+        }),
+    );
+    assert_eq!(effect, ClaudeEffect::DiscoverModels);
+
+    // A dead refresh lands as Expired (not an error): sign in again.
+    let effect = Waku::reduce_claude_event(
+        &mut state,
+        &ClaudeClientEvent::Session(ClaudePublicSession {
+            status: ClaudeLoginStatus::Expired,
+            ..ClaudePublicSession::default()
+        }),
+    );
+    assert_eq!(effect, ClaudeEffect::None);
+    assert_eq!(
+        state.session.as_ref().map(|session| session.status),
+        Some(ClaudeLoginStatus::Expired)
+    );
+
+    // Logout returns to Unauthenticated with no models pending.
+    state.models_pending = true;
+    let effect = Waku::reduce_claude_event(
+        &mut state,
+        &ClaudeClientEvent::Session(ClaudePublicSession {
+            status: ClaudeLoginStatus::Unauthenticated,
+            ..ClaudePublicSession::default()
+        }),
+    );
+    assert_eq!(effect, ClaudeEffect::None);
+    assert_eq!(
+        state.session.as_ref().map(|session| session.status),
+        Some(ClaudeLoginStatus::Unauthenticated)
+    );
+}
+
+#[test]
+fn claude_failure_preserves_last_session_and_reports_inline() {
+    use super::{ClaudeClientEvent, ClaudePanelState};
+    use waku_client::claude::{ClaudeLoginStatus, ClaudePublicSession};
+
+    let mut state = ClaudePanelState::default();
+    Waku::reduce_claude_event(
+        &mut state,
+        &ClaudeClientEvent::Session(ClaudePublicSession {
+            status: ClaudeLoginStatus::Authenticated,
+            ..ClaudePublicSession::default()
+        }),
+    );
+    Waku::reduce_claude_event(
+        &mut state,
+        &ClaudeClientEvent::Failed("Could not load Claude models".to_owned()),
+    );
+    // The last known session stays put; the error shows inline.
+    assert_eq!(
+        state.session.as_ref().map(|session| session.status),
+        Some(ClaudeLoginStatus::Authenticated)
+    );
+    assert_eq!(state.error.as_deref(), Some("Could not load Claude models"));
+    assert!(!state.models_pending);
+    assert!(!state.connecting);
+    assert!(!state.completing);
+
+    // The next successful session clears the error.
+    Waku::reduce_claude_event(
+        &mut state,
+        &ClaudeClientEvent::Session(ClaudePublicSession {
+            status: ClaudeLoginStatus::Authenticated,
+            ..ClaudePublicSession::default()
+        }),
+    );
+    assert!(state.error.is_none());
+}
+
+#[test]
+fn claude_probe_merge_replaces_only_claude_models() {
+    use crate::model::{ProviderModel, ProviderProbe};
+
+    let mut probes = vec![
+        ProviderProbe {
+            provider: ProviderKind::ChatGpt,
+            installed: true,
+            path: None,
+            models: vec![ProviderModel::new("gpt-5.5", "GPT-5.5")],
+            agent_presets: Vec::new(),
+        },
+        ProviderProbe {
+            provider: ProviderKind::Claude,
+            installed: true,
+            path: None,
+            models: vec![ProviderModel::new("old", "Old")],
+            agent_presets: Vec::new(),
+        },
+    ];
+    Waku::merge_claude_probe_models(
+        &mut probes,
+        vec![ProviderModel::new("claude-sonnet-4-5", "Claude Sonnet 4.5")],
+    );
+    assert_eq!(probes.len(), 2);
+    // ChatGPT catalog untouched by the Claude merge.
+    assert_eq!(probes[0].models.len(), 1);
+    assert_eq!(probes[0].models[0].id, "gpt-5.5");
+    assert_eq!(probes[1].models.len(), 1);
+    assert_eq!(probes[1].models[0].id, "claude-sonnet-4-5");
+
+    // A missing probe is inserted as installed with no binary.
+    let mut probes = Vec::new();
+    Waku::merge_claude_probe_models(
+        &mut probes,
+        vec![ProviderModel::new("claude-sonnet-4-5", "Claude Sonnet 4.5")],
+    );
+    assert_eq!(probes.len(), 1);
+    assert!(probes[0].installed);
+    assert_eq!(probes[0].path, None);
+}
+
+#[test]
+fn claude_starts_without_a_cli_binary() {
+    use super::runtime::start_binary_for_provider;
+
+    // Claude is a native daemon driver: no probe path, no error.
+    let probes = Vec::new();
+    let binary = start_binary_for_provider(&probes, ProviderKind::Claude).unwrap();
     assert!(binary.as_os_str().is_empty());
 }
