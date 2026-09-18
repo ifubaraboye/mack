@@ -21,8 +21,8 @@
 //!   lives in the macOS keychain via the same `/usr/bin/security` pattern
 //!   `usage.rs` reads through, or in a `0600` file inside a `0700` directory
 //!   elsewhere. There is no plaintext credential file and no raw-token API.
-//!   The store directory (`~/.waku/claude`) is isolated from the Claude Code
-//!   CLI's own `~/.claude/.credentials.json`: Waku never reads or writes the
+//!   The store directory (`~/.mack/claude`) is isolated from the Claude Code
+//!   CLI's own `~/.claude/.credentials.json`: Mack never reads or writes the
 //!   CLI file, so the two sign-ins stay independent.
 //! - Exactly one refresh may be in flight per manager (refresh-token rotation
 //!   would otherwise invalidate a concurrent refresh and force a re-login).
@@ -62,7 +62,7 @@ pub(crate) const CURL_PATH: &str = r"C:\Windows\System32\curl.exe";
 const CURL_TIMEOUT_SECS: &str = "20";
 /// macOS keychain identity for the session data-encryption key.
 #[cfg(target_os = "macos")]
-const KEYCHAIN_SERVICE: &str = "Waku Claude";
+const KEYCHAIN_SERVICE: &str = "Mack Claude";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "session-encryption-key";
 const SESSION_FILE_NAME: &str = "session.json.enc";
@@ -309,12 +309,12 @@ pub struct EncryptedFileStore {
 }
 
 impl EncryptedFileStore {
-    /// `~/.waku/claude` (or the platform temp dir when no home exists).
+    /// `~/.mack/claude` (or the platform temp dir when no home exists).
     /// Isolated from the Claude Code CLI's `~/.claude` directory by design.
     pub fn default_dir() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(std::env::temp_dir)
-            .join(".waku")
+            .join(".mack")
             .join("claude")
     }
 
@@ -1166,7 +1166,7 @@ impl ClaudeSessionManager {
 }
 
 /// Default daemon-owned session manager: encrypted file store under
-/// `~/.waku/claude` (in-memory fallback when the directory is unusable),
+/// `~/.mack/claude` (in-memory fallback when the directory is unusable),
 /// curl transport, wall clock. Shared by the auth commands and the later
 /// subscription driver so every daemon path coordinates through the one
 /// credential directory instead of drifting into parallel constructions.
@@ -1175,7 +1175,7 @@ pub fn default_session_manager() -> ClaudeSessionManager {
         match EncryptedFileStore::open(EncryptedFileStore::default_dir()) {
             Ok(store) => Arc::new(store),
             Err(error) => {
-                eprintln!("Waku Claude sessions will not persist across restarts: {error:#}");
+                eprintln!("Mack Claude sessions will not persist across restarts: {error:#}");
                 Arc::new(MemoryStore::default())
             }
         };

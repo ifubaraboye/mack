@@ -7,15 +7,15 @@ import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
 const isMacOS = process.platform === "darwin";
-const appName = "Waku Debug";
+const appName = "Mack Debug";
 const targetDir = resolve(root, process.env.CARGO_TARGET_DIR || "target");
 const executableSuffix = process.platform === "win32" ? ".exe" : "";
 const appPath = isMacOS
-  ? join(targetDir, "debug/Waku Debug.app")
-  : join(targetDir, `debug/waku${executableSuffix}`);
+  ? join(targetDir, "debug/Mack Debug.app")
+  : join(targetDir, `debug/mack${executableSuffix}`);
 const daemonPath = join(
   targetDir,
-  `debug/waku-debug-daemon${executableSuffix}`,
+  `debug/mack-debug-daemon${executableSuffix}`,
 );
 const watchedDirectories = [
   "src",
@@ -50,12 +50,12 @@ let daemonChangeRevision = 0;
 let rebuildTimer: ReturnType<typeof setTimeout> | undefined;
 const watchers: FSWatcher[] = [];
 const hyprlandRuleKeys = [
-  "waku_dev_workspace_rule",
-  "waku_dev_background_rule",
+  "mack_dev_workspace_rule",
+  "mack_dev_background_rule",
 ] as const;
-const hyprlandSubscriptionKey = "waku_dev_window_open_subscription";
-const hyprlandLaunchArmedKey = "waku_dev_launch_armed";
-const hyprlandOwnerKey = "waku_dev_owner";
+const hyprlandSubscriptionKey = "mack_dev_window_open_subscription";
+const hyprlandLaunchArmedKey = "mack_dev_launch_armed";
+const hyprlandOwnerKey = "mack_dev_owner";
 let hyprlandRulesInstalled = false;
 let hyprlandWarningShown = false;
 
@@ -170,15 +170,15 @@ async function prepareHyprlandLaunch(): Promise<void> {
 
     if _G[workspace_key] == nil then
       _G[workspace_key] = hl.window_rule({
-        name = "waku-dev-workspace",
-        match = { initial_class = "sh[.]waku[.]dev" },
+        name = "mack-dev-workspace",
+        match = { initial_class = "sh[.]mack[.]dev" },
         workspace = ${luaString(`${hyprlandWorkspace.selector} silent`)},
       })
     end
     if _G[background_key] == nil then
       _G[background_key] = hl.window_rule({
-        name = "waku-dev-background",
-        match = { initial_class = "sh[.]waku[.]dev" },
+        name = "mack-dev-background",
+        match = { initial_class = "sh[.]mack[.]dev" },
         no_initial_focus = true,
         suppress_event = "activate activatefocus",
       })
@@ -190,7 +190,7 @@ async function prepareHyprlandLaunch(): Promise<void> {
     if _G[subscription_key] == nil then
       local anchor_selector = ${luaString(anchorSelector)}
       _G[subscription_key] = hl.on("window.open", function(window)
-        if not _G[armed_key] or window.initial_class ~= "sh.waku.dev" then
+        if not _G[armed_key] or window.initial_class ~= "sh.mack.dev" then
           return
         end
         _G[armed_key] = false
@@ -214,7 +214,7 @@ async function prepareHyprlandLaunch(): Promise<void> {
           return
         end
 
-        -- Swapping with each preceding singleton column rotates Waku into the
+        -- Swapping with each preceding singleton column rotates Mack into the
         -- desired slot while preserving the order of all intervening columns.
         -- A stacked or custom-width column cannot be rotated through this API
         -- without changing its membership or sizing, so leave it untouched.
@@ -265,7 +265,7 @@ async function prepareHyprlandLaunch(): Promise<void> {
       const detail =
         result.stderr.toString().trim() || result.stdout.toString().trim();
       console.warn(
-        `[waku-dev] Could not pin Waku to its Hyprland workspace${detail ? `: ${detail}` : "."}`,
+        `[mack-dev] Could not pin Mack to its Hyprland workspace${detail ? `: ${detail}` : "."}`,
       );
       hyprlandWarningShown = true;
     }
@@ -274,7 +274,7 @@ async function prepareHyprlandLaunch(): Promise<void> {
 
   if (!hyprlandRulesInstalled) {
     console.log(
-      `[waku-dev] Keeping Waku beside the watcher on Hyprland workspace ${hyprlandWorkspace.name}.`,
+      `[mack-dev] Keeping Mack beside the watcher on Hyprland workspace ${hyprlandWorkspace.name}.`,
     );
   }
   hyprlandRulesInstalled = true;
@@ -309,18 +309,18 @@ async function build(target: BuildTarget): Promise<boolean> {
     return buildDaemon();
   }
 
-  console.log(`[waku-dev] Building ${isMacOS ? "app bundle" : "app"}...`);
+  console.log(`[mack-dev] Building ${isMacOS ? "app bundle" : "app"}...`);
   if (!(await buildDaemon())) {
     console.error(
-      "[waku-dev] Daemon build failed; keeping the current app open.",
+      "[mack-dev] Daemon build failed; keeping the current app open.",
     );
     return false;
   }
   const result = isMacOS
     ? await $`${join(root, "scripts/bundle.sh")} debug`.nothrow()
-    : await $`cargo build --package waku --bin waku --bin waku_js_repl --package waku-computer-use --bin waku_computer_use`.nothrow();
+    : await $`cargo build --package waku --bin mack --bin mack_js_repl --package waku-computer-use --bin mack_computer_use`.nothrow();
   if (result.exitCode !== 0) {
-    console.error("[waku-dev] Build failed; keeping the current app open.");
+    console.error("[mack-dev] Build failed; keeping the current app open.");
     return false;
   }
   if (!isMacOS) {
@@ -331,7 +331,7 @@ async function build(target: BuildTarget): Promise<boolean> {
         "debug",
       );
     } catch (error) {
-      console.error("[waku-dev] Computer Use SDK packaging failed:", error);
+      console.error("[mack-dev] Computer Use SDK packaging failed:", error);
       return false;
     }
   }
@@ -339,12 +339,12 @@ async function build(target: BuildTarget): Promise<boolean> {
 }
 
 async function buildDaemon(): Promise<boolean> {
-  console.log("[waku-dev] Building daemon...");
+  console.log("[mack-dev] Building daemon...");
   const result =
-    await $`cargo build --package waku-daemon --features dev-binary --bin waku-debug-daemon`.nothrow();
+    await $`cargo build --package waku-daemon --features dev-binary --bin mack-debug-daemon`.nothrow();
   if (result.exitCode !== 0) {
     console.error(
-      "[waku-dev] Daemon build failed; keeping the current daemon running.",
+      "[mack-dev] Daemon build failed; keeping the current daemon running.",
     );
     return false;
   }
@@ -365,11 +365,11 @@ async function stopApp(): Promise<void> {
 }
 
 function launchApp(): ReturnType<typeof Bun.spawn> {
-  console.log(`[waku-dev] Launching ${appPath}`);
+  console.log(`[mack-dev] Launching ${appPath}`);
   const command = isMacOS ? ["open", "-n", "-W", appPath] : [appPath];
   const launchedApp = Bun.spawn(command, {
     cwd: root,
-    env: { ...process.env, WAKU_DAEMON_PATH: daemonPath },
+    env: { ...process.env, MACK_DAEMON_PATH: daemonPath },
     stdout: "inherit",
     stderr: "inherit",
   });
@@ -380,7 +380,7 @@ function launchApp(): ReturnType<typeof Bun.spawn> {
     closeWatchers();
     clearRebuildTimer();
     await releaseHyprlandRules();
-    console.log("[waku-dev] App exited; stopping the watcher.");
+    console.log("[mack-dev] App exited; stopping the watcher.");
     process.exitCode = exitCode;
   });
   return launchedApp;
@@ -397,7 +397,7 @@ function closeWatchers(): void {
 }
 
 function reportWatcherError(error: Error): void {
-  console.error("[waku-dev] File watcher failed:", error);
+  console.error("[mack-dev] File watcher failed:", error);
   process.exitCode = 1;
   void cleanup();
 }
@@ -416,8 +416,8 @@ function targetForChange(
   if (directory !== "crates" || filename === null) return "app";
   const relativePath = filename.toString().replaceAll("\\", "/");
   if (
-    relativePath.startsWith("waku-daemon/") ||
-    relativePath.startsWith("waku-core/")
+    relativePath.startsWith("mack-daemon/") ||
+    relativePath.startsWith("mack-core/")
   ) {
     return "daemon";
   }
@@ -474,7 +474,7 @@ async function drainBuildQueue(): Promise<void> {
       if (target === "daemon") {
         if (daemonChangeRevision === buildDaemonRevision) {
           console.log(
-            "[waku-dev] Daemon rebuilt; Waku will swap the process without relaunching.",
+            "[mack-dev] Daemon rebuilt; Mack will swap the process without relaunching.",
           );
         }
         continue;
@@ -485,7 +485,7 @@ async function drainBuildQueue(): Promise<void> {
       // up the independently rebuilt daemon.
       if (appChangeRevision !== buildAppRevision) {
         console.log(
-          "[waku-dev] More changes arrived during the build; waiting to rebuild.",
+          "[mack-dev] More changes arrived during the build; waiting to rebuild.",
         );
         continue;
       }
@@ -503,7 +503,7 @@ async function drainBuildQueue(): Promise<void> {
 async function cleanup(): Promise<void> {
   if (stopping) return;
   stopping = true;
-  console.log("[waku-dev] Stopping watcher and app...");
+  console.log("[mack-dev] Stopping watcher and app...");
   closeWatchers();
   clearRebuildTimer();
   await stopApp();
@@ -529,11 +529,11 @@ if (appChangeRevision === initialAppRevision) {
   if (!stopping) app = launchApp();
 } else {
   console.log(
-    "[waku-dev] Changes arrived during the initial build; waiting to rebuild.",
+    "[mack-dev] Changes arrived during the initial build; waiting to rebuild.",
   );
   if (queuedBuild !== undefined) void drainBuildQueue();
 }
 
 console.log(
-  "[waku-dev] Watching for source changes. Daemon-only edits hot-reload without relaunching Waku.",
+  "[mack-dev] Watching for source changes. Daemon-only edits hot-reload without relaunching Mack.",
 );

@@ -3,12 +3,12 @@ import { ConnectionPanel } from '@/components/connection-panel'
 import { StartupScreen } from '@/components/startup-screen'
 import { useDaemon } from '@/lib/daemon-context'
 
-const loadConnectedApp = () => import('@/components/waku-app')
-const ConnectedWakuApp = lazy(() => loadConnectedApp().then((module) => ({
-  default: module.WakuApp,
+const loadConnectedApp = () => import('@/components/mack-app')
+const ConnectedMackApp = lazy(() => loadConnectedApp().then((module) => ({
+  default: module.MackApp,
 })))
 
-export function WakuShell() {
+export function MackShell() {
   const { config, phase } = useDaemon()
 
   useEffect(() => {
@@ -18,7 +18,7 @@ export function WakuShell() {
   if (phase !== 'connected') return <ConnectionPanel />
   return (
     <Suspense fallback={<StartupScreen />}>
-      <ConnectedWakuApp />
+      <ConnectedMackApp />
     </Suspense>
   )
 }

@@ -59,7 +59,7 @@ impl TranscriptSearch {
     }
 }
 
-impl Waku {
+impl Mack {
     pub(super) fn refresh_transcript_search_localized_text(&mut self, cx: &mut Context<Self>) {
         let Some(search) = &self.transcript_search else {
             return;
@@ -531,7 +531,7 @@ fn literal_find_regex(query: &str) -> Regex {
         .expect("an escaped literal is always a valid regex")
 }
 
-impl Waku {
+impl Mack {
     /// Global find shortcut now that the file-editor find bar is gone: the
     /// transcript is the only searchable surface.
     pub(super) fn open_find_action(
@@ -591,9 +591,9 @@ mod tests {
 
     #[test]
     fn literal_find_is_case_insensitive_and_unicode_safe() {
-        let regex = literal_find_regex("waku");
+        let regex = literal_find_regex("mack");
         let (matches, limited) =
-            md::render::markdown_search_matches("Waku **waku** WAKU", &regex, 20);
+            md::render::markdown_search_matches("Mack **mack** MACK", &regex, 20);
         assert!(!limited);
         assert_eq!(
             matches

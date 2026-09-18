@@ -10,13 +10,13 @@ use waku_protocol::{DAEMON_TOKEN_ENV, DaemonReady, PROTOCOL_VERSION};
 fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse(std::env::args().skip(1))?;
     let token =
-        std::env::var(DAEMON_TOKEN_ENV).context("Waku daemon authentication token is missing")?;
+        std::env::var(DAEMON_TOKEN_ENV).context("Mack daemon authentication token is missing")?;
     // The bearer capability belongs only to this server process. Remove it
     // before any provider or workspace subprocess can inherit the daemon's
     // environment.
     unsafe { std::env::remove_var(DAEMON_TOKEN_ENV) };
     let listener = TcpListener::bind(&arguments.bind)
-        .with_context(|| format!("could not bind Waku daemon to {}", arguments.bind))?;
+        .with_context(|| format!("could not bind Mack daemon to {}", arguments.bind))?;
     let address = listener.local_addr()?;
     ensure_bind_allowed(address, arguments.allow_non_loopback)?;
     let ready = DaemonReady {
@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
     if let Some(parent_pid) = arguments.parent_pid {
         let monitor_shutdown = shutdown.clone();
         std::thread::Builder::new()
-            .name("waku-daemon-parent".into())
+            .name("mack-daemon-parent".into())
             .spawn(move || {
                 while !monitor_shutdown.load(Ordering::Acquire) {
                     if !process_is_alive(parent_pid) {
@@ -183,7 +183,7 @@ mod tests {
     fn parses_repeated_browser_origin_allowlist_entries() {
         let arguments = Arguments::parse([
             "--allow-origin".into(),
-            "https://app.waku.test".into(),
+            "https://app.mack.test".into(),
             "--allow-origin".into(),
             "http://localhost:3000".into(),
         ])
@@ -191,7 +191,7 @@ mod tests {
 
         assert_eq!(
             arguments.allowed_origins,
-            ["https://app.waku.test", "http://localhost:3000"]
+            ["https://app.mack.test", "http://localhost:3000"]
         );
         assert!(!arguments.allow_non_loopback);
     }

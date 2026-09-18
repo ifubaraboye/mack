@@ -5,6 +5,20 @@ edition = "2024"
 description = "A fast, native control plane for local coding agents"
 license = "GPL-3.0-only"
 
+# Product binaries ship under the Mack name; the package itself keeps its
+# historical name to avoid churning every internal dependency reference.
+[[bin]]
+name = "mack"
+path = "src/main.rs"
+
+[[bin]]
+name = "mack-updater"
+path = "src/bin/mack-updater.rs"
+
+[[bin]]
+name = "mack_js_repl"
+path = "src/bin/mack_js_repl.rs"
+
 [workspace]
 members = ["crates/waku-client", "crates/waku-core", "crates/waku-daemon", "crates/waku-protocol", "crates/waku-computer-use"]
 default-members = [
@@ -159,7 +173,7 @@ embed-resource = "3.0"
 [target.'cfg(target_os = "windows")'.dependencies]
 raw-window-handle = "0.6"
 # The browser surface. WebView2 is evergreen on Windows 10 and in-box on 11.
-# Waku drives it through `webview2-com` rather than wry because it needs the
+# Mack drives it through `webview2-com` rather than wry because it needs the
 # *composition* controller, which renders into a DirectComposition visual
 # instead of a child HWND — see `browser::host` for why, and note that only
 # the environment can create one, so it cannot be reached from wry's
@@ -175,7 +189,7 @@ windows = { version = "0.61", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 windows-core = "0.61"
-# GPUI does not read the Windows animation preference, so Waku asks
+# GPUI does not read the Windows animation preference, so Mack asks
 # `SystemParametersInfoW` itself. Same major version as the one already in the
 # graph through GPUI.
 windows-sys = { version = "0.61", features = [

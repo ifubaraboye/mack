@@ -49,7 +49,7 @@ pub(super) fn composer_submit_action(
     }
 }
 
-impl Waku {
+impl Mack {
     // ── Permission ─────────────────────────────────────────────────────────
 
     pub(super) fn render_permission(&self, cx: &mut Context<Self>) -> Option<Div> {
@@ -1324,7 +1324,7 @@ impl Waku {
                     .flex()
                     // The filter field keeps focus and the selected row is only
                     // drawn, never focused — the same split Zed's picker uses.
-                    // These arrive as actions bound to `WakuMenu > TextInput`,
+                    // These arrive as actions bound to `MackMenu > TextInput`,
                     // which is the only way to claim a key out from under a
                     // focused text field.
                     .on_action(move |_: &SelectNextEntry, _, cx| {
@@ -1852,7 +1852,7 @@ impl Waku {
         let paths = paths.to_vec();
         let daemon = self.daemon.clone();
         let draft_owner = self.selected_composer_draft_key();
-        cx.spawn(async move |waku, cx| {
+        cx.spawn(async move |mack, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
@@ -1880,14 +1880,14 @@ impl Waku {
                     Ok::<_, anyhow::Error>(stored)
                 })
                 .await;
-            let _ = waku.update(cx, |waku, cx| match result {
+            let _ = mack.update(cx, |mack, cx| match result {
                 Ok(stored) => {
-                    if waku.selected_composer_draft_key() != draft_owner {
+                    if mack.selected_composer_draft_key() != draft_owner {
                         return;
                     }
                     let mut changed = false;
                     for (attachment, preview_image, is_image) in stored {
-                        changed |= waku.stage_daemon_attachment(
+                        changed |= mack.stage_daemon_attachment(
                             attachment.path,
                             attachment.name,
                             attachment.is_dir,
@@ -1897,12 +1897,12 @@ impl Waku {
                         );
                     }
                     if changed {
-                        waku.schedule_composer_draft_save(cx);
+                        mack.schedule_composer_draft_save(cx);
                         cx.notify();
                     }
                 }
                 Err(error) => {
-                    waku.show_toast(error.to_string());
+                    mack.show_toast(error.to_string());
                     cx.notify();
                 }
             });
@@ -1943,7 +1943,7 @@ impl Waku {
     }
 
     /// Stage the clipboard's primary image/file representation. On-disk paths
-    /// reuse drop handling immediately; raw image bytes are copied into Waku's
+    /// reuse drop handling immediately; raw image bytes are copied into Mack's
     /// durable blob store on the background executor before their chip appears.
     pub(super) fn stage_pasted_attachments(
         &mut self,
@@ -1968,7 +1968,7 @@ impl Waku {
 
         let daemon = self.daemon.clone();
         let draft_owner = self.selected_composer_draft_key();
-        cx.spawn(async move |waku, cx| {
+        cx.spawn(async move |mack, cx| {
             let stored = cx
                 .background_executor()
                 .spawn(async move {
@@ -2009,14 +2009,14 @@ impl Waku {
                         .collect::<Result<Vec<_>, _>>()
                 })
                 .await;
-            let _ = waku.update(cx, |waku, cx| match stored {
+            let _ = mack.update(cx, |mack, cx| match stored {
                 Ok(stored) => {
-                    if waku.selected_composer_draft_key() != draft_owner {
+                    if mack.selected_composer_draft_key() != draft_owner {
                         return;
                     }
                     let mut staged = false;
                     for (path, name, reference, preview_image) in stored {
-                        staged |= waku.stage_daemon_attachment(
+                        staged |= mack.stage_daemon_attachment(
                             path,
                             name,
                             false,
@@ -2026,12 +2026,12 @@ impl Waku {
                         );
                     }
                     if staged {
-                        waku.schedule_composer_draft_save(cx);
+                        mack.schedule_composer_draft_save(cx);
                         cx.notify();
                     }
                 }
                 Err(error) => {
-                    waku.show_toast(tr!("errors.store_pasted_image", error = error));
+                    mack.show_toast(tr!("errors.store_pasted_image", error = error));
                     cx.notify();
                 }
             });
@@ -2103,7 +2103,7 @@ impl Waku {
         self.composer.update(cx, |input, cx| input.clear(cx));
         // Submission notifications already hold this entity mutably. Dispatch
         // after that effect returns so the window action can safely re-enter
-        // Waku and move focus into the Resume picker.
+        // Mack and move focus into the Resume picker.
         cx.defer(|cx| cx.dispatch_action(&OpenResumePicker));
         true
     }
@@ -3095,10 +3095,10 @@ fn model_picker_empty_state(
     theme: &Theme,
     focus: &FocusHandle,
     popover: ContextMenuHandle,
-    waku: WeakEntity<Waku>,
+    mack: WeakEntity<Mack>,
 ) -> AnyElement {
     let click_popover = popover.clone();
-    let click_waku = waku.clone();
+    let click_mack = mack.clone();
     div()
         .w(px(320.0))
         .rounded(px(13.0))
@@ -3162,11 +3162,11 @@ fn model_picker_empty_state(
                 .child(icon("icons/settings.svg", 11.0, theme.text_tertiary))
                 .child(tr!("models.open_provider_settings"))
                 .on_click(move |_, window, cx| {
-                    open_provider_settings_from_picker(&click_waku, &click_popover, window, cx);
+                    open_provider_settings_from_picker(&click_mack, &click_popover, window, cx);
                 })
                 .on_key_down(move |event: &KeyDownEvent, window, cx| {
                     if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                        open_provider_settings_from_picker(&waku, &popover, window, cx);
+                        open_provider_settings_from_picker(&mack, &popover, window, cx);
                         cx.stop_propagation();
                     }
                 }),
@@ -3179,13 +3179,13 @@ fn model_picker_empty_state(
 /// picker returns focus to the composer as it closes, which would otherwise
 /// pull focus straight back out of the settings view.
 fn open_provider_settings_from_picker(
-    waku: &WeakEntity<Waku>,
+    mack: &WeakEntity<Mack>,
     popover: &ContextMenuHandle,
     window: &mut Window,
     cx: &mut App,
 ) {
     popover.close(window, cx);
-    let _ = waku.update(cx, |this, cx| {
+    let _ = mack.update(cx, |this, cx| {
         this.open_settings_action(&OpenSettings, window, cx);
         this.open_settings_page(SettingsPage::Providers, cx);
     });
@@ -3196,7 +3196,7 @@ fn open_provider_settings_from_picker(
 /// Installed on this machine and not switched off in the Providers settings.
 /// Both of those are settings-level facts the user has already decided, so the
 /// tab is absent rather than dimmed — the rail offers what could be picked,
-/// not a catalog of everything Waku can speak to. A session locked to a
+/// not a catalog of everything Mack can speak to. A session locked to a
 /// provider switched off afterwards keeps its own tab, since the picker is
 /// that session's only route to another model.
 pub(super) fn picker_rail_shows_provider(

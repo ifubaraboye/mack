@@ -54,10 +54,10 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowOptions, actions, point, px, size,
 };
 
-use crate::app::Waku;
+use crate::app::Mack;
 use crate::identity::{APP_ID, APP_NAME};
 actions!(
-    waku,
+    mack,
     [
         Quit,
         About,
@@ -152,11 +152,11 @@ fn restored_window_placement(cx: &App) -> (WindowBounds, Option<gpui::DisplayId>
     (window_bounds, display_id)
 }
 
-trait WakuApplicationExt {
+trait MackApplicationExt {
     fn with_main_window_reopen(self) -> Self;
 }
 
-impl WakuApplicationExt for Application {
+impl MackApplicationExt for Application {
     fn with_main_window_reopen(self) -> Self {
         self.on_reopen(|cx| {
             if let Some(window) = cx.windows().into_iter().next() {
@@ -172,7 +172,7 @@ impl WakuApplicationExt for Application {
 
 pub fn run() {
     let daemon = crate::daemon::start_process()
-        .unwrap_or_else(|error| panic!("failed to start Waku daemon: {error:#}"));
+        .unwrap_or_else(|error| panic!("failed to start Mack daemon: {error:#}"));
     gpui_platform::application()
         .with_assets(crate::assets::Assets)
         .with_main_window_reopen()
@@ -219,12 +219,12 @@ pub fn run() {
                 KeyBinding::new("secondary-shift-b", ToggleRightPanel, None),
                 KeyBinding::new("secondary-k", ToggleCommandPalette, None),
                 KeyBinding::new("secondary-alt-shift-f", ToggleFpsCounter, None),
-                KeyBinding::new("secondary-[", NavigateBack, Some("Waku")),
-                KeyBinding::new("secondary-]", NavigateForward, Some("Waku")),
-                KeyBinding::new("ctrl-tab", SwitchTaskForward, Some("Waku")),
-                KeyBinding::new("ctrl-shift-tab", SwitchTaskBackward, Some("Waku")),
-                KeyBinding::new("ctrl-escape", CancelTaskSwitch, Some("Waku")),
-                KeyBinding::new("ctrl-shift-escape", CancelTaskSwitch, Some("Waku")),
+                KeyBinding::new("secondary-[", NavigateBack, Some("Mack")),
+                KeyBinding::new("secondary-]", NavigateForward, Some("Mack")),
+                KeyBinding::new("ctrl-tab", SwitchTaskForward, Some("Mack")),
+                KeyBinding::new("ctrl-shift-tab", SwitchTaskBackward, Some("Mack")),
+                KeyBinding::new("ctrl-escape", CancelTaskSwitch, Some("Mack")),
+                KeyBinding::new("ctrl-shift-escape", CancelTaskSwitch, Some("Mack")),
                 KeyBinding::new("down", SwitchTaskForward, Some("TaskSwitcher")),
                 KeyBinding::new("right", SwitchTaskForward, Some("TaskSwitcher")),
                 KeyBinding::new("up", SwitchTaskBackward, Some("TaskSwitcher")),
@@ -235,20 +235,20 @@ pub fn run() {
                 KeyBinding::new("escape", CancelTaskSwitch, Some("TaskSwitcher")),
                 KeyBinding::new("secondary-l", FocusComposer, None),
                 KeyBinding::new("secondary-/", ToggleModelPicker, None),
-                KeyBinding::new("escape", CancelTurn, Some("Waku")),
-                KeyBinding::new("secondary-c", CopySelection, Some("Waku")),
+                KeyBinding::new("escape", CancelTurn, Some("Mack")),
+                KeyBinding::new("secondary-c", CopySelection, Some("Mack")),
                 // Find in the transcript, on the conventional VS Code
                 // bindings. The primary shortcut + G cycles matches without
                 // moving focus to the bar.
-                KeyBinding::new("secondary-f", OpenFind, Some("Waku")),
+                KeyBinding::new("secondary-f", OpenFind, Some("Mack")),
                 // The text input's macOS-style Ctrl-F caret binding is more
-                // specific than Waku's root context. Reassert the platform
+                // specific than Mack's root context. Reassert the platform
                 // primary shortcut for inputs inside this window so Ctrl-F
                 // remains find-in-page on Linux/Windows while Cmd-F keeps the
                 // native behavior on macOS.
-                KeyBinding::new("secondary-f", OpenFind, Some("Waku > TextInput")),
-                KeyBinding::new("secondary-g", FindNext, Some("Waku")),
-                KeyBinding::new("secondary-shift-g", FindPrevious, Some("Waku")),
+                KeyBinding::new("secondary-f", OpenFind, Some("Mack > TextInput")),
+                KeyBinding::new("secondary-g", FindNext, Some("Mack")),
+                KeyBinding::new("secondary-shift-g", FindPrevious, Some("Mack")),
                 KeyBinding::new("escape", CloseFind, Some("FindBar")),
                 KeyBinding::new("shift-enter", FindPrevious, Some("FindBar")),
             ]);
@@ -275,7 +275,7 @@ pub fn run() {
                             // Windows creates the window without `WS_CAPTION`
                             // either way; asking for the transparent titlebar
                             // is what extends the client area over the frame
-                            // so Waku's own header can host the caption
+                            // so Mack's own header can host the caption
                             // buttons and drag region.
                             appears_transparent: cfg!(any(
                                 target_os = "macos",
@@ -284,7 +284,7 @@ pub fn run() {
                             traffic_light_position: cfg!(target_os = "macos")
                                 .then(|| point(px(16.0), px(17.0))),
                         }),
-                        // Waku moves its custom macOS titlebar explicitly. Keep
+                        // Mack moves its custom macOS titlebar explicitly. Keep
                         // the NSWindow movable so native controls and Window-menu
                         // tiling remain enabled.
                         is_movable: true,
@@ -297,7 +297,7 @@ pub fn run() {
                         app_id: Some(APP_ID.to_owned()),
                         // GPUI defaults to compositor/server decorations. If a
                         // Wayland compositor declines them, it reports the
-                        // client fallback and Waku renders that frame itself.
+                        // client fallback and Mack renders that frame itself.
                         #[cfg(target_os = "linux")]
                         icon: crate::platform::linux_app_icon(),
                         window_bounds: Some(window_bounds),
@@ -307,13 +307,13 @@ pub fn run() {
                     },
                     move |window, cx| {
                         crate::platform::configure_main_window_close_behavior(window, cx);
-                        let waku = Waku::new(window, cx, daemon);
-                        let composer_focus = waku.read(cx).composer_focus(cx);
+                        let mack = Mack::new(window, cx, daemon);
+                        let composer_focus = mack.read(cx).composer_focus(cx);
                         window.focus(&composer_focus, cx);
-                        waku
+                        mack
                     },
                 )
-                .expect("failed to open Waku window");
+                .expect("failed to open Mack window");
 
             cx.on_system_notification_response({
                 let window = window;
@@ -323,8 +323,8 @@ pub fn run() {
                         return;
                     };
                     window
-                        .update(cx, |waku, window, cx| {
-                            waku.open_task_from_notification(session_id, cx);
+                        .update(cx, |mack, window, cx| {
+                            mack.open_task_from_notification(session_id, cx);
                             window.activate_window();
                             cx.activate(true);
                         })

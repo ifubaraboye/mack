@@ -1,4 +1,4 @@
-//! Desktop ownership of the Waku daemon process.
+//! Desktop ownership of the Mack daemon process.
 
 use std::path::PathBuf;
 
@@ -64,14 +64,14 @@ pub fn local_hostname() -> Option<String> {
 }
 
 fn daemon_executable_path() -> anyhow::Result<PathBuf> {
-    if let Some(path) = std::env::var_os("WAKU_DAEMON_PATH").filter(|path| !path.is_empty()) {
+    if let Some(path) = std::env::var_os("MACK_DAEMON_PATH").filter(|path| !path.is_empty()) {
         return Ok(path.into());
     }
-    let executable = format!("waku-daemon{}", std::env::consts::EXE_SUFFIX);
-    let current = std::env::current_exe().context("could not locate the Waku executable")?;
+    let executable = format!("mack-daemon{}", std::env::consts::EXE_SUFFIX);
+    let current = std::env::current_exe().context("could not locate the Mack executable")?;
 
     // Development keeps the daemon beside Cargo's debug artifacts rather than
-    // inside Waku Debug.app. The supervisor watches this file and swaps only
+    // inside Mack Debug.app. The supervisor watches this file and swaps only
     // the daemon when the development watcher relinks it.
     #[cfg(debug_assertions)]
     if let Some(debug_directory) = current
@@ -87,18 +87,18 @@ fn daemon_executable_path() -> anyhow::Result<PathBuf> {
     let sibling = current
         .parent()
         .map(|directory| directory.join(&executable))
-        .ok_or_else(|| anyhow!("Waku executable has no parent directory"))?;
+        .ok_or_else(|| anyhow!("Mack executable has no parent directory"))?;
     if sibling.is_file() {
         return Ok(sibling);
     }
     #[cfg(debug_assertions)]
     bail!(
-        "Waku daemon was not found in Cargo's debug directory or next to the app executable: {}",
+        "Mack daemon was not found in Cargo's debug directory or next to the app executable: {}",
         sibling.display(),
     );
     #[cfg(not(debug_assertions))]
     bail!(
-        "Waku daemon is missing next to the app executable: {}",
+        "Mack daemon is missing next to the app executable: {}",
         sibling.display(),
     )
 }

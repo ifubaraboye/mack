@@ -29,7 +29,7 @@ fn line_fragment(fragment: &str) -> bool {
 
 /// Removes the `:line`, `:line:column`, or `#LlineCcolumn` suffixes Codex uses
 /// in clickable local-file references. The location is not yet consumed by
-/// Waku's compact editor, but it must not become part of the filesystem path.
+/// Mack's compact editor, but it must not become part of the filesystem path.
 fn strip_file_location(target: &str) -> &str {
     if let Some((path, fragment)) = target.rsplit_once('#')
         && line_fragment(fragment)
@@ -420,7 +420,7 @@ fn fade_safe_tab_offset(
 fn tab_scroll_reveal_guard(
     scroll_handle: ScrollHandle,
     tab_index: usize,
-    waku: WeakEntity<Waku>,
+    mack: WeakEntity<Mack>,
 ) -> impl IntoElement {
     canvas(
         move |_, window, _| {
@@ -441,7 +441,7 @@ fn tab_scroll_reveal_guard(
             }
 
             window.on_next_frame(move |_, cx| {
-                let _ = waku.update(cx, |this, cx| {
+                let _ = mack.update(cx, |this, cx| {
                     if this.right_panel_pending_tab_reveal == Some(tab_index) {
                         this.right_panel_pending_tab_reveal = None;
                         cx.notify();
@@ -774,7 +774,7 @@ mod tests {
     }
 }
 
-impl Waku {
+impl Mack {
     pub(super) fn open_transcript_link(&mut self, target: &str, cx: &mut Context<Self>) -> bool {
         match transcript_link_route(target, self.selected_workspace_path()) {
             TranscriptLinkRoute::Finder(path) => {

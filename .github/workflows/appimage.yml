@@ -85,30 +85,30 @@ jobs:
       # `target/` is restored from cache, so a previous run's AppImage may
       # still be sitting in `target/release`. Cargo does not own it.
       - name: Clear stale AppImages
-        run: rm -f target/release/Waku-*.AppImage target/release/Waku-*.AppImage.sha256
+        run: rm -f target/release/Mack-*.AppImage target/release/Mack-*.AppImage.sha256
 
       - name: Bundle AppImage
         env:
-          WAKU_ANALYTICS_ENDPOINT: ${{ secrets.WAKU_ANALYTICS_ENDPOINT }}
-          WAKU_ANALYTICS_WEBSITE_ID: ${{ secrets.WAKU_ANALYTICS_WEBSITE_ID }}
+          MACK_ANALYTICS_ENDPOINT: ${{ secrets.MACK_ANALYTICS_ENDPOINT }}
+          MACK_ANALYTICS_WEBSITE_ID: ${{ secrets.MACK_ANALYTICS_WEBSITE_ID }}
         run: ./scripts/bundle-appimage.sh
 
       - name: Validate AppImage
         run: |
-          ls -la target/release/Waku-*.AppImage*
-          file target/release/Waku-*.AppImage
-          desktop-file-validate resources/linux/sh.waku.desktop
+          ls -la target/release/Mack-*.AppImage*
+          file target/release/Mack-*.AppImage
+          desktop-file-validate resources/linux/sh.mack.desktop
           # The runtime handles --appimage-help itself, so this proves the
           # squashfs + runtime work without launching the app (headless-safe).
-          appimage=(target/release/Waku-*.AppImage)
+          appimage=(target/release/Mack-*.AppImage)
           "${appimage[0]}" --appimage-help >/dev/null
 
       - uses: actions/upload-artifact@v7
         with:
           name: appimage-${{ matrix.arch }}
           path: |
-            target/release/Waku-*.AppImage
-            target/release/Waku-*.AppImage.sha256
+            target/release/Mack-*.AppImage
+            target/release/Mack-*.AppImage.sha256
           if-no-files-found: error
 
   publish:
@@ -136,5 +136,5 @@ jobs:
           name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
           files: |
-            dist/Waku-*.AppImage
-            dist/Waku-*.AppImage.sha256
+            dist/Mack-*.AppImage
+            dist/Mack-*.AppImage.sha256

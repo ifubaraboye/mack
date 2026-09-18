@@ -3,7 +3,7 @@ use gpui::{KeyBinding, actions};
 
 use super::*;
 
-actions!(waku_sidebar, [CancelSessionRename]);
+actions!(mack_sidebar, [CancelSessionRename]);
 
 const SESSION_RENAME_PARENT_CONTEXT: &str = "SessionRename";
 const SESSION_RENAME_FIELD_CONTEXT: &str = "SessionRename > TextInput";
@@ -332,7 +332,7 @@ fn reveal_sidebar_list_row(list: &ListState, rows: &[SidebarRow], index: usize) 
     }
 }
 
-impl Waku {
+impl Mack {
     pub(super) fn window_drag_region(
         &self,
         region: Stateful<Div>,
@@ -1666,7 +1666,7 @@ impl Waku {
                 .child(SharedString::from(localized_session_title(session)))
                 .into_any_element()
         };
-        let waku = cx.entity().downgrade();
+        let mack = cx.entity().downgrade();
         let menu = self.menu_handle(format!("session-{session_id}"), cx);
         let row_focus = menu.trigger_focus_handle().clone();
         let keyboard_menu = menu.clone();
@@ -1799,31 +1799,31 @@ impl Waku {
                 SharedString::from(format!("session-menu-{session_id}")),
                 &menu,
                 move |cx| {
-                    let rename_waku = waku.clone();
-                    let remove_waku = waku.clone();
-                    let move_waku = waku.clone();
-                    let move_value_waku = waku.clone();
-                    let rename_group_waku = waku.clone();
+                    let rename_mack = mack.clone();
+                    let remove_mack = mack.clone();
+                    let move_mack = mack.clone();
+                    let move_value_mack = mack.clone();
+                    let rename_group_mack = mack.clone();
                     // Membership snapshot shared by the submenu value row
                     // and the rename affordance below.
                     let membership: Option<(Uuid, String)> =
-                        move_value_waku.upgrade().and_then(|entity| {
-                            entity.update(cx, |waku, _| {
-                                waku.state
+                        move_value_mack.upgrade().and_then(|entity| {
+                            entity.update(cx, |mack, _| {
+                                mack.state
                                     .sessions
                                     .iter()
                                     .find(|session| session.id == session_id)
                                     .and_then(|session| session.group_id)
                                     .and_then(|group_id| {
-                                        waku.chat_group(group_id)
+                                        mack.chat_group(group_id)
                                             .map(|group| (group_id, group.name.clone()))
                                     })
                             })
                         });
                     let mut items = vec![
                         MenuItem::new(tr!("common.rename"), move |window, cx| {
-                            let _ = rename_waku.update(cx, |waku, cx| {
-                                waku.begin_session_rename(session_id, window, cx);
+                            let _ = rename_mack.update(cx, |mack, cx| {
+                                mack.begin_session_rename(session_id, window, cx);
                             });
                         }),
                         MenuItem::submenu_with_value(
@@ -1833,15 +1833,15 @@ impl Waku {
                                 .map(|(_, name)| name.clone())
                                 .unwrap_or_default(),
                             move |cx| {
-                                let snapshot = move_waku.upgrade().map(|entity| {
-                                    entity.update(cx, |waku, _| {
+                                let snapshot = move_mack.upgrade().map(|entity| {
+                                    entity.update(cx, |mack, _| {
                                         (
-                                            waku.state
+                                            mack.state
                                                 .chat_groups
                                                 .iter()
                                                 .map(|group| (group.id, group.name.clone()))
                                                 .collect::<Vec<_>>(),
-                                            waku.state
+                                            mack.state
                                                 .sessions
                                                 .iter()
                                                 .find(|session| session.id == session_id)
@@ -1852,12 +1852,12 @@ impl Waku {
                                 let Some((groups, current)) = snapshot else {
                                     return Vec::new();
                                 };
-                                let new_group_waku = move_waku.clone();
+                                let new_group_mack = move_mack.clone();
                                 let mut items = vec![MenuItem::new(
                                     tr!("sidebar.new_group"),
                                     move |window, cx| {
-                                        let _ = new_group_waku.update(cx, |waku, cx| {
-                                            waku.open_group_dialog(
+                                        let _ = new_group_mack.update(cx, |mack, cx| {
+                                            mack.open_group_dialog(
                                                 GroupDialogMode::CreateGroup { session_id },
                                                 window,
                                                 cx,
@@ -1869,11 +1869,11 @@ impl Waku {
                                     items.push(MenuItem::Separator);
                                 }
                                 for (group_id, name) in groups {
-                                    let target = move_waku.clone();
+                                    let target = move_mack.clone();
                                     items.push(
                                         MenuItem::new(name, move |_, cx| {
-                                            let _ = target.update(cx, |waku, cx| {
-                                                waku.move_session_to_group(
+                                            let _ = target.update(cx, |mack, cx| {
+                                                mack.move_session_to_group(
                                                     session_id, group_id, cx,
                                                 );
                                             });
@@ -1882,13 +1882,13 @@ impl Waku {
                                     );
                                 }
                                 if current.is_some() {
-                                    let ungroup = move_waku.clone();
+                                    let ungroup = move_mack.clone();
                                     items.push(MenuItem::Separator);
                                     items.push(MenuItem::new(
                                         tr!("sidebar.remove_from_group"),
                                         move |_, cx| {
-                                            let _ = ungroup.update(cx, |waku, cx| {
-                                                waku.remove_session_from_group(session_id, cx);
+                                            let _ = ungroup.update(cx, |mack, cx| {
+                                                mack.remove_session_from_group(session_id, cx);
                                             });
                                         },
                                     ));
@@ -1901,8 +1901,8 @@ impl Waku {
                         items.push(MenuItem::new(
                             tr!("sidebar.rename_group"),
                             move |window, cx| {
-                                let _ = rename_group_waku.update(cx, |waku, cx| {
-                                    waku.open_group_dialog(
+                                let _ = rename_group_mack.update(cx, |mack, cx| {
+                                    mack.open_group_dialog(
                                         GroupDialogMode::RenameGroup { group_id },
                                         window,
                                         cx,
@@ -1914,7 +1914,7 @@ impl Waku {
                     items.push(MenuItem::Separator);
                     items.push(MenuItem::new(tr!("common.remove"), move |_, cx| {
                         let _ =
-                            remove_waku.update(cx, |waku, cx| waku.remove_session(session_id, cx));
+                            remove_mack.update(cx, |mack, cx| mack.remove_session(session_id, cx));
                     }));
                     items
                 },
@@ -2090,7 +2090,7 @@ impl Waku {
                 .justify_center()
                 .px_8()
                 .pb(px(46.0))
-                .child(icon("icons/sparkle.svg", 24.0, theme.accent))
+                .child(icon("icons/logo.svg", 25.2, theme.accent))
                 .child(
                     div()
                         .mt(px(16.0))
@@ -2150,7 +2150,7 @@ impl Waku {
             .justify_center()
             .px_8()
             .pb(px(52.0))
-            .child(icon("icons/sparkle.svg", 20.0, theme.accent))
+            .child(icon("icons/logo.svg", 21.0, theme.accent))
             .child(
                 div()
                     .mt(px(14.0))

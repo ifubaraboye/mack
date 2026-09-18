@@ -9,6 +9,7 @@ import type {
   DaemonSettings,
   FileEntry,
   MessageAttachment,
+  MackUsageTotals,
   PlanUsage,
   Project,
   ProviderKind,
@@ -23,8 +24,6 @@ import type {
   SessionMessageMatch,
   SlashCommand,
   SkillsCatalog,
-  UsageHistory,
-  UsageWindow,
   WakuClient,
   WorkingTreeEntry,
   WorkspaceOperation,
@@ -48,8 +47,8 @@ export const daemonKeys = {
   planUsage: (address: string, provider: ProviderKind) =>
     ['daemon', address, 'plan-usage', provider] as const,
   skills: (address: string) => ['daemon', address, 'skills'] as const,
-  usage: (address: string, window: UsageWindow) =>
-    ['daemon', address, 'usage', JSON.stringify(window)] as const,
+  usage: (address: string) =>
+    ['daemon', address, 'mack-usage'] as const,
   workspace: (address: string, cwd: string) =>
     ['daemon', address, 'workspace', cwd] as const,
   sessionTurnRefsRoot: (address: string) =>
@@ -221,20 +220,14 @@ export async function trashSkills(client: WakuClient, dirs: string[]): Promise<v
   expectResponse(await client.request({ type: 'trashSkills', dirs }), 'ack')
 }
 
-export async function loadUsageHistory(
+export async function loadMackUsageTotals(
   client: WakuClient,
-  window: UsageWindow,
-  projects: Project[],
-): Promise<UsageHistory> {
+): Promise<MackUsageTotals> {
   const response = expectResponse(
-    await client.request({
-      type: 'loadUsageHistory',
-      window,
-      projectRoots: projects.map((project) => project.path),
-    }),
-    'usageHistory',
+    await client.request({ type: 'loadMackUsageTotals' }),
+    'mackUsageTotals',
   )
-  return response.history
+  return response.totals
 }
 
 export async function fetchPlanUsage(
@@ -654,6 +647,14 @@ export function createSession(
     provider_cursor: null,
     available_commands: [],
     context_usage: null,
+    usage_totals: {
+      uncachedInput: 0,
+      cachedInput: 0,
+      cacheCreation: 0,
+      output: 0,
+      reasoning: 0,
+    },
+    usage_turns: 0,
     provider_session_id: null,
     messages: [],
     transcript_blocks: [],

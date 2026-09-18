@@ -1,6 +1,6 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
 import type { ProviderKind } from '@waku/client'
-import { PROVIDERS } from '@/components/waku-icon'
+import { PROVIDERS } from '@/components/mack-icon'
 import { useDaemon } from '@/lib/daemon-context'
 import {
   daemonKeys,
@@ -13,7 +13,7 @@ import {
   loadSkills,
   loadDaemonSettings,
   loadTaskState,
-  loadUsageHistory,
+  loadMackUsageTotals,
   probeProvider,
 } from '@/lib/daemon-api'
 import {
@@ -223,21 +223,18 @@ export function useSkills(projects: Parameters<typeof loadSkills>[1]) {
   })
 }
 
-export function useUsageHistory(
-  window: Parameters<typeof loadUsageHistory>[1],
-  projects: Parameters<typeof loadUsageHistory>[2],
-) {
+export function useMackUsageTotals() {
   const { client, config, phase } = useDaemon()
   return useQuery({
-    queryKey: daemonKeys.usage(config?.address ?? 'disconnected', window),
-    queryFn: () => loadUsageHistory(requireClient(client), window, projects),
+    queryKey: daemonKeys.usage(config?.address ?? 'disconnected'),
+    queryFn: () => loadMackUsageTotals(requireClient(client)),
     enabled: phase === 'connected' && Boolean(client && config),
     placeholderData: (previous) => previous,
   })
 }
 
 function requireClient<T>(client: T | null): T {
-  if (!client) throw new Error('Waku daemon is disconnected')
+  if (!client) throw new Error('Mack daemon is disconnected')
   return client
 }
 

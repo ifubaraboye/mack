@@ -29,7 +29,7 @@ import { PreviewableImage } from '@/components/image-preview'
 import { ModelPicker } from '@/components/model-picker'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { FileTypeIcon, WakuIcon } from '@/components/waku-icon'
+import { FileTypeIcon, MackIcon } from '@/components/mack-icon'
 import {
   useComposerCommands,
   useComposerFiles,
@@ -655,7 +655,7 @@ export function Composer({
                     )
                   }}
                 >
-                  {option.allow && <WakuIcon name="check" />}
+                  {option.allow && <MackIcon name="check" />}
                   {option.label}
                 </Button>
               ))}
@@ -826,7 +826,7 @@ export function Composer({
                 >
                   {escapeStopArmed
                     ? <span className="text-[10px] font-semibold">Esc</span>
-                    : <WakuIcon className="size-[18px]" name="stopFilled" />}
+                    : <MackIcon className="size-[18px]" name="stopFilled" />}
                 </Button>
               )}
               <Button
@@ -841,7 +841,7 @@ export function Composer({
                 variant="ghost"
                 onClick={() => setFilePickerOpen(true)}
               >
-                <WakuIcon className="size-[14px]" name="paperclip" />
+                <MackIcon className="size-[14px]" name="paperclip" />
               </Button>
               {busy ? (
                 hasDraft && (
@@ -852,7 +852,7 @@ export function Composer({
                     size="icon-sm"
                     onClick={() => void submit()}
                   >
-                    <WakuIcon name="arrowUp" />
+                    <MackIcon name="arrowUp" />
                   </Button>
                 )
               ) : (
@@ -863,7 +863,7 @@ export function Composer({
                   size="icon-sm"
                   onClick={() => void submit()}
                 >
-                  <WakuIcon name="arrowUp" />
+                  <MackIcon name="arrowUp" />
                 </Button>
               )}
             </div>
@@ -1091,7 +1091,7 @@ function UserInputPanel({
                     </span>
                   )}
                 </span>
-                {checked && <WakuIcon className="size-3 shrink-0 text-primary" name="check" />}
+                {checked && <MackIcon className="size-3 shrink-0 text-primary" name="check" />}
               </button>
             )
           })}
@@ -1103,7 +1103,7 @@ function UserInputPanel({
           custom.trim() && 'border-primary/35 bg-primary/[0.06]',
         )}
       >
-        <WakuIcon
+        <MackIcon
           className={cn('size-3 shrink-0 text-[var(--text-ghost)]', custom.trim() && 'text-primary')}
           name="pencil"
         />
@@ -1174,7 +1174,7 @@ function ComposerAutocomplete({
       {loading
         ? (
             <div className="flex h-[30px] items-center gap-2 px-2 text-[12px] text-[var(--text-tertiary)]">
-              <WakuIcon className="size-3 motion-safe:animate-spin" name="loaderCircle" />
+              <MackIcon className="size-3 motion-safe:animate-spin" name="loaderCircle" />
               {t('composer.loading_suggestions')}
             </div>
           )
@@ -1220,8 +1220,8 @@ function AutocompleteRowContents({ row }: { row: ComposerAutocompleteRow }) {
     return (
       <>
         {command.scope === 'Skill'
-          ? <WakuIcon className="size-3 text-[var(--text-tertiary)]" name="sparkle" />
-          : <WakuIcon className="size-3 text-[var(--text-tertiary)]" name="command" />}
+          ? <MackIcon className="size-3 text-[var(--text-tertiary)]" name="sparkle" />
+          : <MackIcon className="size-3 text-[var(--text-tertiary)]" name="command" />}
         <span className="max-w-[260px] shrink-0 truncate text-[12px] font-medium">
           /{command.name}
         </span>
@@ -1234,7 +1234,7 @@ function AutocompleteRowContents({ row }: { row: ComposerAutocompleteRow }) {
           {command.description}
         </span>
         <span className="flex h-4 shrink-0 items-center rounded border px-1.5 text-[9px] font-semibold text-[var(--text-tertiary)]">
-          {command.scope === 'Waku' ? 'waku' : command.scope}
+          {command.scope === 'Waku' ? 'mack' : command.scope}
         </span>
       </>
     )
@@ -1247,7 +1247,7 @@ function AutocompleteRowContents({ row }: { row: ComposerAutocompleteRow }) {
   return (
     <>
       {row.file.is_dir
-        ? <WakuIcon className="size-[13px] text-[var(--text-tertiary)]" name="folder" />
+        ? <MackIcon className="size-[13px] text-[var(--text-tertiary)]" name="folder" />
         : <FileTypeIcon className="size-[13px]" path={row.file.path} />}
       <span className="max-w-[300px] shrink-0 truncate text-[12px]">{name}</span>
       {parent && (
@@ -1293,7 +1293,7 @@ function ComposerAttachmentTile({
   ) : (
     <div className="flex size-full flex-col items-center justify-center gap-[5px] px-[5px]">
       {attachment.is_dir
-        ? <WakuIcon className="size-4 text-[var(--text-tertiary)]" name="folder" />
+        ? <MackIcon className="size-4 text-[var(--text-tertiary)]" name="folder" />
         : <FileTypeIcon className="size-4" path={attachment.mention || attachment.name} />}
       {!attachment.is_image && (
         <span className="w-full truncate text-center text-[8.5px] text-[var(--text-tertiary)]">
@@ -1316,7 +1316,7 @@ function ComposerAttachmentTile({
         onClick={onRemove}
         onMouseDown={(event) => event.preventDefault()}
       >
-        <WakuIcon className="size-[9px]" name="x" />
+        <MackIcon className="size-[9px]" name="x" />
       </button>
     </div>
   )
@@ -1378,7 +1378,7 @@ function GoalControl({
       type="button"
       onClick={onOpen}
     >
-      <WakuIcon className="size-[11px]" name="target" />
+      <MackIcon className="size-[11px]" name="target" />
       <span className="max-w-[220px] truncate">
         {usage ? `${phrase} (${usage})` : phrase}
       </span>
@@ -1589,7 +1589,7 @@ function QueuedMessages({
               type="button"
               onClick={() => onEdit(message)}
             >
-              <WakuIcon className="size-3 shrink-0 text-[var(--text-tertiary)]" name="queue" />
+              <MackIcon className="size-3 shrink-0 text-[var(--text-tertiary)]" name="queue" />
               <span className="min-w-0 flex-1 truncate">
                 {message.display_content || message.content || message.attachments?.map((item) => item.name).join(', ')}
               </span>
@@ -1602,7 +1602,7 @@ function QueuedMessages({
                   type="button"
                   onClick={() => onSteer(message)}
                 >
-                  <WakuIcon className="size-[11px]" name="cornerDownRight" />
+                  <MackIcon className="size-[11px]" name="cornerDownRight" />
                   {t('composer.steer')}
                 </button>
               )}
@@ -1612,7 +1612,7 @@ function QueuedMessages({
                 type="button"
                 onClick={() => onRemove(message.id)}
               >
-                <WakuIcon className="size-3" name="trash" />
+                <MackIcon className="size-3" name="trash" />
               </button>
               <ControlMenu
                 caret={false}
@@ -1636,7 +1636,7 @@ function QueuedMessages({
                 selectionMode="status"
                 triggerClassName="grid size-6 place-items-center px-0 rounded-md"
               >
-                <WakuIcon className="size-3" name="ellipsis" />
+                <MackIcon className="size-3" name="ellipsis" />
               </ControlMenu>
             </div>
           </div>
@@ -1731,7 +1731,7 @@ function BranchPicker({
           }
         }}
       >
-        <WakuIcon className="size-[11px] text-[var(--text-tertiary)]" name="gitBranch" />
+        <MackIcon className="size-[11px] text-[var(--text-tertiary)]" name="gitBranch" />
         <span className="truncate">{pending ? t('branches.switching') : selected ?? t('branches.detached_head')}</span>
       </Popover.Trigger>
       <Popover.Portal>
@@ -1784,7 +1784,7 @@ function BranchPicker({
             {mode === 'create' ? (
               <div className="p-3.5">
                 <div className="flex items-center gap-2 text-[13px] font-medium">
-                  <WakuIcon className="size-3.5 text-[var(--text-secondary)]" name="plus" />
+                  <MackIcon className="size-3.5 text-[var(--text-secondary)]" name="plus" />
                   {t('branches.create_and_checkout')}
                 </div>
                 <input
@@ -1801,7 +1801,7 @@ function BranchPicker({
               <>
                 <div className="h-[52px] shrink-0 px-3 pb-2 pt-2.5">
                   <label className="flex h-[34px] items-center gap-2 rounded-[9px] bg-background px-2.5 focus-within:ring-1 focus-within:ring-ring">
-                    <WakuIcon className="size-[15px] text-[var(--text-secondary)]" name="search" />
+                    <MackIcon className="size-[15px] text-[var(--text-secondary)]" name="search" />
                     <input
                       className="min-w-0 flex-1 bg-transparent text-[12px] outline-none"
                       placeholder={t('input.search_branches')}
@@ -1836,9 +1836,9 @@ function BranchPicker({
                         onMouseEnter={() => actionIndex >= 0 && setActive(actionIndex)}
                         onClick={() => choose(branch.name)}
                       >
-                        <WakuIcon className="size-3 text-[var(--text-tertiary)]" name="gitBranch" />
+                        <MackIcon className="size-3 text-[var(--text-tertiary)]" name="gitBranch" />
                         <span className="min-w-0 flex-1 truncate">{branch.name}</span>
-                        {branch.name === selected && <WakuIcon className="size-[11px] text-[var(--text-tertiary)]" name="check" />}
+                        {branch.name === selected && <MackIcon className="size-[11px] text-[var(--text-tertiary)]" name="check" />}
                       </button>
                     )
                   })}
@@ -1858,7 +1858,7 @@ function BranchPicker({
                         requestAnimationFrame(() => input.current?.focus())
                       }}
                     >
-                      <WakuIcon className="size-3 text-[var(--text-secondary)]" name="plus" />
+                      <MackIcon className="size-3 text-[var(--text-secondary)]" name="plus" />
                       {t('branches.create_and_checkout_ellipsis')}
                     </button>
                   </>
@@ -2038,7 +2038,7 @@ function PlanUsageLanes({
           target="_blank"
         >
           <span className="min-w-0 flex-1 truncate">{header}</span>
-          <WakuIcon className="size-2.5" name="arrowRight" />
+          <MackIcon className="size-2.5" name="arrowRight" />
         </a>
       ) : (
         <div className="truncate text-[11px] text-[var(--text-tertiary)]">{header}</div>

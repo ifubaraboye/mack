@@ -6,9 +6,9 @@ import { Type } from "typebox";
 type JsonObject = Record<string, unknown>;
 
 const jsToolDescription =
-  "Run JavaScript in Waku's persistent QuickJS kernel for Computer Use. Initialize `cua` with `await setupComputerUseRuntime({ globals: globalThis })`, then call native tools directly, such as `cua.list_apps()` and `cua.click(arguments)`. The bundled Computer Use skill documents the method signatures; call the methods directly. Calls time out after 30000 ms (30 seconds) unless `timeout_ms` is provided. Use `jsRepl.write(...)` for text and `await jsRepl.emitImage(...)` for images. Bindings and scheduled timers persist until the JavaScript kernel is reset.";
+  "Run JavaScript in Mack's persistent QuickJS kernel for Computer Use. Initialize `cua` with `await setupComputerUseRuntime({ globals: globalThis })`, then call native tools directly, such as `cua.list_apps()` and `cua.click(arguments)`. The bundled Computer Use skill documents the method signatures; call the methods directly. Calls time out after 30000 ms (30 seconds) unless `timeout_ms` is provided. Use `jsRepl.write(...)` for text and `await jsRepl.emitImage(...)` for images. Bindings and scheduled timers persist until the JavaScript kernel is reset.";
 
-class WakuMcpClient {
+class MackMcpClient {
   private child: ChildProcessWithoutNullStreams | undefined;
   private starting: Promise<void> | undefined;
   private nextId = 0;
@@ -29,9 +29,9 @@ class WakuMcpClient {
   }
 
   private async start(): Promise<void> {
-    const executable = process.env.WAKU_JS_REPL_SERVER;
+    const executable = process.env.MACK_JS_REPL_SERVER;
     if (!executable) {
-      throw new Error("WAKU_JS_REPL_SERVER is not configured");
+      throw new Error("MACK_JS_REPL_SERVER is not configured");
     }
     const child = spawn(executable, [], {
       env: process.env,
@@ -42,13 +42,13 @@ class WakuMcpClient {
     lines.on("line", (line) => this.handleLine(line));
     child.stderr.on("data", (chunk) => {
       const message = String(chunk).trim();
-      if (message) console.error(`Waku JavaScript REPL: ${message}`);
+      if (message) console.error(`Mack JavaScript REPL: ${message}`);
     });
     child.once("error", (error) => this.handleExit(error));
     child.once("exit", (code, signal) => {
       this.handleExit(
         new Error(
-          `Waku JavaScript REPL exited${code === null ? "" : ` with ${code}`}${
+          `Mack JavaScript REPL exited${code === null ? "" : ` with ${code}`}${
             signal ? ` (${signal})` : ""
           }`,
         ),
@@ -57,7 +57,7 @@ class WakuMcpClient {
     await this.requestWithoutStart("initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "waku-pi", version: "1" },
+      clientInfo: { name: "mack-pi", version: "1" },
     });
     this.notify("notifications/initialized", {});
   }
@@ -98,7 +98,7 @@ class WakuMcpClient {
 
   private requestWithoutStart(method: string, params: JsonObject): Promise<unknown> {
     const child = this.child;
-    if (!child) return Promise.reject(new Error("Waku JavaScript REPL is not running"));
+    if (!child) return Promise.reject(new Error("Mack JavaScript REPL is not running"));
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -147,13 +147,13 @@ function toolResult(result: JsonObject) {
       )
       .map((item) => item.text)
       .join("\n");
-    throw new Error(message || "Waku JavaScript execution failed");
+    throw new Error(message || "Mack JavaScript execution failed");
   }
   return { content, details: result._meta ?? {} };
 }
 
-export default function wakuComputerUse(pi: ExtensionAPI) {
-  const client = new WakuMcpClient();
+export default function mackComputerUse(pi: ExtensionAPI) {
+  const client = new MackMcpClient();
 
   pi.registerTool({
     name: "js",

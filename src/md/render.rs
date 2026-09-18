@@ -227,12 +227,9 @@ impl Palette {
             if theme.is_dark { 0.48 } else { 0.55 },
             1.0,
         );
-        let active_search_orange = gpui::hsla(
-            30.0 / 360.0,
-            1.0,
-            if theme.is_dark { 0.50 } else { 0.54 },
-            1.0,
-        );
+        // The current match shares the search hue at a stronger wash instead
+        // of a second hue, keeping find highlights monochrome with the theme.
+        let active_search_highlight = search_yellow;
         Self {
             text: theme.text,
             secondary: theme.text_secondary,
@@ -245,7 +242,7 @@ impl Palette {
             code_wash: theme.code_wash,
             selection: theme.selection,
             search_match: search_yellow.opacity(if theme.is_dark { 0.18 } else { 0.20 }),
-            active_search_match: active_search_orange.opacity(if theme.is_dark {
+            active_search_match: active_search_highlight.opacity(if theme.is_dark {
                 0.78
             } else {
                 0.70

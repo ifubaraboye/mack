@@ -1,5 +1,5 @@
 /**
- * Waku local state schema.
+ * Mack local state schema.
  *
  * Drizzle is a build-time tool here: `bun run db:generate` diffs this file and
  * writes plain SQL into `db/migrations`, which the Rust app applies at startup
@@ -44,6 +44,18 @@ export const sessions = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
     /** Completion of the most recent assistant turn, unix seconds. */
     lastReplyAt: integer("last_reply_at"),
+    /**
+     * Cumulative token usage for turns executed inside Mack, captured live
+     * from each provider stream. List columns (not `session_details` JSON)
+     * so lifetime totals are one `SUM()` over narrow rows.
+     */
+    usageUncached: integer("usage_uncached").notNull().default(0),
+    usageCached: integer("usage_cached").notNull().default(0),
+    usageCreation: integer("usage_creation").notNull().default(0),
+    usageOutput: integer("usage_output").notNull().default(0),
+    usageReasoning: integer("usage_reasoning").notNull().default(0),
+    /** How many successful Mack-driven turns contributed to the counters. */
+    usageTurns: integer("usage_turns").notNull().default(0),
   },
   (table) => [
     index("sessions_by_project").on(table.projectId, table.updatedAt),

@@ -6,9 +6,9 @@ use super::runtime::{merge_remote_session_catalog, session_has_active_provider_t
 use super::settings::visible_settings_pages;
 use super::{
     ChatGptClientEvent, ChatGptEffect, ChatGptPanelState, ESCAPE_STOP_CONFIRMATION_TIMEOUT,
-    EscapeStopConfirmation, EscapeStopPress, EscapeStopTarget, NAVIGATION_RAIL_TICK_HEIGHT,
+    EscapeStopConfirmation, EscapeStopPress, EscapeStopTarget, Mack, NAVIGATION_RAIL_TICK_HEIGHT,
     NAVIGATION_RAIL_TURN_HEIGHT, PendingUserInput, SessionNavigation, StreamDeltaKind,
-    TranscriptRowKind::*, Waku, active_navigation_turn_index, append_text_delta_to_session,
+    TranscriptRowKind::*, active_navigation_turn_index, append_text_delta_to_session,
     assistant_response_footer, assistant_response_footer_index, assistant_response_footer_time,
     compact_driver_error, disclosure_leading_space, fenced_code, fitted_panel_widths,
     folded_transcript_row_kinds, format_worked_duration, format_working_elapsed,
@@ -78,7 +78,7 @@ fn attach_changed_files(session: &mut AgentSession, files: Vec<CheckpointFile>) 
     let turn = session.turns.last_mut().expect("the test has a turn");
     turn.checkpoint = Some(Checkpoint {
         turn_count: turn.turn_count,
-        git_ref: format!("refs/waku/test-turn-{}", turn.turn_count),
+        git_ref: format!("refs/mack/test-turn-{}", turn.turn_count),
         status: CheckpointStatus::Ready,
         files,
         additions: 0,
@@ -382,7 +382,7 @@ fn task_notification_tags_route_to_the_corresponding_task() {
     let tag = task_notification_tag(session_id);
 
     assert_eq!(task_id_from_notification_tag(&tag), Some(session_id));
-    assert_eq!(task_id_from_notification_tag("waku-task:not-a-uuid"), None);
+    assert_eq!(task_id_from_notification_tag("mack-task:not-a-uuid"), None);
     assert_eq!(task_id_from_notification_tag(&session_id.to_string()), None);
 }
 
@@ -2205,7 +2205,7 @@ fn chatgpt_login_reaches_connected_and_discovers_models() {
 
     let mut state = ChatGptPanelState::default();
     // Not connected -> waiting: stored, no side effect yet.
-    let effect = Waku::reduce_chatgpt_event(
+    let effect = Mack::reduce_chatgpt_event(
         &mut state,
         &ChatGptClientEvent::Session(session(ChatGptLoginStatus::Pending)),
     );
@@ -2217,7 +2217,7 @@ fn chatgpt_login_reaches_connected_and_discovers_models() {
     assert!(state.error.is_none());
 
     // Waiting -> connected: discovery is the only side effect.
-    let effect = Waku::reduce_chatgpt_event(
+    let effect = Mack::reduce_chatgpt_event(
         &mut state,
         &ChatGptClientEvent::Session(session(ChatGptLoginStatus::Authenticated)),
     );
@@ -2225,7 +2225,7 @@ fn chatgpt_login_reaches_connected_and_discovers_models() {
 
     // Models landing clears the pending flag.
     state.models_pending = true;
-    let effect = Waku::reduce_chatgpt_event(&mut state, &ChatGptClientEvent::Models(Vec::new()));
+    let effect = Mack::reduce_chatgpt_event(&mut state, &ChatGptClientEvent::Models(Vec::new()));
     assert_eq!(effect, ChatGptEffect::None);
     assert!(!state.models_pending);
 }
@@ -2235,7 +2235,7 @@ fn chatgpt_waiting_expires_without_models() {
     use waku_client::chatgpt::{ChatGptLoginStatus, ChatGptPublicSession};
 
     let mut state = ChatGptPanelState::default();
-    let effect = Waku::reduce_chatgpt_event(
+    let effect = Mack::reduce_chatgpt_event(
         &mut state,
         &ChatGptClientEvent::Session(ChatGptPublicSession {
             status: ChatGptLoginStatus::Pending,
@@ -2244,7 +2244,7 @@ fn chatgpt_waiting_expires_without_models() {
     );
     assert_eq!(effect, ChatGptEffect::None);
 
-    let effect = Waku::reduce_chatgpt_event(
+    let effect = Mack::reduce_chatgpt_event(
         &mut state,
         &ChatGptClientEvent::Session(ChatGptPublicSession {
             status: ChatGptLoginStatus::Expired,
@@ -2265,7 +2265,7 @@ fn chatgpt_connected_expires_and_clears_on_logout() {
 
     let mut state = ChatGptPanelState::default();
     // Connected triggers exactly one discovery side effect.
-    let effect = Waku::reduce_chatgpt_event(
+    let effect = Mack::reduce_chatgpt_event(
         &mut state,
         &ChatGptClientEvent::Session(ChatGptPublicSession {
             status: ChatGptLoginStatus::Authenticated,
@@ -2275,7 +2275,7 @@ fn chatgpt_connected_expires_and_clears_on_logout() {
     assert_eq!(effect, ChatGptEffect::DiscoverModels);
 
     // A dead refresh lands as Expired (not an error): sign in again.
-    let effect = Waku::reduce_chatgpt_event(
+    let effect = Mack::reduce_chatgpt_event(
         &mut state,
         &ChatGptClientEvent::Session(ChatGptPublicSession {
             status: ChatGptLoginStatus::Expired,
@@ -2290,7 +2290,7 @@ fn chatgpt_connected_expires_and_clears_on_logout() {
 
     // Logout returns to Unauthenticated with no models pending.
     state.models_pending = true;
-    let effect = Waku::reduce_chatgpt_event(
+    let effect = Mack::reduce_chatgpt_event(
         &mut state,
         &ChatGptClientEvent::Session(ChatGptPublicSession {
             status: ChatGptLoginStatus::Unauthenticated,
@@ -2309,14 +2309,14 @@ fn chatgpt_failure_preserves_last_session_and_reports_inline() {
     use waku_client::chatgpt::{ChatGptLoginStatus, ChatGptPublicSession};
 
     let mut state = ChatGptPanelState::default();
-    Waku::reduce_chatgpt_event(
+    Mack::reduce_chatgpt_event(
         &mut state,
         &ChatGptClientEvent::Session(ChatGptPublicSession {
             status: ChatGptLoginStatus::Authenticated,
             ..ChatGptPublicSession::default()
         }),
     );
-    Waku::reduce_chatgpt_event(
+    Mack::reduce_chatgpt_event(
         &mut state,
         &ChatGptClientEvent::Failed("Could not load ChatGPT models".to_owned()),
     );
@@ -2333,7 +2333,7 @@ fn chatgpt_failure_preserves_last_session_and_reports_inline() {
     assert!(!state.connecting);
 
     // The next successful session clears the error.
-    Waku::reduce_chatgpt_event(
+    Mack::reduce_chatgpt_event(
         &mut state,
         &ChatGptClientEvent::Session(ChatGptPublicSession {
             status: ChatGptLoginStatus::Authenticated,
@@ -2354,7 +2354,7 @@ fn chatgpt_probe_merge_replaces_chatgpt_models() {
         models: vec![ProviderModel::new("old", "Old")],
         agent_presets: Vec::new(),
     }];
-    Waku::merge_chatgpt_probe_models(&mut probes, vec![ProviderModel::new("gpt-5.5", "GPT-5.5")]);
+    Mack::merge_chatgpt_probe_models(&mut probes, vec![ProviderModel::new("gpt-5.5", "GPT-5.5")]);
     assert_eq!(probes.len(), 1);
     let chatgpt = probes
         .iter()
@@ -2365,7 +2365,7 @@ fn chatgpt_probe_merge_replaces_chatgpt_models() {
 
     // A missing probe is inserted as installed with no binary.
     let mut probes = Vec::new();
-    Waku::merge_chatgpt_probe_models(&mut probes, vec![ProviderModel::new("gpt-5.5", "GPT-5.5")]);
+    Mack::merge_chatgpt_probe_models(&mut probes, vec![ProviderModel::new("gpt-5.5", "GPT-5.5")]);
     assert_eq!(probes.len(), 1);
     assert!(probes[0].installed);
     assert_eq!(probes[0].path, None);
@@ -2400,7 +2400,7 @@ fn claude_login_reaches_connected_and_discovers_models() {
 
     let mut state = ClaudePanelState::default();
     // Not connected -> waiting: stored, no side effect yet.
-    let effect = Waku::reduce_claude_event(
+    let effect = Mack::reduce_claude_event(
         &mut state,
         &ClaudeClientEvent::Session(session(ClaudeLoginStatus::Pending)),
     );
@@ -2412,7 +2412,7 @@ fn claude_login_reaches_connected_and_discovers_models() {
     assert!(state.error.is_none());
 
     // Waiting -> connected: discovery is the only side effect.
-    let effect = Waku::reduce_claude_event(
+    let effect = Mack::reduce_claude_event(
         &mut state,
         &ClaudeClientEvent::Session(session(ClaudeLoginStatus::Authenticated)),
     );
@@ -2420,7 +2420,7 @@ fn claude_login_reaches_connected_and_discovers_models() {
 
     // Models landing clears the pending flag.
     state.models_pending = true;
-    let effect = Waku::reduce_claude_event(&mut state, &ClaudeClientEvent::Models(Vec::new()));
+    let effect = Mack::reduce_claude_event(&mut state, &ClaudeClientEvent::Models(Vec::new()));
     assert_eq!(effect, ClaudeEffect::None);
     assert!(!state.models_pending);
 }
@@ -2431,7 +2431,7 @@ fn claude_waiting_expires_without_models() {
     use waku_client::claude::{ClaudeLoginStatus, ClaudePublicSession};
 
     let mut state = ClaudePanelState::default();
-    let effect = Waku::reduce_claude_event(
+    let effect = Mack::reduce_claude_event(
         &mut state,
         &ClaudeClientEvent::Session(ClaudePublicSession {
             status: ClaudeLoginStatus::Pending,
@@ -2440,7 +2440,7 @@ fn claude_waiting_expires_without_models() {
     );
     assert_eq!(effect, ClaudeEffect::None);
 
-    let effect = Waku::reduce_claude_event(
+    let effect = Mack::reduce_claude_event(
         &mut state,
         &ClaudeClientEvent::Session(ClaudePublicSession {
             status: ClaudeLoginStatus::Expired,
@@ -2462,7 +2462,7 @@ fn claude_connected_expires_and_clears_on_logout() {
 
     let mut state = ClaudePanelState::default();
     // Connected triggers exactly one discovery side effect.
-    let effect = Waku::reduce_claude_event(
+    let effect = Mack::reduce_claude_event(
         &mut state,
         &ClaudeClientEvent::Session(ClaudePublicSession {
             status: ClaudeLoginStatus::Authenticated,
@@ -2472,7 +2472,7 @@ fn claude_connected_expires_and_clears_on_logout() {
     assert_eq!(effect, ClaudeEffect::DiscoverModels);
 
     // A dead refresh lands as Expired (not an error): sign in again.
-    let effect = Waku::reduce_claude_event(
+    let effect = Mack::reduce_claude_event(
         &mut state,
         &ClaudeClientEvent::Session(ClaudePublicSession {
             status: ClaudeLoginStatus::Expired,
@@ -2487,7 +2487,7 @@ fn claude_connected_expires_and_clears_on_logout() {
 
     // Logout returns to Unauthenticated with no models pending.
     state.models_pending = true;
-    let effect = Waku::reduce_claude_event(
+    let effect = Mack::reduce_claude_event(
         &mut state,
         &ClaudeClientEvent::Session(ClaudePublicSession {
             status: ClaudeLoginStatus::Unauthenticated,
@@ -2507,14 +2507,14 @@ fn claude_failure_preserves_last_session_and_reports_inline() {
     use waku_client::claude::{ClaudeLoginStatus, ClaudePublicSession};
 
     let mut state = ClaudePanelState::default();
-    Waku::reduce_claude_event(
+    Mack::reduce_claude_event(
         &mut state,
         &ClaudeClientEvent::Session(ClaudePublicSession {
             status: ClaudeLoginStatus::Authenticated,
             ..ClaudePublicSession::default()
         }),
     );
-    Waku::reduce_claude_event(
+    Mack::reduce_claude_event(
         &mut state,
         &ClaudeClientEvent::Failed("Could not load Claude models".to_owned()),
     );
@@ -2529,7 +2529,7 @@ fn claude_failure_preserves_last_session_and_reports_inline() {
     assert!(!state.completing);
 
     // The next successful session clears the error.
-    Waku::reduce_claude_event(
+    Mack::reduce_claude_event(
         &mut state,
         &ClaudeClientEvent::Session(ClaudePublicSession {
             status: ClaudeLoginStatus::Authenticated,
@@ -2559,7 +2559,7 @@ fn claude_probe_merge_replaces_only_claude_models() {
             agent_presets: Vec::new(),
         },
     ];
-    Waku::merge_claude_probe_models(
+    Mack::merge_claude_probe_models(
         &mut probes,
         vec![ProviderModel::new("claude-sonnet-4-5", "Claude Sonnet 4.5")],
     );
@@ -2572,7 +2572,7 @@ fn claude_probe_merge_replaces_only_claude_models() {
 
     // A missing probe is inserted as installed with no binary.
     let mut probes = Vec::new();
-    Waku::merge_claude_probe_models(
+    Mack::merge_claude_probe_models(
         &mut probes,
         vec![ProviderModel::new("claude-sonnet-4-5", "Claude Sonnet 4.5")],
     );

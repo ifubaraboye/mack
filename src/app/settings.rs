@@ -94,12 +94,12 @@ pub(super) fn visible_settings_pages(
         })
 }
 
-impl Waku {
+impl Mack {
     pub(super) fn render_settings(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::current(cx);
 
         div()
-            .key_context("Waku")
+            .key_context("Mack")
             .track_focus(&self.settings_focus)
             .on_action(|_: &CloseWindow, window, _| crate::platform::hide_window(window))
             .on_action(cx.listener(Self::new_session_action))
@@ -329,14 +329,10 @@ impl Waku {
                         .child(self.render_skills_settings(cx)),
                 );
         }
-        // The Monthly and Projects list views own their own scrolling, so
-        // their pages fill the viewport instead of riding the shared scroll
-        // container.
-        let fills_viewport = page == SettingsPage::Usage
-            && matches!(
-                self.usage_view,
-                UsageViewMode::Monthly | UsageViewMode::Projects
-            );
+        // The Usage page rides the shared scroll container like every other
+        // settings page: it reports a single lifetime total with no
+        // internally-scrolling list views.
+        let fills_viewport = false;
         // The titlebar strip is transparent; once content slides under it, a
         // hairline marks the boundary so the clip edge reads as a header
         // rather than a glitch.
@@ -2890,7 +2886,7 @@ impl Waku {
         let event_wake = self.event_wake_tx.clone();
         let daemon = self.daemon.client();
         std::thread::Builder::new()
-            .name("waku-computer-permission-request".into())
+            .name("mack-computer-permission-request".into())
             .spawn(move || {
                 let result = match daemon.request(
                     Uuid::nil(),
@@ -3047,9 +3043,6 @@ impl Waku {
         self.provider_path_input.update(cx, |input, cx| {
             input.set_placeholder(tr!("input.detected_automatically"), cx)
         });
-        self.usage_project_filter.update(cx, |input, cx| {
-            input.set_placeholder(tr!("input.filter_projects"), cx)
-        });
         self.refresh_command_palette_localized_text(cx);
         self.refresh_transcript_search_localized_text(cx);
         for probe in &mut self.probes {
@@ -3110,7 +3103,7 @@ fn permission_status_row(
     granted: bool,
     id: &'static str,
     theme: Theme,
-    cx: &mut Context<Waku>,
+    cx: &mut Context<Mack>,
 ) -> Div {
     let status = if granted {
         div()

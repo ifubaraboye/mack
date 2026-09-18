@@ -116,7 +116,7 @@ pub fn parse_skill_invocation(prompt: &str) -> Option<(&str, &str)> {
     Some((name, args))
 }
 
-/// Whether the composer submitted Waku's global terminal-session picker.
+/// Whether the composer submitted Mack's global terminal-session picker.
 /// The command is reserved by daemon-side discovery, so it is intentionally
 /// provider-neutral and never crosses into a provider transport.
 pub fn is_resume_submission(prompt: &str) -> bool {
@@ -124,7 +124,7 @@ pub fn is_resume_submission(prompt: &str) -> bool {
 }
 
 /// Whether the submitted text resolves to ChatGPT's native fast-mode command,
-/// which Waku bridges to the provider's service-tier control. Checking the
+/// which Mack bridges to the provider's service-tier control. Checking the
 /// resolved entry preserves project/user command precedence when one of them
 /// intentionally owns `/fast`.
 pub fn is_fast_mode_toggle_submission(
@@ -171,7 +171,7 @@ pub enum GoalCommand {
     Set(String),
 }
 
-/// Parse the submitted text as ChatGPT's native `/goal` command, which Waku
+/// Parse the submitted text as ChatGPT's native `/goal` command, which Mack
 /// bridges to `thread/goal/*`. `None` when it is not one — wrong provider,
 /// other text, or a project/user command that deliberately owns `/goal`
 /// (resolution precedence stands).

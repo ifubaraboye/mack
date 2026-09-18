@@ -6,12 +6,12 @@ import type { JsonValue } from "./serde_json/JsonValue";
 export type WireDriverStartOptions = { provider: string, binary: string, cwd: string, mode: string, model: string | null, reasoningEffort: string | null, serviceTier: string | null, contextWindow: string | null, agentPreset: string | null, computerUseEnabled: boolean, providerCursor: JsonValue | null,
 /**
  * ChatGPT-only resume history, seeded client-side from the persisted
- * Waku transcript. Every other provider ignores it and keeps its native
+ * Mack transcript. Every other provider ignores it and keeps its native
  * resume path. `None` (and empty) means a fresh conversation.
  */
 chatgptHistory?: Array<ChatGptHistorySeed> | null,
 /**
  * Claude-only resume history, seeded client-side from the persisted
- * Waku transcript. Same contract as `chatgpt_history`.
+ * Mack transcript. Same contract as `chatgpt_history`.
  */
 claudeHistory?: Array<ClaudeHistorySeed> | null, };

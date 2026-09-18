@@ -11,7 +11,7 @@ import { SkillsSettings } from '@/components/skills-settings'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { UsageSettings } from '@/components/usage-settings'
-import { ProviderIcon, PROVIDERS, WakuIcon, type WakuIconName } from '@/components/waku-icon'
+import { ProviderIcon, PROVIDERS, MackIcon, type MackIconName } from '@/components/mack-icon'
 import {
   useDaemonSettings,
   useProviderProbes,
@@ -46,7 +46,7 @@ export const SETTINGS_PAGES: Array<{
   id: SettingsPageId
   label: string
   labelKey: string
-  icon: WakuIconName
+  icon: MackIconName
   keywords: string
   keywordsKey: string
 }> = [
@@ -102,13 +102,13 @@ export function SettingsView({
             type="button"
             onClick={onBack}
           >
-            <WakuIcon className="size-[15px] text-[var(--text-tertiary)]" name="arrowLeft" />
+            <MackIcon className="size-[15px] text-[var(--text-tertiary)]" name="arrowLeft" />
             {t('settings.back')}
           </button>
         </div>
         <div className="px-3 pt-2">
           <label className="flex h-8 items-center gap-2 rounded-lg border bg-[var(--inset)] px-2.5 focus-within:border-ring">
-            <WakuIcon className="size-[13px] text-[var(--text-tertiary)]" name="search" />
+            <MackIcon className="size-[13px] text-[var(--text-tertiary)]" name="search" />
             <input
               aria-label={t('settings.search')}
               className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-[var(--text-ghost)]"
@@ -137,7 +137,7 @@ export function SettingsView({
               type="button"
               onClick={() => onPageChange(candidate.id)}
             >
-              <WakuIcon className="size-[15px] text-[var(--text-tertiary)]" name={candidate.icon} />
+              <MackIcon className="size-[15px] text-[var(--text-tertiary)]" name={candidate.icon} />
               {candidate.localizedLabel}
             </button>
           ))}
@@ -155,7 +155,7 @@ export function SettingsView({
             {page === 'general' && <GeneralSettings />}
             {page === 'appearance' && <AppearanceSettings />}
             {page === 'providers' && <ProvidersSettings />}
-            {page === 'usage' && <UsageSettings projects={projects} />}
+            {page === 'usage' && <UsageSettings />}
             {page === 'daemon' && <DaemonSettings />}
           </div>
         )}
@@ -309,7 +309,7 @@ function ProvidersSettings() {
               void queryClient.invalidateQueries({ queryKey: daemonKeys.providers(config.address) })
             }}
           >
-            <WakuIcon className={cn('size-[11px] text-[var(--text-tertiary)]', probes.isFetching && 'motion-safe:animate-spin')} name="rotateCw" />
+            <MackIcon className={cn('size-[11px] text-[var(--text-tertiary)]', probes.isFetching && 'motion-safe:animate-spin')} name="rotateCw" />
             {probes.isFetching ? t('common.checking') : t('common.refresh')}
           </button>
           {!probes.isFetching && checkedAt > 0 && (
@@ -355,7 +355,7 @@ function ProvidersSettings() {
                   type="button"
                   onClick={() => toggleExpandedProvider(provider.id)}
                 >
-                  <WakuIcon className="size-2.5" name={open ? 'chevronDown' : 'chevronRight'} />
+                  <MackIcon className="size-2.5" name={open ? 'chevronDown' : 'chevronRight'} />
                 </button>
                 {installed && (
                   <Toggle
@@ -570,12 +570,12 @@ function DetailRow({
           variant="outline"
           onClick={() => setRevealed((current) => !current)}
         >
-          <WakuIcon name={revealed ? 'eyeOff' : 'eye'} />
+          <MackIcon name={revealed ? 'eyeOff' : 'eye'} />
         </Button>
       )}
       {copy && (
         <Button size="sm" variant="outline" onClick={() => void copyFeedback.copyText(value)}>
-          <WakuIcon name={copyFeedback.copied ? 'check' : 'copy'} />
+          <MackIcon name={copyFeedback.copied ? 'check' : 'copy'} />
           {t(copyFeedback.copied ? 'common.copied' : 'common.copy')}
         </Button>
       )}

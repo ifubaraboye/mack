@@ -30,11 +30,13 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::usage_history::TokenTotals;
+
 // ---------------------------------------------------------------------------
 // Constants (community-observed Claude Code OAuth values)
 // ---------------------------------------------------------------------------
 
-/// Public OAuth client id used by the Claude Code CLI. Reused — not Waku's own.
+/// Public OAuth client id used by the Claude Code CLI. Reused — not Mack's own.
 pub const DEFAULT_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 /// Origin of the copy-paste authorization page.
 pub const DEFAULT_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
@@ -175,7 +177,7 @@ pub fn extract_error_code(body: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 /// Overridable endpoints and client identifiers. Every default tracks the
-/// observed Claude Code flow so Waku keeps working if Anthropic moves an
+/// observed Claude Code flow so Mack keeps working if Anthropic moves an
 /// endpoint — override the field instead of forking code.
 #[derive(Clone, Debug)]
 pub struct ClaudeAuthConfig {
@@ -806,17 +808,20 @@ pub fn parse_retry_after_secs(header_block: &str) -> Option<u64> {
 // Messages SSE parsing (standard Anthropic streaming vocabulary)
 // ---------------------------------------------------------------------------
 
-/// Stream events the Claude driver renders. `message_start` /
-/// `content_block_start` / `content_block_stop` / `ping` carry no driver
-/// signal and stay ignored; `message_delta` contributes only the stop
-/// reason, attached to the `Completed` emitted at `message_stop`. Anything
-/// else — including `error` frames and malformed JSON — settles the turn
-/// without crashing the stream.
+/// Stream events the Claude driver renders. `content_block_start` /
+/// `content_block_stop` / `ping` carry no driver signal and stay ignored;
+/// `message_start` contributes the input-side usage, `message_delta` the stop
+/// reason plus the output-side usage, all attached to the `Completed` emitted
+/// at `message_stop`. Anything else — including `error` frames and malformed
+/// JSON — settles the turn without crashing the stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MessagesStreamEvent {
     TextDelta(String),
     ReasoningDelta(String),
-    Completed { stop_reason: Option<String> },
+    Completed {
+        stop_reason: Option<String>,
+        usage: TokenTotals,
+    },
     Failed,
 }
 
@@ -829,6 +834,21 @@ pub enum MessagesStreamEvent {
 pub struct MessagesSseParser {
     buffer: String,
     pending_stop_reason: Option<String>,
+    pending_usage: TokenTotals,
+}
+
+/// Reads a token count the way the transcript scanner does: finite positive
+/// numbers truncate, everything else (missing, negative, non-numeric) is zero.
+fn usage_int(value: Option<&Value>) -> u64 {
+    value
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            value
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .map(|value| value.trunc() as u64)
+        })
+        .unwrap_or(0)
 }
 
 impl MessagesSseParser {
@@ -903,6 +923,21 @@ impl MessagesSseParser {
                     _ => None,
                 }
             }
+            Some("message_start") => {
+                // The turn's input-side usage. One turn carries one message,
+                // so the latest frame wins rather than accumulating.
+                if let Some(usage) = value
+                    .get("message")
+                    .and_then(|message| message.get("usage"))
+                {
+                    self.pending_usage.uncached_input = usage_int(usage.get("input_tokens"));
+                    self.pending_usage.cached_input =
+                        usage_int(usage.get("cache_read_input_tokens"));
+                    self.pending_usage.cache_creation =
+                        usage_int(usage.get("cache_creation_input_tokens"));
+                }
+                None
+            }
             Some("message_delta") => {
                 if let Some(reason) = value
                     .get("delta")
@@ -912,14 +947,19 @@ impl MessagesSseParser {
                 {
                     self.pending_stop_reason = Some(reason.to_owned());
                 }
+                // The message's total output, not a delta — latest wins.
+                if let Some(usage) = value.get("usage") {
+                    self.pending_usage.output = usage_int(usage.get("output_tokens"));
+                }
                 None
             }
             Some("message_stop") => Some(MessagesStreamEvent::Completed {
                 stop_reason: self.pending_stop_reason.take(),
+                usage: std::mem::take(&mut self.pending_usage),
             }),
             Some("error") => Some(MessagesStreamEvent::Failed),
-            // message_start, content_block_start/stop, ping, and unknown
-            // types carry nothing the driver renders.
+            // content_block_start/stop, ping, and unknown types carry
+            // nothing the driver renders.
             _ => None,
         }
     }
@@ -1174,7 +1214,8 @@ mod tests {
         assert_eq!(
             events,
             vec![MessagesStreamEvent::Completed {
-                stop_reason: Some("end_turn".to_owned())
+                stop_reason: Some("end_turn".to_owned()),
+                usage: TokenTotals::default(),
             }]
         );
     }
@@ -1193,7 +1234,10 @@ mod tests {
             parser.push(chunk),
             vec![
                 MessagesStreamEvent::ReasoningDelta("hmm".to_owned()),
-                MessagesStreamEvent::Completed { stop_reason: None },
+                MessagesStreamEvent::Completed {
+                    stop_reason: None,
+                    usage: TokenTotals::default(),
+                },
             ]
         );
     }
@@ -1203,5 +1247,49 @@ mod tests {
         let mut parser = MessagesSseParser::new();
         let events = parser.push("event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}\n\n");
         assert_eq!(events, vec![MessagesStreamEvent::Failed]);
+    }
+
+    #[test]
+    fn messages_parser_collects_input_and_output_usage() {
+        let mut parser = MessagesSseParser::new();
+        let events = parser.push(concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{",
+            "\"input_tokens\":1000,\"cache_read_input_tokens\":800,",
+            "\"cache_creation_input_tokens\":50}}}\n\n",
+        ));
+        assert!(events.is_empty());
+        let events = parser.push(concat!(
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},",
+            "\"usage\":{\"output_tokens\":200}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        ));
+        assert_eq!(
+            events,
+            vec![MessagesStreamEvent::Completed {
+                stop_reason: Some("end_turn".to_owned()),
+                usage: TokenTotals {
+                    uncached_input: 1000,
+                    cached_input: 800,
+                    cache_creation: 50,
+                    output: 200,
+                    reasoning: 0,
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn messages_parser_usage_defaults_to_zero_without_usage_frames() {
+        let mut parser = MessagesSseParser::new();
+        let events = parser.push("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n");
+        assert_eq!(
+            events,
+            vec![MessagesStreamEvent::Completed {
+                stop_reason: None,
+                usage: TokenTotals::default(),
+            }]
+        );
     }
 }

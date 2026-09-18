@@ -12,7 +12,7 @@ fn new_task_runtime_mode(current: Option<&AgentSession>, remembered: RuntimeMode
         .unwrap_or(remembered)
 }
 
-impl Waku {
+impl Mack {
     pub(crate) fn open_task_from_notification(&mut self, session_id: Uuid, cx: &mut Context<Self>) {
         self.select_session(session_id, cx);
     }
@@ -108,7 +108,7 @@ impl Waku {
             return;
         }
         let daemon = self.daemon.clone();
-        cx.spawn(async move |waku, cx| {
+        cx.spawn(async move |mack, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
@@ -120,11 +120,11 @@ impl Waku {
                     }
                 })
                 .await;
-            let _ = waku.update(cx, |waku, cx| {
-                waku.session_hydrations.remove(&session_id);
+            let _ = mack.update(cx, |mack, cx| {
+                mack.session_hydrations.remove(&session_id);
                 match result {
                     Ok(session) => {
-                        let replaced = if let Some(existing) = waku
+                        let replaced = if let Some(existing) = mack
                             .state
                             .sessions
                             .iter_mut()
@@ -135,28 +135,28 @@ impl Waku {
                         } else {
                             false
                         };
-                        let pending = waku
+                        let pending = mack
                             .pending_session_activation
                             .filter(|pending| pending.session_id == session_id);
                         if pending.is_some() {
-                            waku.pending_session_activation = None;
+                            mack.pending_session_activation = None;
                         }
                         if replaced && let Some(pending) = pending {
-                            waku.finish_session_activation(session_id, pending.transition, cx);
-                        } else if waku.state.selected_session == Some(session_id) {
-                            waku.reset_visible_state();
-                            waku.reset_transcript_rows(waku.transcript_row_count());
-                            waku.refresh_composer_sources(cx);
+                            mack.finish_session_activation(session_id, pending.transition, cx);
+                        } else if mack.state.selected_session == Some(session_id) {
+                            mack.reset_visible_state();
+                            mack.reset_transcript_rows(mack.transcript_row_count());
+                            mack.refresh_composer_sources(cx);
                         }
                     }
                     Err(error) => {
-                        if waku
+                        if mack
                             .pending_session_activation
                             .is_some_and(|pending| pending.session_id == session_id)
                         {
-                            waku.pending_session_activation = None;
+                            mack.pending_session_activation = None;
                         }
-                        waku.show_toast(tr!("errors.open_session", error = error));
+                        mack.show_toast(tr!("errors.open_session", error = error));
                     }
                 }
                 cx.notify();
@@ -426,9 +426,9 @@ impl Waku {
             .try_global::<crate::updater::UpdaterState>()
             .and_then(|updater| updater.0.as_ref())
             .is_some_and(|updater| updater.automatically_checks_for_updates());
-        // Warm the Usage page's transcript scan while the user is still on
+        // Warm the Usage page's totals while the user is still on
         // General, so clicking Usage lands on data instead of a spinner.
-        self.ensure_usage_history(false, cx);
+        self.ensure_mack_usage(false, cx);
         window.focus(&self.settings_focus, cx);
         cx.notify();
     }
@@ -538,7 +538,7 @@ impl Waku {
     /// as on screen and keeps its full width here: the slide narrows the
     /// container that clips it, so nothing inside reflows on the way out.
     /// What the panel actually occupies this frame is
-    /// [`Waku::sidebar_rendered_width`] / [`Waku::right_panel_rendered_width`].
+    /// [`Mack::sidebar_rendered_width`] / [`Mack::right_panel_rendered_width`].
     pub(super) fn effective_panel_widths(&self, window: &Window) -> (f32, f32) {
         fitted_panel_widths(
             f32::from(window.viewport_size().width),
@@ -1175,11 +1175,11 @@ impl Waku {
         if let Some(previous_kinds) = previous_kinds.as_deref() {
             self.splice_active_transcript_rows_after_visibility_change(previous_kinds);
         }
-        // A provider runtime owns its Waku JavaScript REPL and Computer Use
+        // A provider runtime owns its Mack JavaScript REPL and Computer Use
         // descendants. Normally Stop closes that process tree and the next
         // prompt resumes the same provider thread with a fresh runtime. A
         // detached process or subagent is the exception: its provider must
-        // remain resident so Waku can keep observing and stopping it.
+        // remain resident so Mack can keep observing and stopping it.
         if retain_runtime && keep_runtime {
             if let Some(runtime) = runtime.take() {
                 self.runtimes.insert(session_id, runtime);
@@ -1537,7 +1537,7 @@ impl Waku {
         }
 
         let workspace = waku_client::WorkspaceClient::new(self.daemon.client());
-        cx.spawn(async move |waku, cx| {
+        cx.spawn(async move |mack, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
@@ -1551,16 +1551,16 @@ impl Waku {
                     }
                 })
                 .await;
-            let _ = waku.update(cx, |waku, cx| match result {
+            let _ = mack.update(cx, |mack, cx| match result {
                 Ok(cwd) => {
                     let mut project = Project::from_path(cwd);
                     project.name = Project::PROJECTLESS_NAME.to_owned();
                     let project_id = project.id;
-                    waku.state.projects.push(project);
-                    waku.create_session_for(project_id, waku.state.last_provider, cx);
+                    mack.state.projects.push(project);
+                    mack.create_session_for(project_id, mack.state.last_provider, cx);
                 }
                 Err(error) => {
-                    waku.show_toast(tr!("errors.create_projectless_task", error = error));
+                    mack.show_toast(tr!("errors.create_projectless_task", error = error));
                     cx.notify();
                 }
             });

@@ -2,7 +2,7 @@
 //!
 //! Codex allocates ordinary projectless chats beneath a per-user root using
 //! `<root>/<local date>/<prompt slug>`, with numeric collision suffixes and a
-//! random fallback. Waku mirrors that layout beneath `~/.waku/projects` so
+//! random fallback. Mack mirrors that layout beneath `~/.mack/projects` so
 //! generated workspaces do not sit beside configuration documents.
 
 use std::fs;
@@ -30,7 +30,7 @@ pub struct Workspace {
 fn workspace_root_slot() -> &'static RwLock<Option<PathBuf>> {
     static ROOT: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
     ROOT.get_or_init(|| {
-        RwLock::new(dirs::home_dir().map(|home| home.join(".waku").join("projects")))
+        RwLock::new(dirs::home_dir().map(|home| home.join(".mack").join("projects")))
     })
 }
 
@@ -52,7 +52,7 @@ pub fn home_directory() -> Option<PathBuf> {
     root.parent()?.parent().map(Path::to_path_buf)
 }
 
-/// Existing builds created dated workspaces directly under `~/.waku`; keep
+/// Existing builds created dated workspaces directly under `~/.mack`; keep
 /// recognizing those paths while all new workspaces live under `projects/`.
 pub fn is_projectless_path(path: &Path) -> bool {
     workspace_root().is_some_and(|root| {
@@ -99,22 +99,22 @@ pub fn create_workspace(prompt: Option<&str>) -> io::Result<Workspace> {
     let root = workspace_root().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
-            "could not locate the home directory for ~/.waku/projects",
+            "could not locate the home directory for ~/.mack/projects",
         )
     })?;
     create_workspace_in(&root, Local::now().date_naive(), None, prompt)
 }
 
-/// Move one old dated workspace from `~/.waku/<date>/<slug>` into
-/// `~/.waku/projects/<date>/<slug>` without copying its contents through the
-/// client. The oldest layout used `~/.waku` itself; that path contains Waku's
+/// Move one old dated workspace from `~/.mack/<date>/<slug>` into
+/// `~/.mack/projects/<date>/<slug>` without copying its contents through the
+/// client. The oldest layout used `~/.mack` itself; that path contains Mack's
 /// configuration now, so it receives a fresh private workspace instead of
 /// moving the configuration directory.
 pub fn migrate_workspace(path: &Path) -> io::Result<Workspace> {
     let root = workspace_root().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
-            "could not locate the home directory for ~/.waku/projects",
+            "could not locate the home directory for ~/.mack/projects",
         )
     })?;
     migrate_workspace_in(&root, path)
@@ -306,7 +306,7 @@ mod tests {
     use super::*;
 
     fn test_root() -> PathBuf {
-        std::env::temp_dir().join(format!("waku-projectless-{}", Uuid::new_v4()))
+        std::env::temp_dir().join(format!("mack-projectless-{}", Uuid::new_v4()))
     }
 
     #[test]

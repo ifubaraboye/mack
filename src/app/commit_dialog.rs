@@ -8,7 +8,7 @@ use gpui::{KeyBinding, actions};
 use super::*;
 
 actions!(
-    waku_commit_dialog,
+    mack_commit_dialog,
     [ConfirmCommitDialog, DismissCommitDialog]
 );
 
@@ -100,7 +100,7 @@ impl CommitDialogState {
     }
 }
 
-impl Waku {
+impl Mack {
     pub(super) fn commit_operation_status_label(&self) -> Option<String> {
         None
     }
@@ -223,7 +223,7 @@ impl Waku {
         cx: &mut Context<Self>,
     ) {
         let workspace_client = waku_client::WorkspaceClient::new(self.daemon.client());
-        cx.spawn(async move |waku, cx| {
+        cx.spawn(async move |mack, cx| {
             let generation_workspace = workspace.clone();
             let result = cx
                 .background_executor()
@@ -243,8 +243,8 @@ impl Waku {
                     }
                 })
                 .await;
-            let _ = waku.update(cx, |waku, cx| {
-                let current = waku.commit_operation.as_ref().is_some_and(|operation| {
+            let _ = mack.update(cx, |mack, cx| {
+                let current = mack.commit_operation.as_ref().is_some_and(|operation| {
                     operation.id == id
                         && operation.workspace == workspace
                         && operation.pending == CommitPending::Generating(action)
@@ -254,17 +254,17 @@ impl Waku {
                 }
                 match result {
                     Ok(message) => {
-                        if let Some(operation) = waku.commit_operation.as_mut() {
+                        if let Some(operation) = mack.commit_operation.as_mut() {
                             operation.pending = CommitPending::Git(action);
                         }
                         if let Some(dialog) =
-                            waku.commit_dialog.as_mut().filter(|dialog| dialog.id == id)
+                            mack.commit_dialog.as_mut().filter(|dialog| dialog.id == id)
                         {
                             dialog
                                 .message
                                 .update(cx, |input, cx| input.set_content(message.clone(), cx));
                         }
-                        waku.spawn_git_action(
+                        mack.spawn_git_action(
                             id,
                             action,
                             workspace,
@@ -275,16 +275,16 @@ impl Waku {
                         );
                     }
                     Err(error) => {
-                        waku.commit_operation = None;
+                        mack.commit_operation = None;
                         if let Some(dialog) =
-                            waku.commit_dialog.as_mut().filter(|dialog| dialog.id == id)
+                            mack.commit_dialog.as_mut().filter(|dialog| dialog.id == id)
                         {
                             dialog.error = Some(error);
                             dialog
                                 .message
                                 .update(cx, |message, _| message.set_read_only(false));
                         } else {
-                            waku.show_toast(error);
+                            mack.show_toast(error);
                         }
                     }
                 }
@@ -305,7 +305,7 @@ impl Waku {
         cx: &mut Context<Self>,
     ) {
         let workspace_client = waku_client::WorkspaceClient::new(self.daemon.client());
-        cx.spawn(async move |waku, cx| {
+        cx.spawn(async move |mack, cx| {
             let operation_workspace = workspace.clone();
             let result = cx
                 .background_executor()
@@ -349,8 +349,8 @@ impl Waku {
                     (result.map_err(|error| error.to_string()), snapshot)
                 })
                 .await;
-            let focus = waku.update(cx, |waku, cx| {
-                let current = waku.commit_operation.as_ref().is_some_and(|operation| {
+            let focus = mack.update(cx, |mack, cx| {
+                let current = mack.commit_operation.as_ref().is_some_and(|operation| {
                     operation.id == id
                         && operation.workspace == workspace
                         && operation.pending == CommitPending::Git(action)
@@ -359,34 +359,34 @@ impl Waku {
                     return None;
                 }
                 let (result, refreshed_snapshot) = result;
-                waku.commit_operation = None;
-                if waku
+                mack.commit_operation = None;
+                if mack
                     .selected_workspace_path()
                     .is_some_and(|path| path == workspace)
                 {
-                    waku.invalidate_workspace_queries(cx);
+                    mack.invalidate_workspace_queries(cx);
                 } else {
-                    waku.branch_snapshots.invalidate(&workspace);
+                    mack.branch_snapshots.invalidate(&workspace);
                 }
                 let focus = match result {
                     Ok(()) => {
-                        let dialog_was_open = waku
+                        let dialog_was_open = mack
                             .commit_dialog
                             .as_ref()
                             .is_some_and(|dialog| dialog.id == id);
                         if dialog_was_open {
-                            waku.commit_dialog = None;
+                            mack.commit_dialog = None;
                         }
-                        waku.show_success_toast(match action {
+                        mack.show_success_toast(match action {
                             CommitAction::Commit => tr!("commit.committed"),
                             CommitAction::CommitAndPush => tr!("commit.committed_and_pushed"),
                             CommitAction::Push => tr!("commit.pushed"),
                         });
-                        dialog_was_open.then(|| waku.composer_focus(cx))
+                        dialog_was_open.then(|| mack.composer_focus(cx))
                     }
                     Err(error) => {
                         if let Some(dialog) =
-                            waku.commit_dialog.as_mut().filter(|dialog| dialog.id == id)
+                            mack.commit_dialog.as_mut().filter(|dialog| dialog.id == id)
                         {
                             dialog.error = Some(error);
                             if let Some(snapshot) = refreshed_snapshot {
@@ -397,7 +397,7 @@ impl Waku {
                                 .message
                                 .update(cx, |message, _| message.set_read_only(false));
                         } else {
-                            waku.show_toast(error);
+                            mack.show_toast(error);
                         }
                         None
                     }
@@ -428,7 +428,7 @@ fn render_commit_action_row(
     active: bool,
     shortcut: Option<&'static str>,
     action: CommitAction,
-    weak: WeakEntity<Waku>,
+    weak: WeakEntity<Mack>,
     theme: &Theme,
 ) -> Stateful<Div> {
     let foreground = if enabled {
@@ -488,16 +488,16 @@ fn render_commit_action_row(
         })
         .when(enabled, |row| {
             row.on_click(move |_, window, cx| {
-                let _ = click_weak.update(cx, |waku, cx| {
-                    waku.request_commit_action(action, window, cx)
+                let _ = click_weak.update(cx, |mack, cx| {
+                    mack.request_commit_action(action, window, cx)
                 });
             })
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
                 if !event.keystroke.modifiers.modified()
                     && matches!(event.keystroke.key.as_str(), "enter" | "space")
                 {
-                    let _ = key_weak.update(cx, |waku, cx| {
-                        waku.request_commit_action(action, window, cx)
+                    let _ = key_weak.update(cx, |mack, cx| {
+                        mack.request_commit_action(action, window, cx)
                     });
                     cx.stop_propagation();
                 }

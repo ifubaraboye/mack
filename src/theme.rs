@@ -34,7 +34,7 @@ fn native_override(preference: ThemePreference) -> Option<bool> {
     }
 }
 
-/// Waku's visual language, take two: neutral graphite surfaces in the spirit
+/// Mack's visual language, take two: neutral graphite surfaces in the spirit
 /// of Cursor — color is reserved for meaning. On macOS the sidebar's semantic
 /// tint is installed as a native layer above Sidebar vibrancy; keeping this
 /// GPUI surface clear avoids incorrectly accumulating the alpha of nested Metal
@@ -64,7 +64,9 @@ pub struct Theme {
     pub text_tertiary: Hsla,
     pub text_ghost: Hsla,
 
-    /// Brand coral. Logo, caret, live-activity pulses — nothing structural.
+    /// Brand monochrome. Logo, caret, live-activity pulses — nothing
+    /// structural. White on dark surfaces, ink on light ones: a single
+    /// white cannot read against both themes.
     pub accent: Hsla,
     pub resize_handle: Hsla,
     /// Meter fills in the usage panel. Quota-meter blue by convention;
@@ -92,8 +94,8 @@ pub struct Theme {
 
 impl Theme {
     pub fn current(cx: &App) -> Self {
-        if cx.has_global::<ActiveWakuTheme>() {
-            cx.global::<ActiveWakuTheme>().0
+        if cx.has_global::<ActiveMackTheme>() {
+            cx.global::<ActiveMackTheme>().0
         } else {
             Self::dark()
         }
@@ -127,12 +129,12 @@ impl Theme {
             text_tertiary: rgb(0x7D7D7D).into(),
             text_ghost: rgb(0x575757).into(),
 
-            accent: rgb(0xE2795B).into(),
+            accent: rgb(0xFFFFFF).into(),
             resize_handle: rgb(0x3B82F6).into(),
             gauge: rgb(0x3B82F6).into(),
 
             selection: hsla(211.0 / 360.0, 1.0, 0.50, 0.55),
-            code_text: rgb(0xE0A882).into(),
+            code_text: rgb(0xE2E2E2).into(),
             code_wash: hsla(220.0 / 360.0, 0.10, 0.90, 0.08),
 
             inverse: rgb(0xE7E9EC).into(),
@@ -174,12 +176,12 @@ impl Theme {
             text_tertiary: rgb(0x858585).into(),
             text_ghost: rgb(0xA4A4A4).into(),
 
-            accent: rgb(0xC85F44).into(),
+            accent: rgb(0x1A1A1A).into(),
             resize_handle: rgb(0x2563EB).into(),
             gauge: rgb(0x2563EB).into(),
 
             selection: hsla(211.0 / 360.0, 1.0, 0.50, 0.35),
-            code_text: rgb(0x9A5528).into(),
+            code_text: rgb(0x242424).into(),
             code_wash: hsla(220.0 / 360.0, 0.10, 0.12, 0.07),
 
             inverse: rgb(0x202227).into(),
@@ -195,14 +197,14 @@ impl Theme {
 }
 
 #[derive(Clone, Copy)]
-struct ActiveWakuTheme(Theme);
+struct ActiveMackTheme(Theme);
 
-impl Global for ActiveWakuTheme {}
+impl Global for ActiveMackTheme {}
 
 /// Publish the resolved palette. [`Theme::current`] reads it back from the
 /// global, which is how every view gets its colors.
 fn set_active_theme(theme: Theme, cx: &mut App) {
-    cx.set_global(ActiveWakuTheme(theme));
+    cx.set_global(ActiveMackTheme(theme));
 }
 
 /// Resolve and publish the startup palette, before any window exists.

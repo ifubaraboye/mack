@@ -72,7 +72,7 @@ impl Driver {
         // Load only an absolute, packaged path, never a library from PATH/cwd.
         let path = path
             .canonicalize()
-            .context("Cua Driver SDK is missing from this Waku build")?;
+            .context("Cua Driver SDK is missing from this Mack build")?;
         unsafe {
             let library = Library::new(&path)
                 .with_context(|| format!("load Cua Driver SDK {}", path.display()))?;
@@ -89,6 +89,10 @@ impl Driver {
             if version_fn(&mut version) != 0 || !compatible(1, 1) {
                 bail!("Cua Driver SDK ABI 1.1 is required");
             }
+            // NOTE: this symbol name belongs to the pinned external Cua SDK
+            // ABI — it must stay `waku_cua_driver_create_v1` even though the
+            // product rebranded to Mack. Renaming it breaks `list-tools`
+            // with an `undefined symbol` loader error.
             let create = *library.get::<unsafe extern "C" fn(
                 bool,
                 *const u8,

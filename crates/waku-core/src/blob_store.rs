@@ -224,7 +224,7 @@ mod tests {
     use std::collections::HashSet;
 
     fn temporary_root() -> PathBuf {
-        std::env::temp_dir().join(format!("waku-blobs-{}", uuid::Uuid::new_v4()))
+        std::env::temp_dir().join(format!("mack-blobs-{}", uuid::Uuid::new_v4()))
     }
 
     fn data_url(mime_type: &str, bytes: &[u8]) -> String {

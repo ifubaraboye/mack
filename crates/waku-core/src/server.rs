@@ -46,13 +46,13 @@ const MAX_CACHED_RESPONSES: usize = 2048;
 /// outcomes such as a hydrated session can be megabytes, and a count-only cap
 /// would let a handful of them pin hundreds of megabytes in the daemon.
 const MAX_CACHED_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
-const NATIVE_CLIENT_HEADER: &str = "x-waku-client";
+const NATIVE_CLIENT_HEADER: &str = "x-mack-client";
 const NATIVE_CLIENT_HEADER_VALUE: &str = "native";
 
 #[derive(Clone, Debug, Default)]
 pub struct ServerOptions {
     /// Browser WebSocket handshakes carry an Origin header. Most native clients
-    /// do not; React Native does and identifies itself with `x-waku-client`.
+    /// do not; React Native does and identifies itself with `x-mack-client`.
     /// An empty set therefore still permits native clients only.
     pub allowed_origins: HashSet<String>,
     /// Only a daemon owned by the desktop process should accept the global
@@ -459,7 +459,7 @@ impl RequestDispatcher {
         let failed_request_id = request.request_id;
         let failed_outgoing = outgoing.clone();
         if let Err(error) = std::thread::Builder::new()
-            .name("waku-daemon-request".into())
+            .name("mack-daemon-request".into())
             .spawn(move || {
                 handle_request(request, outgoing, source_subscriber_id, backend, hub);
             })
@@ -517,7 +517,7 @@ impl RequestDispatcher {
             let hub = self.hub.clone();
             let mailbox_registry = Arc::downgrade(&self.runtime_mailboxes);
             let worker = std::thread::Builder::new()
-                .name(format!("waku-daemon-runtime-{session_id}"))
+                .name(format!("mack-daemon-runtime-{session_id}"))
                 .spawn(move || {
                     run_runtime_mailbox(
                         session_id,
@@ -557,7 +557,7 @@ pub fn serve(
 ) -> anyhow::Result<()> {
     listener
         .set_nonblocking(true)
-        .context("could not configure Waku daemon listener")?;
+        .context("could not configure Mack daemon listener")?;
     let hub = Arc::new(Hub::default());
     let dispatcher = Arc::new(RequestDispatcher::new(backend.clone(), hub.clone()));
     let options = Arc::new(options);
@@ -580,22 +580,22 @@ pub fn serve(
                 let shutdown = shutdown.clone();
                 let options = options.clone();
                 std::thread::Builder::new()
-                    .name("waku-daemon-connection".into())
+                    .name("mack-daemon-connection".into())
                     .spawn(move || {
                         let _connection_permit = connection_permit;
                         if let Err(error) =
                             handle_connection(stream, &token, dispatcher, hub, shutdown, &options)
                         {
-                            eprintln!("waku-daemon connection ended: {error:#}");
+                            eprintln!("mack-daemon connection ended: {error:#}");
                         }
                     })
-                    .context("could not start Waku daemon connection thread")?;
+                    .context("could not start Mack daemon connection thread")?;
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 std::thread::sleep(ACCEPT_POLL_INTERVAL);
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(error).context("Waku daemon listener failed"),
+            Err(error) => return Err(error).context("Mack daemon listener failed"),
         }
     }
     backend.shutdown();
@@ -714,7 +714,7 @@ fn handle_connection(
                 }
                 Ok(ClientMessage::Hello { .. }) => {}
                 Err(error) => {
-                    eprintln!("waku-daemon ignored invalid message: {error}");
+                    eprintln!("mack-daemon ignored invalid message: {error}");
                 }
             },
             Ok(Message::Close(_)) => break,
@@ -724,7 +724,7 @@ fn handle_connection(
             Ok(_) => {}
             Err(tungstenite::Error::Io(error)) if retryable_io(&error) => {}
             Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => break,
-            Err(error) => return Err(error).context("Waku daemon WebSocket failed"),
+            Err(error) => return Err(error).context("Mack daemon WebSocket failed"),
         }
     }
     hub.unsubscribe(subscriber_id);
@@ -1153,7 +1153,7 @@ mod tests {
                     projects: Vec::new(),
                     sessions: self.sessions.lock().clone(),
                     default_cwd: PathBuf::from("/tmp"),
-                    projectless_root: Some(PathBuf::from("/tmp/.waku/projects")),
+                    projectless_root: Some(PathBuf::from("/tmp/.mack/projects")),
                 }),
                 _ => Ok(ResponsePayload::Ack),
             }
@@ -1296,7 +1296,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn stale_projection_cannot_resurrect_a_removed_session() {
-        let root = std::env::temp_dir().join(format!("waku-remove-race-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("mack-remove-race-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let backend = WakuBackend::new(
             DaemonSettingsStore::open(root.join("settings.json")).unwrap(),
@@ -1645,7 +1645,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn dropping_an_idle_terminal_does_not_wait_for_output() {
-        let root = std::env::temp_dir().join(format!("waku-terminal-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("mack-terminal-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let hub = Arc::new(Hub::default());
         let terminal = crate::terminal::DaemonTerminal::open_with_shell(
@@ -1690,7 +1690,7 @@ mod tests {
 
     #[cfg(unix)]
     fn websocket_terminal_round_trip(ignore_hangup: bool) {
-        let root = std::env::temp_dir().join(format!("waku-terminal-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("mack-terminal-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let backend = WakuBackend::new(
             DaemonSettingsStore::open(root.join("settings.json")).unwrap(),
@@ -1750,14 +1750,14 @@ mod tests {
                 terminal_id,
                 terminal_id,
                 Command::WriteTerminal {
-                    data: b"waku-terminal-round-trip\r".to_vec(),
+                    data: b"mack-terminal-round-trip\r".to_vec(),
                 },
             )
             .unwrap();
 
         // The response prefix is absent from the input, so a PTY echo cannot
         // satisfy this assertion before the child has actually read it.
-        terminal_output_until(&events, b"received:waku-terminal-round-trip");
+        terminal_output_until(&events, b"received:mack-terminal-round-trip");
 
         let (closed, finished) = bounded(1);
         let closing_client = client.clone();
@@ -1844,7 +1844,7 @@ mod tests {
     fn browser_origins_are_denied_unless_explicitly_allowed() {
         let request = HandshakeRequest::builder()
             .uri("/v1")
-            .header(ORIGIN, "https://app.waku.test")
+            .header(ORIGIN, "https://app.mack.test")
             .body(())
             .unwrap();
         let response = HandshakeResponse::new(());
@@ -1855,7 +1855,7 @@ mod tests {
             StatusCode::FORBIDDEN
         );
 
-        let allowed = HashSet::from(["https://app.waku.test".to_owned()]);
+        let allowed = HashSet::from(["https://app.mack.test".to_owned()]);
         assert!(validate_handshake(&request, HandshakeResponse::new(()), &allowed).is_ok());
         let native = HandshakeRequest::builder().uri("/v1").body(()).unwrap();
         assert!(validate_handshake(&native, HandshakeResponse::new(()), &HashSet::new()).is_ok());

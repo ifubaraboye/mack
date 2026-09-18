@@ -104,7 +104,7 @@ fn dispatch(driver: &sdk::Driver, request: &Value, cancelled: &impl Fn() -> bool
     match request.get("method").and_then(Value::as_str) {
         Some("initialize") => Ok(json!({
             "protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
-            "serverInfo": {"name": "Waku Cua Driver", "version": "0.28.0"}
+            "serverInfo": {"name": "Mack Cua Driver", "version": "0.28.0"}
         })),
         Some("tools/list") => driver.list_tools(),
         Some("tools/call") => {
@@ -137,7 +137,7 @@ struct Registration {
 
 impl Registration {
     fn new() -> Result<Self> {
-        let directory = std::env::var_os("WAKU_COMPUTER_USE_PROCESS_DIRECTORY").map(PathBuf::from);
+        let directory = std::env::var_os("MACK_COMPUTER_USE_PROCESS_DIRECTORY").map(PathBuf::from);
         let registration = Self {
             directory,
             pid: std::process::id(),
@@ -229,6 +229,6 @@ mod tests {
 
     #[test]
     fn missing_sdk_fails_without_searching_the_environment() {
-        assert!(sdk::Driver::load(Path::new("/nonexistent/waku-cua-sdk"), false).is_err());
+        assert!(sdk::Driver::load(Path::new("/nonexistent/mack-cua-sdk"), false).is_err());
     }
 }

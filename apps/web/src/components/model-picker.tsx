@@ -1,7 +1,7 @@
 import type { AgentSession, ProviderKind, ProviderModel, ProviderProbe } from '@waku/client'
 import { Popover } from '@base-ui/react/popover'
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { ProviderIcon, PROVIDERS, providerMeta, WakuIcon } from '@/components/waku-icon'
+import { ProviderIcon, PROVIDERS, providerMeta, MackIcon } from '@/components/mack-icon'
 import { useDaemonSettings, useProviderProbes } from '@/hooks/use-daemon-data'
 import { useI18n } from '@/lib/i18n'
 import {
@@ -156,7 +156,7 @@ export function ModelPicker({
           >
           <div className="flex h-full w-[50px] shrink-0 flex-col items-center gap-1 overflow-y-auto border-r bg-background p-[5px]">
             <ModelTab active={tab === 'favorites' && !query} label={t('models.favorites')} onClick={() => { setTab('favorites'); setQuery(''); setHighlight(null) }}>
-              <WakuIcon className="size-[17px]" name="star" />
+              <MackIcon className="size-[17px]" name="star" />
             </ModelTab>
             <div className="my-[3px] h-px w-[34px] shrink-0 bg-border" />
             {PROVIDERS.map((provider) => {
@@ -177,7 +177,7 @@ export function ModelPicker({
           <div className="flex min-w-0 flex-1 flex-col bg-card">
             <div className="h-[52px] shrink-0 px-3 pb-2 pt-2.5">
               <label className="flex h-[34px] items-center gap-2 rounded-[9px] bg-[var(--raised)] px-2.5">
-                <WakuIcon className="size-[15px] text-[var(--text-secondary)]" name="search" />
+                <MackIcon className="size-[15px] text-[var(--text-secondary)]" name="search" />
                 <input
                   aria-activedescendant={highlight !== null && rows[highlight]
                     ? `model-${rows[highlight]!.provider}-${rows[highlight]!.model.id}`
@@ -271,7 +271,7 @@ export function ModelPicker({
                         }
                       }}
                     >
-                      <WakuIcon className={cn('size-3.5 text-[var(--text-ghost)]', favorite && 'text-amber-500')} name={favorite ? 'starFilled' : 'star'} />
+                      <MackIcon className={cn('size-3.5 text-[var(--text-ghost)]', favorite && 'text-amber-500')} name={favorite ? 'starFilled' : 'star'} />
                     </span>
                   </div>
                 )

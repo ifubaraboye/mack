@@ -19,11 +19,13 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::usage_history::TokenTotals;
+
 // ---------------------------------------------------------------------------
 // Constants (mirror `packages/core/src/constants.ts`)
 // ---------------------------------------------------------------------------
 
-/// Public OAuth client id used by the Codex CLI. Reused — not Waku's own.
+/// Public OAuth client id used by the Codex CLI. Reused — not Mack's own.
 pub const DEFAULT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 /// OAuth issuer / authorization server origin.
 pub const DEFAULT_ISSUER: &str = "https://auth.openai.com";
@@ -142,7 +144,7 @@ pub fn extract_error_code(body: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 /// Overridable endpoints and client identifiers. Mirrors `ChatGPTConfig` +
-/// `resolveConfig`: every default below tracks the SDK so Waku keeps working
+/// `resolveConfig`: every default below tracks the SDK so Mack keeps working
 /// if OpenAI moves an endpoint — override the field instead of forking code.
 #[derive(Clone, Debug)]
 pub struct DeviceAuthConfig {
@@ -1153,6 +1155,57 @@ pub fn completed_output_items(completed: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// Token usage of a `response.completed` payload, in the same [`TokenTotals`]
+/// split the transcript scanner uses. The backend reports `input_tokens`
+/// inclusive of the cached portion, so the uncached share is derived exactly
+/// like [`crate::usage_history`] does for Codex `last_token_usage` lines.
+/// Either the nested `response.usage` or a top-level `usage` object carries
+/// the counts; a payload with neither reports zero.
+pub fn completed_token_usage(completed: &Value) -> TokenTotals {
+    let usage = completed
+        .get("response")
+        .and_then(|response| response.get("usage"))
+        .or_else(|| completed.get("usage"));
+    let Some(usage) = usage.and_then(Value::as_object) else {
+        return TokenTotals::default();
+    };
+    let input = usage_int(usage.get("input_tokens"));
+    let cached_input = usage
+        .get("input_tokens_details")
+        .and_then(Value::as_object)
+        .map(|details| usage_int(details.get("cached_tokens")))
+        .unwrap_or(0);
+    let output = usage_int(usage.get("output_tokens"));
+    let reasoning = usage
+        .get("output_tokens_details")
+        .and_then(Value::as_object)
+        .map(|details| usage_int(details.get("reasoning_tokens")).min(output))
+        .unwrap_or(0);
+    TokenTotals {
+        // The Responses API has no cache-creation counter; only Anthropic
+        // reports prompt-cache writes as their own bucket.
+        uncached_input: input.saturating_sub(cached_input),
+        cached_input,
+        cache_creation: 0,
+        output,
+        reasoning,
+    }
+}
+
+/// Reads a token count the way the transcript scanner does: finite positive
+/// numbers truncate, everything else (missing, negative, non-numeric) is zero.
+fn usage_int(value: Option<&Value>) -> u64 {
+    value
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            value
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .map(|value| value.trunc() as u64)
+        })
+        .unwrap_or(0)
+}
+
 /// Mirrors the upstream proxy's service-tier fallback trigger: when the
 /// request carried `service_tier: "fast"` and the rejection names an
 /// unsupported tier, retry once with the field removed.
@@ -1657,6 +1710,45 @@ mod tests {
         assert_eq!(
             events,
             vec![ResponsesStreamEvent::TextDelta("lo".to_owned())]
+        );
+    }
+
+    #[test]
+    fn completed_usage_splits_inclusive_input_like_the_scanner() {
+        let completed = json!({
+            "type": "response.completed",
+            "response": {
+                "output": [],
+                "usage": {
+                    "input_tokens": 1000,
+                    "input_tokens_details": {"cached_tokens": 800},
+                    "output_tokens": 200,
+                    "output_tokens_details": {"reasoning_tokens": 30},
+                },
+            },
+        });
+        assert_eq!(
+            completed_token_usage(&completed),
+            TokenTotals {
+                uncached_input: 200,
+                cached_input: 800,
+                cache_creation: 0,
+                output: 200,
+                reasoning: 30,
+            }
+        );
+        // A top-level usage object (non-nested payloads) reads the same way,
+        // and a payload with no usage at all reports zero.
+        let top_level = json!({
+            "type": "response.completed",
+            "usage": {"input_tokens": 50, "output_tokens": 10},
+        });
+        let usage = completed_token_usage(&top_level);
+        assert_eq!(usage.uncached_input, 50);
+        assert_eq!(usage.output, 10);
+        assert_eq!(
+            completed_token_usage(&json!({"type": "response.completed"})),
+            TokenTotals::default()
         );
     }
 

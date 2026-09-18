@@ -49,6 +49,7 @@ use crate::memory;
 use crate::model::CLAUDE_HISTORY_SEED_LIMIT;
 use crate::model::{ClaudeHistoryRole, ClaudeHistorySeed, DriverEvent, ProviderResumeCursor};
 use crate::persistence::StateStore;
+use crate::usage_history::TokenTotals;
 
 /// Total curl wall-clock budget per turn attempt. Streaming turns run for
 /// minutes; unary auth calls keep their own 20s budget elsewhere.
@@ -175,13 +176,13 @@ impl MessagesStreamTransport for CurlStreamTransport {
 }
 
 /// Writes the JSON request body to an owner-only temp file. The body holds
-/// the user's prompt (already stored in Waku's own session) but no
+/// the user's prompt (already stored in Mack's own session) but no
 /// credentials; stdin is claimed by the `-K -` header config, so the body
 /// cannot travel there too.
 fn write_body_file(body: &str) -> Result<std::path::PathBuf, ClaudeError> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
-        "waku-claude-msg-{}-{}.json",
+        "mack-claude-msg-{}-{}.json",
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::SeqCst)
     ));
@@ -450,7 +451,7 @@ impl ClaudeDriver {
         }));
         let (commands, incoming) = unbounded();
         // Restart resume: rebuild the resend-history a live worker would
-        // have carried from the persisted Waku transcript seed. Post-seed
+        // have carried from the persisted Mack transcript seed. Post-seed
         // behavior is identical to a worker that had remained alive — the
         // next prompt still appends exactly once via `execute_turn`.
         let (history, turn_starts) =
@@ -470,7 +471,7 @@ impl ClaudeDriver {
         };
         worker.enforce_history_cap();
         std::thread::Builder::new()
-            .name("waku-claude-driver".into())
+            .name("mack-claude-driver".into())
             .spawn(move || worker.run(incoming))
             .map_err(|error| anyhow::anyhow!("could not start the Claude driver: {error}"))?;
         Ok(Self {
@@ -725,7 +726,7 @@ impl Worker {
         let user_text = self.last_turn_user.clone();
         let assistant_text = self.last_turn_assistant.clone();
         let _ = std::thread::Builder::new()
-            .name("waku-memory-extraction".into())
+            .name("mack-memory-extraction".into())
             .spawn(move || {
                 run_memory_extraction(
                     transport.as_ref(),
@@ -801,11 +802,14 @@ impl Worker {
                 }
             };
             match self.post_once(&auth, &body, turn_generation) {
-                PostOutcome::Done { text } => {
+                PostOutcome::Done { text, usage } => {
                     self.commit_history(user_message.clone(), text.clone());
                     self.last_turn_user = prompt.to_owned();
                     self.last_turn_assistant = text;
                     self.last_turn_account = account_id.clone().unwrap_or_default();
+                    // Cumulative turn usage, before the turn settles so the
+                    // app records it even if the finish races a shutdown.
+                    self.emit(DriverEvent::TurnUsage { totals: usage });
                     return TurnEnd::Completed;
                 }
                 PostOutcome::Interrupted => {
@@ -911,7 +915,7 @@ impl Worker {
                             MessagesStreamEvent::ReasoningDelta(delta) => {
                                 self.emit(DriverEvent::ReasoningDelta(delta));
                             }
-                            MessagesStreamEvent::Completed { stop_reason } => {
+                            MessagesStreamEvent::Completed { stop_reason, usage } => {
                                 match stop_reason.as_deref() {
                                     // Ran out of output budget: report the
                                     // partial text as truncated, not done.
@@ -921,6 +925,7 @@ impl Worker {
                                     _ => {
                                         return PostOutcome::Done {
                                             text: std::mem::take(&mut text),
+                                            usage,
                                         };
                                     }
                                 }
@@ -1013,7 +1018,7 @@ impl Worker {
 /// streaming-collect loop) but never emits events and never touches history,
 /// caps, seeds, or the transcript — extraction is invisible by design.
 ///
-/// `source_session_id` is `None`: the worker never learns the Waku session
+/// `source_session_id` is `None`: the worker never learns the Mack session
 /// id (`DriverStartOptions` carries none, and widening the wire protocol is
 /// out of scope), so provenance waits for a later phase.
 #[allow(clippy::too_many_arguments)]
@@ -1115,7 +1120,7 @@ enum TurnEnd {
 }
 
 enum PostOutcome {
-    Done { text: String },
+    Done { text: String, usage: TokenTotals },
     Interrupted,
     Fatal(String),
     RetryAuth,

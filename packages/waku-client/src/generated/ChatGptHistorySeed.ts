@@ -2,7 +2,7 @@
 import type { ChatGptHistoryRole } from "./ChatGptHistoryRole";
 
 /**
- * One persisted Waku transcript message in ChatGPT-driver shape. Built
+ * One persisted Mack transcript message in ChatGPT-driver shape. Built
  * client-side from the hydrated `AgentSession.messages` when a ChatGPT
  * worker starts, so a restarted worker resends the same conversation a
  * live worker would have carried in memory. Scoped to a single

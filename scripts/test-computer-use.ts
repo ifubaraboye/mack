@@ -1,5 +1,5 @@
 // Protocol/SDK smoke test. No app discovery, screenshots, input, or TCC prompts.
-// Usage: bun scripts/test-computer-use.ts <waku_js_repl> <computer-use-helper>
+// Usage: bun scripts/test-computer-use.ts <mack_js_repl> <computer-use-helper>
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -10,8 +10,8 @@ import { createInterface } from "node:readline";
 const suffix = process.platform === "win32" ? ".exe" : "";
 const expectCursor = process.argv.includes("--expect-cursor");
 const [
-  repl = `target/debug/waku_js_repl${suffix}`,
-  helper = `target/debug/waku_computer_use${suffix}`,
+  repl = `target/debug/mack_js_repl${suffix}`,
+  helper = `target/debug/mack_computer_use${suffix}`,
 ] = process.argv.slice(2).filter((argument) => argument !== "--expect-cursor");
 assert(repl && helper, "Pass the REPL executable and native helper executable");
 const nativeTools: string[] = JSON.parse(
@@ -23,12 +23,12 @@ const nativeTools: string[] = JSON.parse(
 )
   .tools.map((tool: { name: string }) => tool.name)
   .filter((name: string) => name !== "bring_to_front");
-const directory = await mkdtemp(join(tmpdir(), "waku-cua-test-"));
+const directory = await mkdtemp(join(tmpdir(), "mack-cua-test-"));
 const child = spawn(resolve(repl), [], {
   env: {
     ...process.env,
-    WAKU_COMPUTER_USE_SERVER: resolve(helper),
-    WAKU_COMPUTER_USE_PROCESS_DIRECTORY: directory,
+    MACK_COMPUTER_USE_SERVER: resolve(helper),
+    MACK_COMPUTER_USE_PROCESS_DIRECTORY: directory,
   },
   stdio: ["pipe", "pipe", "pipe"],
   windowsHide: true,
@@ -88,7 +88,7 @@ try {
   await request("initialize", {
     protocolVersion: "2025-06-18",
     capabilities: {},
-    clientInfo: { name: "waku-cua-test", version: "1" },
+    clientInfo: { name: "mack-cua-test", version: "1" },
   });
   const initial = await js("jsRepl.write(typeof cua)");
   assert.equal(initial.content[0].text, "undefined");
@@ -104,9 +104,9 @@ try {
     var hasBringToFront = "bring_to_front" in cua;
     var cursor = null;
     if (${expectCursor}) {
-      await cua.start_session({ session: "waku-cursor-smoke" });
-      cursor = await cua.get_agent_cursor_state({ session: "waku-cursor-smoke" });
-      await cua.end_session({ session: "waku-cursor-smoke" });
+      await cua.start_session({ session: "mack-cursor-smoke" });
+      cursor = await cua.get_agent_cursor_state({ session: "mack-cursor-smoke" });
+      await cua.end_session({ session: "mack-cursor-smoke" });
     }
     var savedGetConfig = cua.get_config;
     var nextConfig = await savedGetConfig({});

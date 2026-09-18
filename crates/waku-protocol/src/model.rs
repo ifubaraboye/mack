@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
+use crate::usage_history::TokenTotals;
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum ProviderKind {
@@ -138,7 +140,7 @@ pub enum ChatGptHistoryRole {
     Assistant,
 }
 
-/// One persisted Waku transcript message in ChatGPT-driver shape. Built
+/// One persisted Mack transcript message in ChatGPT-driver shape. Built
 /// client-side from the hydrated `AgentSession.messages` when a ChatGPT
 /// worker starts, so a restarted worker resends the same conversation a
 /// live worker would have carried in memory. Scoped to a single
@@ -211,7 +213,7 @@ pub enum ClaudeHistoryRole {
     Assistant,
 }
 
-/// One persisted Waku transcript message in Claude-driver shape. Built
+/// One persisted Mack transcript message in Claude-driver shape. Built
 /// client-side from the hydrated `AgentSession.messages` when a Claude
 /// worker starts, so a restarted worker resends the same conversation a
 /// live worker would have carried in memory. Scoped to a single
@@ -607,7 +609,7 @@ impl ChatGroup {
 
 /// Filesystem context a task runs in.
 ///
-/// Drafts may carry [`Self::NewWorktree`] until their first prompt. Waku then
+/// Drafts may carry [`Self::NewWorktree`] until their first prompt. Mack then
 /// creates the Git worktree and replaces it with [`Self::Worktree`] before any
 /// checkpoint or provider process can observe the task.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize, TS)]
@@ -713,7 +715,7 @@ impl SessionStatus {
 pub struct QueuedMessage {
     pub id: Uuid,
     pub content: String,
-    /// The text typed before Waku appended provider-facing attachment
+    /// The text typed before Mack appended provider-facing attachment
     /// mentions. `None` is the legacy/plain-message representation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_content: Option<String>,
@@ -815,6 +817,12 @@ pub struct AgentTurn {
     pub completed_at: Option<u64>,
     #[serde(default)]
     pub checkpoint: Option<Checkpoint>,
+    /// Token usage for this turn, captured live from the provider stream.
+    /// Stamped by [`AgentSession::apply_turn_usage`]; a turn that already
+    /// carries usage ignores a replayed `TurnUsage` event, so reconnects and
+    /// late-attaching clients can never double-count a turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<TokenTotals>,
 }
 
 /// How full the provider's context window is, from the latest main-thread
@@ -873,7 +881,7 @@ impl ProviderSessionSummary {
 }
 
 /// The displayable portion of a provider-native conversation imported into a
-/// Waku task. Provider history remains authoritative; unsupported native
+/// Mack task. Provider history remains authoritative; unsupported native
 /// items such as private reasoning or provider-only control records are
 /// intentionally absent.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
@@ -1009,6 +1017,14 @@ pub struct AgentSession {
     /// session's meter starts where the conversation left off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_usage: Option<ContextUsage>,
+    /// Cumulative token usage for turns executed inside Mack, captured live
+    /// from each provider stream (`DriverEvent::TurnUsage`). Stored as list
+    /// columns so lifetime totals never need to deserialize a transcript.
+    #[serde(default)]
+    pub usage_totals: TokenTotals,
+    /// How many successful Mack-driven turns contributed to `usage_totals`.
+    #[serde(default)]
+    pub usage_turns: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_event_cursor: Option<RuntimeEventCursor>,
     /// Read-only compatibility field for v1 state files. New saves omit it.
@@ -1073,6 +1089,8 @@ impl AgentSession {
             available_commands: Vec::new(),
             thread_goal: None,
             context_usage: None,
+            usage_totals: TokenTotals::default(),
+            usage_turns: 0,
             runtime_event_cursor: None,
             provider_session_id: None,
             fork_metadata: None,
@@ -1111,6 +1129,10 @@ impl AgentSession {
             available_commands: Vec::new(),
             thread_goal: None,
             context_usage: None,
+            // Lifetime totals are list-level data: projections must carry
+            // them so the Usage tab never hydrates a transcript to sum them.
+            usage_totals: self.usage_totals,
+            usage_turns: self.usage_turns,
             runtime_event_cursor: None,
             provider_session_id: None,
             fork_metadata: None,
@@ -1343,6 +1365,7 @@ impl AgentSession {
                 started_at,
                 completed_at: Some(completed_at),
                 checkpoint: None,
+                token_usage: None,
             });
         }
     }
@@ -1369,6 +1392,7 @@ impl AgentSession {
             started_at: now,
             completed_at: None,
             checkpoint: None,
+            token_usage: None,
         });
         self.messages.push(
             Message::new_for_turn(MessageRole::User, prompt, id)
@@ -1396,6 +1420,7 @@ impl AgentSession {
             started_at: now,
             completed_at: None,
             checkpoint: None,
+            token_usage: None,
         });
         self.last_reply_at = Some(now);
         self.updated_at = now;
@@ -1443,6 +1468,7 @@ impl AgentSession {
             started_at: now,
             completed_at: None,
             checkpoint: None,
+            token_usage: None,
         });
         let mut prompt = Message::new_for_turn(MessageRole::User, message, turn_id);
         prompt.id = message_id;
@@ -1476,6 +1502,31 @@ impl AgentSession {
             .last()
             .filter(|turn| turn.status == TurnStatus::Running)
             .map(|turn| turn.id)
+    }
+
+    /// Folds one successful turn's token usage into the session's lifetime
+    /// counters, stamping the active turn so a replayed event applies at
+    /// most once. Reconnects and late-attaching clients replay the daemon's
+    /// journal — including `TurnUsage` for turns that already settled — so
+    /// without the stamp those clients would double-count every replayed
+    /// turn. Returns whether the totals were applied.
+    pub fn apply_turn_usage(&mut self, totals: &TokenTotals) -> bool {
+        let Some(turn_id) = self.active_turn_id() else {
+            // No running turn: a replayed event for an already-settled turn,
+            // or usage that arrived after the turn drained. The persisted
+            // totals already include it.
+            return false;
+        };
+        let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) else {
+            return false;
+        };
+        if turn.token_usage.is_some() {
+            return false;
+        }
+        turn.token_usage = Some(*totals);
+        self.usage_totals.add(totals);
+        self.usage_turns += 1;
+        true
     }
 
     /// Undo [`Self::begin_turn`] for a turn whose provider never started —
@@ -1964,7 +2015,7 @@ pub enum DriverEvent {
         provider_cursor: Option<ProviderResumeCursor>,
     },
     /// The provider-owned agent composition this session actually runs. A
-    /// fresh Harness session may resolve its deployment default when Waku did
+    /// fresh Harness session may resolve its deployment default when Mack did
     /// not name one explicitly, so the driver reports the resolved value.
     AgentPresetSelected(Option<String>),
     /// A provider-owned, automatically generated session title. `None`
@@ -2035,6 +2086,14 @@ pub enum DriverEvent {
     UsageUpdated {
         context_tokens: Option<u64>,
         context_window: Option<u64>,
+    },
+    /// Cumulative token usage for one successful Mack-driven turn, captured
+    /// live from the provider stream. The app adds it to the session's
+    /// `usage_totals` (and bumps `usage_turns`); the daemon forwards it
+    /// untouched. Emitted before `TurnFinished`, only on success — failed or
+    /// interrupted turns report no usage.
+    TurnUsage {
+        totals: TokenTotals,
     },
     /// Account-level rate-limit meters carried by the provider's own stream
     /// (Codex's `account/rateLimits/updated`). Same shape the OAuth fetcher
@@ -3634,6 +3693,42 @@ pub fn compact_path(path: &Path) -> String {
 mod tests {
     use super::*;
 
+    use crate::usage_history::TokenTotals;
+
+    #[test]
+    fn turn_usage_applies_once_and_survives_replays() {
+        let mut session = AgentSession::new(Uuid::new_v4(), ProviderKind::ChatGpt);
+        let totals = TokenTotals {
+            uncached_input: 100,
+            cached_input: 800,
+            cache_creation: 50,
+            output: 200,
+            reasoning: 30,
+        };
+        // No running turn: a replayed event for a settled turn applies
+        // nothing.
+        assert!(!session.apply_turn_usage(&totals));
+
+        session.begin_turn("Ask");
+        assert!(session.apply_turn_usage(&totals));
+        assert_eq!(session.usage_totals, totals);
+        assert_eq!(session.usage_turns, 1);
+        // The daemon journal replays the same event to reconnecting and
+        // late-attaching clients; the stamp absorbs it.
+        assert!(!session.apply_turn_usage(&totals));
+        assert_eq!(session.usage_totals, totals);
+        assert_eq!(session.usage_turns, 1);
+
+        session.finish_active_turn(TurnStatus::Completed);
+        assert!(!session.apply_turn_usage(&totals));
+
+        // A fresh turn counts again.
+        session.begin_turn("Again");
+        assert!(session.apply_turn_usage(&totals));
+        assert_eq!(session.usage_turns, 2);
+        assert_eq!(session.usage_totals.uncached_input, 200);
+    }
+
     #[test]
     fn chat_group_membership_defaults_to_ungrouped_and_survives_old_files() {
         let group = ChatGroup::new("Research".to_owned());
@@ -3683,7 +3778,7 @@ mod tests {
 
     #[test]
     fn attachment_messages_keep_transport_and_visible_content_separate() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         let attachment = MessageAttachment {
             path: PathBuf::from("/tmp/reference.png"),
@@ -3788,8 +3883,8 @@ mod tests {
         let cases = [
             (
                 ActivityKind::FileRead,
-                serde_json::json!({"input": {"file_path": "/tmp/waku/src/app.rs"}}),
-                "/tmp/waku/src/app.rs",
+                serde_json::json!({"input": {"file_path": "/tmp/mack/src/app.rs"}}),
+                "/tmp/mack/src/app.rs",
             ),
             (
                 ActivityKind::FileSearch,
@@ -3798,8 +3893,8 @@ mod tests {
             ),
             (
                 ActivityKind::FileList,
-                serde_json::json!({"arguments": {"directory": "/tmp/waku/src"}}),
-                "/tmp/waku/src",
+                serde_json::json!({"arguments": {"directory": "/tmp/mack/src"}}),
+                "/tmp/mack/src",
             ),
             (
                 ActivityKind::Command,
@@ -3808,13 +3903,13 @@ mod tests {
             ),
             (
                 ActivityKind::Search,
-                serde_json::json!({"action": {"queries": ["Waku GPUI"]}}),
-                "Waku GPUI",
+                serde_json::json!({"action": {"queries": ["Mack GPUI"]}}),
+                "Mack GPUI",
             ),
             (
                 ActivityKind::FileRead,
-                serde_json::json!("/tmp/waku/README.md"),
-                "/tmp/waku/README.md",
+                serde_json::json!("/tmp/mack/README.md"),
+                "/tmp/mack/README.md",
             ),
         ];
 
@@ -4198,11 +4293,11 @@ mod tests {
     #[test]
     fn projectless_projects_use_projects_root_and_recognize_legacy_paths() {
         let home = dirs::home_dir().expect("test user has a home directory");
-        let root = home.join(".waku");
+        let root = home.join(".mack");
         let legacy = Project::from_path(root.clone());
         let legacy_dated = Project::from_path(root.join("2026-08-08/new-chat"));
         let project = Project::from_path(root.join("projects/2026-08-08/new-chat"));
-        let ordinary = Project::from_path(home.join("dev/waku"));
+        let ordinary = Project::from_path(home.join("dev/mack"));
 
         assert!(legacy.is_projectless());
         assert!(legacy_dated.is_projectless());
@@ -4212,7 +4307,7 @@ mod tests {
 
     #[test]
     fn prompt_generates_a_short_session_title() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.set_title_from_prompt("build a really polished local agent interface for rust");
         assert_eq!(
@@ -4228,7 +4323,7 @@ mod tests {
 
     #[test]
     fn provider_title_replaces_prompt_fallback_but_not_an_explicit_title() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.set_title_from_prompt("investigate the broken provider event");
 
@@ -4247,7 +4342,7 @@ mod tests {
         // ChatGPT is the only provider, so model selection is about session
         // state, not provider identity: an unstarted session and a started
         // idle session may choose a model, a busy one may not.
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
         assert!(session.can_choose_model(ProviderKind::ChatGpt));
@@ -4261,7 +4356,7 @@ mod tests {
 
     #[test]
     fn model_selection_waits_for_the_active_turn_to_finish() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.push_message(MessageRole::User, "first turn");
 
@@ -4349,7 +4444,7 @@ mod tests {
 
     #[test]
     fn prompt_title_truncation_is_unicode_safe() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         let prompt = "界".repeat(70);
         session.set_title_from_prompt(&prompt);
@@ -4360,7 +4455,7 @@ mod tests {
 
     #[test]
     fn a_failed_preparation_unwinds_the_turn_it_eagerly_began() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
         // A first prompt: the unwind restores the default title because the
@@ -4399,7 +4494,7 @@ mod tests {
 
     #[test]
     fn turn_truncation_removes_owned_messages_and_blocks() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
         let first_turn = session.begin_turn("first");
@@ -4438,7 +4533,7 @@ mod tests {
 
     #[test]
     fn response_fork_is_a_distinct_idle_session_through_the_selected_turn() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
         let first_turn = session.begin_turn("first");
@@ -4479,7 +4574,7 @@ mod tests {
 
     #[test]
     fn queued_follow_ups_stay_with_the_source_session_not_the_fork() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
         session.begin_turn("first");
@@ -4504,7 +4599,7 @@ mod tests {
     }
 
     fn selection_fork_fixture() -> (AgentSession, Vec<Uuid>) {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         let mut ids = Vec::new();
         session.begin_turn("Teach me linear regression.");
@@ -4644,7 +4739,7 @@ mod tests {
 
     #[test]
     fn selection_fork_preserves_attachments() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.begin_turn("Explain this file.");
         session.push_user_message_with_presentation(
@@ -4786,7 +4881,7 @@ mod tests {
 
     #[test]
     fn follow_up_queue_round_trips_through_serde() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session
             .queued_messages
@@ -4828,7 +4923,7 @@ mod tests {
 
     #[test]
     fn busy_statuses_cover_connecting_working_and_waiting() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         for status in [
             SessionStatus::Connecting,
@@ -4863,7 +4958,7 @@ mod tests {
 
     #[test]
     fn native_rollback_count_ignores_turns_that_never_reached_the_provider() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
 
         session.begin_turn("first");
@@ -4882,7 +4977,7 @@ mod tests {
 
     #[test]
     fn legacy_empty_search_titles_are_repaired() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.transcript_blocks.push(TranscriptBlock {
             after_message: 0,
@@ -4940,7 +5035,7 @@ mod tests {
 
     #[test]
     fn adjacent_legacy_work_blocks_merge_during_session_migration() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.transcript_blocks.extend([
             TranscriptBlock {
@@ -4984,7 +5079,7 @@ mod tests {
 
     #[test]
     fn legacy_file_edit_details_are_promoted_to_arguments_and_metadata() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.transcript_blocks.push(TranscriptBlock {
             after_message: 0,
@@ -4995,7 +5090,7 @@ mod tests {
                 "edit",
                 Some(
                     serde_json::json!({
-                        "filePath": "/tmp/waku/README.md",
+                        "filePath": "/tmp/mack/README.md",
                         "oldString": "old",
                         "newString": "new\nmore"
                     })
@@ -5010,17 +5105,17 @@ mod tests {
         let activities = &session.transcript_blocks[0].activities;
         assert!(activities[0].detail.is_none());
         assert!(activities[0].arguments.is_some());
-        assert_eq!(activities[0].file_changes[0].path, "/tmp/waku/README.md");
+        assert_eq!(activities[0].file_changes[0].path, "/tmp/mack/README.md");
         assert_eq!(activities[0].file_changes[0].additions, Some(2));
         assert_eq!(activities[0].file_changes[0].deletions, Some(1));
     }
 
     #[test]
     fn legacy_file_tools_are_reclassified_and_gain_cached_targets() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         let mut cached = ActivityItem::new(None, ActivityKind::FileRead, "read", None, true);
-        cached.display_target = Some("/tmp/waku/src/persisted.rs".into());
+        cached.display_target = Some("/tmp/mack/src/persisted.rs".into());
         session.transcript_blocks.push(TranscriptBlock {
             after_message: 0,
             turn_id: None,
@@ -5029,7 +5124,7 @@ mod tests {
                     None,
                     ActivityKind::Search,
                     "read",
-                    Some(r#"{"filePath":"/tmp/waku/src/model.rs"}"#.into()),
+                    Some(r#"{"filePath":"/tmp/mack/src/model.rs"}"#.into()),
                     true,
                 ),
                 ActivityItem::new(
@@ -5049,13 +5144,13 @@ mod tests {
         assert_eq!(activities[0].kind, ActivityKind::FileRead);
         assert_eq!(
             activities[0].display_target.as_deref(),
-            Some("/tmp/waku/src/model.rs")
+            Some("/tmp/mack/src/model.rs")
         );
         assert_eq!(activities[1].kind, ActivityKind::FileSearch);
         assert_eq!(activities[1].display_target.as_deref(), Some("src/**/*.rs"));
         assert_eq!(
             activities[2].display_target.as_deref(),
-            Some("/tmp/waku/src/persisted.rs")
+            Some("/tmp/mack/src/persisted.rs")
         );
         assert!(
             activities[..2]
@@ -5074,7 +5169,7 @@ mod tests {
         // The legacy citation markers belonged to a removed provider's
         // transcript shape. ChatGPT transcripts carry no such markers, so
         // migration must leave assistant content byte-for-byte intact.
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session
             .messages
@@ -5087,13 +5182,13 @@ mod tests {
 
     #[test]
     fn legacy_checkpoint_totals_are_backfilled_from_the_file_summary() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.begin_turn("Build it");
         session.finish_active_turn(TurnStatus::Completed);
         let mut serialized = serde_json::to_value(Checkpoint {
             turn_count: 1,
-            git_ref: "refs/waku/test".into(),
+            git_ref: "refs/mack/test".into(),
             status: CheckpointStatus::Ready,
             files: vec![
                 CheckpointFile {
@@ -5184,7 +5279,7 @@ mod tests {
 
     #[test]
     fn list_projection_never_copies_session_detail() {
-        let project = Project::from_path(PathBuf::from("/tmp/waku"));
+        let project = Project::from_path(PathBuf::from("/tmp/mack"));
         let mut session = AgentSession::new(project.id, ProviderKind::ChatGpt);
         session.title = "Visible title".into();
         session.model = Some("gpt-5".into());

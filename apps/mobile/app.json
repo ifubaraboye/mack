@@ -1,25 +1,25 @@
 {
   "expo": {
-    "name": "Waku",
-    "slug": "waku-mobile",
+    "name": "Mack",
+    "slug": "mack-mobile",
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
-    "scheme": "waku",
+    "scheme": "mack",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/images/icon.png",
-      "bundleIdentifier": "sh.waku.mobile",
+      "bundleIdentifier": "sh.mack.mobile",
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocalNetworkUsageDescription": "Waku connects directly to daemon hosts you add on your local or private network.",
+        "NSLocalNetworkUsageDescription": "Mack connects directly to daemon hosts you add on your local or private network.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         }
       }
     },
     "android": {
-      "package": "sh.waku.mobile",
+      "package": "sh.mack.mobile",
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -57,8 +57,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Waku to choose photos to attach to tasks.",
-          "cameraPermission": "Allow Waku to take photos to attach to tasks.",
+          "photosPermission": "Allow Mack to choose photos to attach to tasks.",
+          "cameraPermission": "Allow Mack to take photos to attach to tasks.",
           "microphonePermission": false
         }
       ],

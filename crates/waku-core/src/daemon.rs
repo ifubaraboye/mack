@@ -1,4 +1,4 @@
-//! Provider backend and driver-event wire translation for `waku-daemon`.
+//! Provider backend and driver-event wire translation for `mack-daemon`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -53,9 +53,7 @@ pub struct WakuBackend {
     removed_session_ids: Mutex<HashSet<Uuid>>,
     composer_drafts: ComposerDraftStore,
     attachments: AttachmentStore,
-    usage_scan_cache: Mutex<crate::usage_history::ScanCache>,
     checkpoint_capture_locks: Mutex<HashMap<(PathBuf, Uuid, usize), Arc<Mutex<()>>>>,
-    usage_rates_dir: std::path::PathBuf,
     default_cwd: std::path::PathBuf,
     /// Lazily created on the first ChatGPT command so unit tests and
     /// non-ChatGPT daemons never touch the credential directory.
@@ -70,7 +68,7 @@ impl WakuBackend {
     pub fn new(settings: DaemonSettingsStore, task_store: StateStore) -> anyhow::Result<Self> {
         let mut task_state = task_store
             .load()
-            .context("could not load Waku task database")?;
+            .context("could not load Mack task database")?;
         migrate_projectless_state(&task_store, &mut task_state)?;
         let composer_drafts = ComposerDraftStore::for_state_path(task_store.path());
         let attachments = AttachmentStore::new(
@@ -80,11 +78,6 @@ impl WakuBackend {
                 .unwrap_or_else(|| std::path::Path::new("."))
                 .join("attachments"),
         );
-        let usage_rates_dir = task_store
-            .path()
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .to_owned();
         Ok(Self {
             sessions: Mutex::new(HashMap::new()),
             terminals: Mutex::new(HashMap::new()),
@@ -96,9 +89,7 @@ impl WakuBackend {
             removed_session_ids: Mutex::new(HashSet::new()),
             composer_drafts,
             attachments,
-            usage_scan_cache: Mutex::new(HashMap::new()),
             checkpoint_capture_locks: Mutex::new(HashMap::new()),
-            usage_rates_dir,
             default_cwd: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
             chatgpt: OnceLock::new(),
             claude: OnceLock::new(),
@@ -218,7 +209,7 @@ fn migrate_projectless_state(
         let old_path = task_state.projects[index].path.clone();
         let workspace = crate::projectless::migrate_workspace(&old_path).with_context(|| {
             format!(
-                "could not move projectless workspace {} under ~/.waku/projects",
+                "could not move projectless workspace {} under ~/.mack/projects",
                 old_path.display()
             )
         })?;
@@ -428,18 +419,12 @@ impl Backend for WakuBackend {
                     permissions: crate::computer_use::probe_permissions(prompt)?,
                 })
             }
-            Command::LoadUsageHistory {
-                window,
-                project_roots,
-            } => {
-                let rates = crate::usage_history::load_rate_table(&self.usage_rates_dir);
-                let history = crate::usage_history::scan(
-                    &mut self.usage_scan_cache.lock(),
-                    &rates,
-                    window,
-                    &project_roots,
-                );
-                Ok(ResponsePayload::UsageHistory { history })
+            Command::LoadMackUsageTotals => {
+                let totals = self
+                    .task_store
+                    .mack_usage_totals()
+                    .context("could not sum Mack usage totals")?;
+                Ok(ResponsePayload::MackUsageTotals { totals })
             }
             Command::LoadSkills { projects } => {
                 let locations = crate::skills::skill_locations(&projects);
@@ -605,7 +590,7 @@ impl Backend for WakuBackend {
             }
             Command::ListProviderSessions { provider, limit } => {
                 let _ = (provider, limit);
-                // ChatGPT-only: conversations live in Waku's own store;
+                // ChatGPT-only: conversations live in Mack's own store;
                 // there are no CLI sessions to list.
                 Ok(ResponsePayload::ProviderSessions {
                     sessions: Vec::new(),
@@ -776,7 +761,7 @@ impl Backend for WakuBackend {
                 let handle = driver::start_local(provider, options, event_sender)?;
                 let supports_steer = handle.supports_steer();
                 std::thread::Builder::new()
-                    .name(format!("waku-daemon-events-{session_id}"))
+                    .name(format!("mack-daemon-events-{session_id}"))
                     .spawn(move || {
                         while let Ok(event) = event_receiver.recv() {
                             let wire = event_to_wire(event).unwrap_or_else(|error| {
@@ -1087,7 +1072,7 @@ impl WakuBackend {
             bail!("the checkpoint before this message is unavailable");
         }
 
-        let safety_ref = format!("refs/waku/revert-backup-{session_id}-{}", Uuid::new_v4());
+        let safety_ref = format!("refs/mack/revert-backup-{session_id}-{}", Uuid::new_v4());
         crate::checkpoint::capture_ref(&cwd, &safety_ref)
             .context("could not create a rewind safety snapshot")?;
         if let Err(error) = crate::checkpoint::restore_ref(&cwd, &restore_ref) {
@@ -1222,7 +1207,7 @@ impl WakuBackend {
                 // Fork/rollback restarts reuse the native cursor path, which
                 // ChatGPT does not support; never seed transcript history
                 // here. ChatGPT seeding happens only on the normal start
-                // path from the hydrated Waku transcript.
+                // path from the hydrated Mack transcript.
                 chatgpt_history: None,
                 claude_history: None,
                 memory_db_path: Some(self.task_store.path().to_owned()),
@@ -1504,7 +1489,7 @@ fn handle_driver_command(
         | Command::ProbeProvider { .. }
         | Command::FetchPlanUsage { .. }
         | Command::ProbeComputerPermissions { .. }
-        | Command::LoadUsageHistory { .. }
+        | Command::LoadMackUsageTotals
         | Command::LoadSkills { .. }
         | Command::SetSkillsEnabled { .. }
         | Command::TrashSkills { .. }
@@ -1951,6 +1936,7 @@ fn event_to_wire(event: DriverEvent) -> anyhow::Result<WireDriverEvent> {
             }),
         ),
         DriverEvent::PlanUsageUpdated(usage) => ("planUsageUpdated", serde_json::to_value(usage)?),
+        DriverEvent::TurnUsage { totals } => ("turnUsage", serde_json::to_value(totals)?),
         DriverEvent::GoalUpdated(goal) => ("goalUpdated", serde_json::to_value(goal)?),
         DriverEvent::TurnFinished { success, summary } => (
             "turnFinished",
@@ -2041,6 +2027,9 @@ pub fn event_from_wire(event: WireDriverEvent) -> anyhow::Result<DriverEvent> {
             }
         }
         "planUsageUpdated" => DriverEvent::PlanUsageUpdated(serde_json::from_value(payload)?),
+        "turnUsage" => DriverEvent::TurnUsage {
+            totals: serde_json::from_value(payload)?,
+        },
         "goalUpdated" => DriverEvent::GoalUpdated(serde_json::from_value(payload)?),
         "turnFinished" => {
             let finished: TurnFinishedWire = serde_json::from_value(payload)?;
@@ -2136,7 +2125,7 @@ mod tests {
     }
 
     fn temp_daemon() -> (WakuBackend, std::path::PathBuf) {
-        let directory = std::env::temp_dir().join(format!("waku-daemon-{}", Uuid::new_v4()));
+        let directory = std::env::temp_dir().join(format!("mack-daemon-{}", Uuid::new_v4()));
         let settings =
             DaemonSettingsStore::open(directory.join("settings.json")).expect("temp settings");
         let task_store = StateStore::daemon(directory.join("app.db"));
@@ -2193,7 +2182,7 @@ mod tests {
         existing.finish_active_turn(crate::model::TurnStatus::Completed);
         let checkpoint = Checkpoint {
             turn_count: 1,
-            git_ref: "refs/waku/canonical".into(),
+            git_ref: "refs/mack/canonical".into(),
             status: CheckpointStatus::Ready,
             files: Vec::new(),
             additions: 0,
@@ -2204,7 +2193,7 @@ mod tests {
 
         let mut incoming = existing.clone();
         incoming.turns[0].checkpoint = Some(Checkpoint {
-            git_ref: "refs/waku/stale-client".into(),
+            git_ref: "refs/mack/stale-client".into(),
             ..checkpoint.clone()
         });
         preserve_daemon_checkpoints(&existing, &mut incoming);

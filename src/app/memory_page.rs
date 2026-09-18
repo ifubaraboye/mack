@@ -8,7 +8,7 @@
 use super::*;
 use waku_protocol::persistence::StoredMemory;
 
-impl Waku {
+impl Mack {
     /// Start a background memory load unless one is in flight or a fresh
     /// list is already shown. `force` reloads unconditionally (retry button,
     /// returning to the page).
@@ -416,10 +416,10 @@ impl Waku {
 /// One memory row: content plus relative update time, with an arm-to-confirm
 /// delete button following the skills-page pattern.
 fn render_memory_rows(
-    waku: &Waku,
+    mack: &Mack,
     memories: &[StoredMemory],
     theme: Theme,
-    cx: &mut Context<Waku>,
+    cx: &mut Context<Mack>,
 ) -> AnyElement {
     let now = unix_time();
     let mut rows = div()
@@ -431,7 +431,7 @@ fn render_memory_rows(
         .flex_col();
     for (index, memory) in memories.iter().enumerate() {
         let id = memory.id;
-        let armed = waku.memory_delete_arming == Some(id);
+        let armed = mack.memory_delete_arming == Some(id);
         let age = now.saturating_sub(memory.updated_at);
         let updated = if age < 60 {
             tr!("memory.updated_just_now")
@@ -528,7 +528,7 @@ fn render_memory_rows(
     rows.into_any_element()
 }
 
-fn memory_retry_button(theme: Theme, cx: &mut Context<Waku>) -> AnyElement {
+fn memory_retry_button(theme: Theme, cx: &mut Context<Mack>) -> AnyElement {
     div()
         .id("memory-retry-load")
         .tab_index(0)

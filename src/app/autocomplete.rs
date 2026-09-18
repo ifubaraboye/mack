@@ -107,7 +107,7 @@ impl AutocompleteUi {
     }
 }
 
-impl Waku {
+impl Mack {
     /// Refresh the drawn command and file indexes for the selected session.
     ///
     /// A cache hit lands immediately; a miss starts discovery on the
@@ -162,7 +162,7 @@ impl Waku {
                 }
                 let path = project_path.clone();
                 let workspace = waku_client::WorkspaceClient::new(self.daemon.client());
-                cx.spawn(async move |waku, cx| {
+                cx.spawn(async move |mack, cx| {
                     let commands = cx
                         .background_executor()
                         .spawn(async move {
@@ -180,9 +180,9 @@ impl Waku {
                             }
                         })
                         .await;
-                    waku.update(cx, |waku, cx| {
-                        if waku.slash_commands.fulfill(token, commands) {
-                            waku.refresh_composer_sources(cx);
+                    mack.update(cx, |mack, cx| {
+                        if mack.slash_commands.fulfill(token, commands) {
+                            mack.refresh_composer_sources(cx);
                             cx.notify();
                         }
                     })
@@ -213,7 +213,7 @@ impl Waku {
                 }
                 let path = project_path.clone();
                 let workspace = waku_client::WorkspaceClient::new(self.daemon.client());
-                cx.spawn(async move |waku, cx| {
+                cx.spawn(async move |mack, cx| {
                     let files = cx
                         .background_executor()
                         .spawn(async move {
@@ -230,9 +230,9 @@ impl Waku {
                             }
                         })
                         .await;
-                    waku.update(cx, |waku, cx| {
-                        if waku.mention_files.fulfill(token, files) {
-                            waku.refresh_composer_sources(cx);
+                    mack.update(cx, |mack, cx| {
+                        if mack.mention_files.fulfill(token, files) {
+                            mack.refresh_composer_sources(cx);
                             cx.notify();
                         }
                     })

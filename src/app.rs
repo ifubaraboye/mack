@@ -13,10 +13,10 @@ use gpui::{
     Animation, AnimationExt, AnyElement, App, Bounds, ClipboardEntry, ClipboardItem, Context, Div,
     Entity, ExternalPaths, FocusHandle, Focusable, FontWeight, Hsla, IntoElement, KeyDownEvent,
     ListAlignment, ListOffset, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, ObjectFit, PathPromptOptions, Pixels, Render, ScrollHandle,
-    SharedString, Stateful, StyleRefinement, TextRun, WeakEntity, Window, WindowBounds, canvas,
-    div, ease_out_quint, fill, font, img, linear_color_stop, linear_gradient, list, point,
-    prelude::*, pulsating_between, px, rgb,
+    MouseUpEvent, NavigationDirection, ObjectFit, Pixels, Render, ScrollHandle, SharedString,
+    Stateful, StyleRefinement, TextRun, WeakEntity, Window, WindowBounds, canvas, div,
+    ease_out_quint, fill, font, img, linear_color_stop, linear_gradient, list, point, prelude::*,
+    pulsating_between, px, rgb,
 };
 use uuid::Uuid;
 
@@ -123,7 +123,7 @@ const STREAM_SAVE_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_TOAST_DURATION: Duration = Duration::from_secs(5);
 const MINIMUM_TOAST_RESUME_DURATION: Duration = Duration::from_millis(800);
 const TOAST_ANIMATION_DURATION: Duration = Duration::from_millis(150);
-const TASK_NOTIFICATION_TAG_PREFIX: &str = "waku-task:";
+const TASK_NOTIFICATION_TAG_PREFIX: &str = "mack-task:";
 
 pub(crate) fn task_notification_tag(session_id: Uuid) -> String {
     format!("{TASK_NOTIFICATION_TAG_PREFIX}{session_id}")
@@ -298,29 +298,6 @@ impl SettingsPage {
             Self::ComputerUse | Self::Daemon | Self::Skills | Self::Appearance
         )
     }
-}
-
-/// Which presentation the Usage page shows: the daily dashboard, the monthly
-/// statement, or the per-project ranking.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum UsageViewMode {
-    Daily,
-    Monthly,
-    Projects,
-}
-
-/// Which unit the Usage page's headline and chart read in.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum UsageMetric {
-    Cost,
-    Tokens,
-}
-
-/// Which table the Usage page's breakdown section shows.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum UsageBreakdown {
-    Model,
-    Day,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -588,7 +565,7 @@ struct DriverStartRequest {
 }
 
 /// A provider process that has started off-thread but is not installed into
-/// Waku's runtime map yet. Its event receiver safely buffers early events.
+/// Mack's runtime map yet. Its event receiver safely buffers early events.
 struct PreparedDriver {
     handle: DriverHandle,
     events: Receiver<DriverEvent>,
@@ -675,7 +652,7 @@ enum EventPumpSchedule {
 }
 
 /// One cached island of the root view: a region rendered by delegating back
-/// into [`Waku`] under its own view identity.
+/// into [`Mack`] under its own view identity.
 ///
 /// All state stays on the root entity; what the island buys is scope for
 /// gpui's cached-view machinery. The pulse clock and the streaming veil lease
@@ -685,25 +662,25 @@ enum EventPumpSchedule {
 /// invalidation semantics exactly — any root notify still re-renders every
 /// island — so caching cannot show state the single-view architecture would
 /// have repainted.
-struct WakuPane {
-    waku: Option<WeakEntity<Waku>>,
-    content: fn(&mut Waku, &mut Window, &mut Context<Waku>) -> AnyElement,
+struct MackPane {
+    mack: Option<WeakEntity<Mack>>,
+    content: fn(&mut Mack, &mut Window, &mut Context<Mack>) -> AnyElement,
 }
 
-impl WakuPane {
+impl MackPane {
     fn new(
-        content: fn(&mut Waku, &mut Window, &mut Context<Waku>) -> AnyElement,
+        content: fn(&mut Mack, &mut Window, &mut Context<Mack>) -> AnyElement,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|_| Self {
-            waku: None,
+            mack: None,
             content,
         })
     }
 
-    fn bind(&mut self, waku: &Entity<Waku>, cx: &mut Context<Self>) {
-        self.waku = Some(waku.downgrade());
-        cx.observe(waku, |_, waku, cx| {
+    fn bind(&mut self, mack: &Entity<Mack>, cx: &mut Context<Self>) {
+        self.mack = Some(mack.downgrade());
+        cx.observe(mack, |_, mack, cx| {
             // A panel slide notifies the root at display rate for its 200ms,
             // and this fan-out would price every one of those ticks at a
             // three-island rebuild. Skipping it hands the decision to the
@@ -715,7 +692,7 @@ impl WakuPane {
             // (terminal output, pulse leases) dirty their ancestor pane
             // without this observer, and the slide's retirement notify
             // below re-runs the fan-out, so nothing outlasts the 200ms.
-            if !waku.read(cx).panels_sliding() {
+            if !mack.read(cx).panels_sliding() {
                 cx.notify();
             }
         })
@@ -723,13 +700,13 @@ impl WakuPane {
     }
 }
 
-impl Render for WakuPane {
+impl Render for MackPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(waku) = self.waku.as_ref().and_then(WeakEntity::upgrade) else {
+        let Some(mack) = self.mack.as_ref().and_then(WeakEntity::upgrade) else {
             return gpui::div().into_any_element();
         };
         let content = self.content;
-        waku.update(cx, |waku, cx| content(waku, window, cx))
+        mack.update(cx, |mack, cx| content(mack, window, cx))
     }
 }
 
@@ -1033,7 +1010,7 @@ impl Default for ActivityScrollViewport {
     }
 }
 
-pub struct Waku {
+pub struct Mack {
     /// Owns the headless provider process for exactly as long as the desktop
     /// app entity. Debug builds can replace it independently after a rebuild;
     /// all live driver handles below are lightweight RPC proxies.
@@ -1131,43 +1108,17 @@ pub struct Waku {
     computer_permission_tx: Sender<Result<ComputerPermissions, String>>,
     computer_permission_events: Receiver<Result<ComputerPermissions, String>>,
     computer_permission_request_pending: bool,
-    /// The settings Usage page's snapshot: historical token/cost usage
-    /// scanned from provider transcripts off-thread. Frames read only this.
-    usage_history: Option<crate::usage_history::UsageHistory>,
-    /// The window a scan is currently in flight for, so a repeat request for
-    /// the same window coalesces while a changed window supersedes it.
-    usage_history_pending_for: Option<crate::usage_history::UsageWindow>,
-    /// Bumped per scan; a result from a superseded scan is discarded.
-    usage_history_generation: u64,
-    /// When the current snapshot landed, for the reopen-staleness check.
-    usage_history_scanned_at: Option<Instant>,
-    usage_view: UsageViewMode,
-    /// The selected window for the daily and project views; the statement
-    /// view fixes its own.
-    usage_window: crate::usage_history::UsageWindow,
-    usage_metric: UsageMetric,
-    usage_breakdown: UsageBreakdown,
-    /// Scroll position of the monthly statement card, which scrolls
-    /// internally like the projects card so the two list views feel alike.
-    usage_months_scroll: ScrollHandle,
-    usage_months_scrollbar: Rc<ScrollbarState>,
-    /// Filter query over the Usage page's project rows.
-    usage_project_filter: Entity<TextInput>,
-    /// Virtualized list over the filtered project rows, so only visible rows
-    /// build elements no matter how many working directories have usage.
-    usage_projects_list: ListState,
-    usage_projects_scrollbar: Rc<ScrollbarState>,
-    /// Indices into `usage_history.projects` the filter leaves visible — the
-    /// row builder reads only this.
-    usage_projects_rows: RefCell<Vec<usize>>,
-    /// `(peak value, rank-by-cost)` for the visible rows' bars, refreshed
-    /// once per frame rather than per row.
-    usage_projects_scale: Cell<(f64, bool)>,
-    /// Hovered or keyboard-selected day index on the Usage page's chart.
-    usage_chart_hover: Option<usize>,
-    /// The chart plot's window bounds, written during paint so the mouse-move
-    /// handler can map positions to day indices.
-    usage_chart_bounds: Rc<Cell<Option<gpui::Bounds<Pixels>>>>,
+    /// The settings Usage page's Mack-native lifetime totals: tokens for
+    /// turns executed inside Mack, summed over every stored session by the
+    /// daemon. Frames read only this; `None` means not fetched yet.
+    mack_usage_totals: Option<crate::usage_history::MackUsageTotals>,
+    /// Whether a totals fetch is currently in flight, so repeat requests
+    /// coalesce while a changed trigger supersedes by generation.
+    mack_usage_pending: bool,
+    /// Bumped per fetch; a result from a superseded fetch is discarded.
+    mack_usage_generation: u64,
+    /// When the current totals landed, for the reopen-staleness check.
+    mack_usage_fetched_at: Option<Instant>,
     computer_use_app_icons: RefCell<HashMap<String, Option<std::sync::Arc<gpui::Image>>>>,
     computer_use_app_icon_loads: RefCell<HashSet<String>>,
     /// Installed folder-capable apps for the header's "open project in"
@@ -1529,10 +1480,10 @@ pub struct Waku {
     menus: RefCell<HashMap<SharedString, ContextMenuHandle>>,
     navigation_rail: Entity<ConversationNavigationRail>,
     navigation_rail_reset_generation: Cell<u64>,
-    /// Cached islands of the root view; see [`WakuPane`].
-    sidebar_pane: Entity<WakuPane>,
-    transcript_pane: Entity<WakuPane>,
-    right_panel_pane: Entity<WakuPane>,
+    /// Cached islands of the root view; see [`MackPane`].
+    sidebar_pane: Entity<MackPane>,
+    transcript_pane: Entity<MackPane>,
+    right_panel_pane: Entity<MackPane>,
     /// The unix second the pending time-label wake-up targets, or `None` when
     /// none is armed. See `schedule_time_label_wake`.
     time_label_wake: Cell<Option<u64>>,
@@ -1667,7 +1618,7 @@ fn migrate_legacy_projectless_projects(
     (changed, None)
 }
 
-impl Waku {
+impl Mack {
     fn updater_button_expanded(&self) -> bool {
         self.updater_button_hovered || self.updater_button_focused
     }
@@ -1974,12 +1925,10 @@ impl Waku {
                 .select_all_on_focus_click()
                 .placeholder(tr!("claude.code_placeholder"))
         });
-        let usage_project_filter =
-            cx.new(|cx| TextInput::new(window, cx).placeholder(tr!("input.filter_projects")));
         let navigation_rail = cx.new(|_| ConversationNavigationRail::new());
-        let sidebar_pane = WakuPane::new(Waku::sidebar_pane_content, cx);
-        let transcript_pane = WakuPane::new(Waku::transcript_pane_content, cx);
-        let right_panel_pane = WakuPane::new(Waku::right_panel_pane_content, cx);
+        let sidebar_pane = MackPane::new(Mack::sidebar_pane_content, cx);
+        let transcript_pane = MackPane::new(Mack::transcript_pane_content, cx);
+        let right_panel_pane = MackPane::new(Mack::right_panel_pane_content, cx);
         let workspace_client = waku_client::WorkspaceClient::new(daemon.client());
         let (projectless_migrated, projectless_migration_error) =
             migrate_legacy_projectless_projects(&mut state, &workspace_client);
@@ -2142,7 +2091,7 @@ impl Waku {
             let event_wake = event_wake_tx.clone();
             let daemon = daemon.client();
             std::thread::Builder::new()
-                .name("waku-computer-permission-probe".into())
+                .name("mack-computer-permission-probe".into())
                 .spawn(move || {
                     let result = match daemon.request(
                         Uuid::nil(),
@@ -2184,7 +2133,6 @@ impl Waku {
         let transcript_rows = ListState::new(0, ListAlignment::Bottom, px(2048.0));
         let anchored_transcript_rows = ListState::new(0, ListAlignment::Top, px(2048.0));
         let sidebar_list_state = ListState::new(0, ListAlignment::Top, px(256.0));
-        let usage_projects_list = ListState::new(0, ListAlignment::Top, px(256.0));
         let branch_picker_list_state = ListState::new(0, ListAlignment::Top, px(152.0));
         let transcript_is_scrolled = Rc::new(Cell::new(false));
         let transcript_anchor_following = Rc::new(Cell::new(false));
@@ -2384,7 +2332,7 @@ impl Waku {
             .detach();
 
             // Clipboard images and Finder file copies are attachment payloads,
-            // not text paths. The input owns representation priority; Waku
+            // not text paths. The input owns representation priority; Mack
             // owns durable staging and composer/session state.
             cx.subscribe(
                 &composer,
@@ -2514,15 +2462,6 @@ impl Waku {
             )
             .detach();
             cx.subscribe(
-                &usage_project_filter,
-                |_: &mut Self, _, event: &InputEvent, cx| {
-                    if matches!(event, InputEvent::Edited) {
-                        cx.notify();
-                    }
-                },
-            )
-            .detach();
-            cx.subscribe(
                 &provider_path_input,
                 |this: &mut Self, _, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Submit(_)) {
@@ -2610,10 +2549,10 @@ impl Waku {
             .detach();
 
             let markdown_link_handler: md::render::LinkHandler = {
-                let waku = cx.entity().downgrade();
+                let mack = cx.entity().downgrade();
                 Rc::new(move |target, _, cx| {
-                    let handled = waku
-                        .update(cx, |waku, cx| waku.open_transcript_link(target, cx))
+                    let handled = mack
+                        .update(cx, |mack, cx| mack.open_transcript_link(target, cx))
                         .unwrap_or(false);
                     if !handled {
                         cx.open_url(target);
@@ -2687,23 +2626,10 @@ impl Waku {
                 computer_permission_tx,
                 computer_permission_events,
                 computer_permission_request_pending: false,
-                usage_history: None,
-                usage_history_pending_for: None,
-                usage_history_generation: 0,
-                usage_history_scanned_at: None,
-                usage_view: UsageViewMode::Daily,
-                usage_window: crate::usage_history::UsageWindow::TrailingDays(30),
-                usage_metric: UsageMetric::Cost,
-                usage_breakdown: UsageBreakdown::Model,
-                usage_months_scroll: ScrollHandle::new(),
-                usage_months_scrollbar: ScrollbarState::new(),
-                usage_project_filter,
-                usage_projects_list,
-                usage_projects_scrollbar: ScrollbarState::new(),
-                usage_projects_rows: RefCell::new(Vec::new()),
-                usage_projects_scale: Cell::new((0.0, true)),
-                usage_chart_hover: None,
-                usage_chart_bounds: Rc::default(),
+                mack_usage_totals: None,
+                mack_usage_pending: false,
+                mack_usage_generation: 0,
+                mack_usage_fetched_at: None,
                 computer_use_app_icons: RefCell::new(HashMap::new()),
                 computer_use_app_icon_loads: RefCell::new(HashSet::new()),
                 open_in_apps: Rc::new(Vec::new()),
@@ -2888,7 +2814,7 @@ impl Waku {
                 fps_value: 0,
             }
         });
-        navigation_rail.update(cx, |rail, _| rail.set_waku(entity.downgrade()));
+        navigation_rail.update(cx, |rail, _| rail.set_mack(entity.downgrade()));
         for pane in [&sidebar_pane, &transcript_pane, &right_panel_pane] {
             pane.update(cx, |pane, cx| pane.bind(&entity, cx));
         }

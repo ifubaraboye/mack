@@ -29,7 +29,7 @@ import { Sidebar } from '@/components/sidebar'
 import { StartupScreen } from '@/components/startup-screen'
 import type { SettingsPageId } from '@/components/settings-view'
 import { Transcript } from '@/components/transcript'
-import { WakuIcon } from '@/components/waku-icon'
+import { MackIcon } from '@/components/mack-icon'
 import {
   useComposerDrafts,
   useSession,
@@ -93,7 +93,7 @@ interface RetainedPanelSession {
 
 type Translator = (key: string, params?: Record<string, string | number>) => string
 
-export function WakuApp() {
+export function MackApp() {
   const { t } = useI18n()
   const navigate = useNavigate({ from: '/' })
   const search = useSearch({ from: '/' })
@@ -1014,7 +1014,7 @@ export function WakuApp() {
           project={activeProject}
           session={activeSession}
           sidebarVisible={sidebarVisible}
-          title={newTaskMode ? t('menu.new_task') : current ? displayTitle(current) : 'Waku'}
+          title={newTaskMode ? t('menu.new_task') : current ? displayTitle(current) : 'Mack'}
         />
 
         {newTaskMode ? (
@@ -1286,7 +1286,7 @@ function TaskHeader({
         variant="ghost"
         onClick={onMenu}
       >
-        <WakuIcon name="panelLeft" />
+        <MackIcon name="panelLeft" />
       </Button>
       <h1 className="min-w-0 truncate text-[13px] font-medium">{title}</h1>
       {preset && (
@@ -1314,7 +1314,7 @@ function TaskHeader({
         />
       )}
       <Button aria-label={t('right_panel.toggle')} size="icon-sm" variant="ghost" onClick={onTogglePanel}>
-        <WakuIcon name="panelRight" />
+        <MackIcon name="panelRight" />
       </Button>
     </header>
   )
@@ -1375,7 +1375,7 @@ function EnvironmentPopover({
         }}
         title={backgroundWorkCountSummary(items, t)}
       >
-        <WakuIcon name="info" />
+        <MackIcon name="info" />
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner
@@ -1495,7 +1495,7 @@ function EnvironmentWorkSection({
                 }
               }}
             >
-              <WakuIcon
+              <MackIcon
                 className="size-3.5 text-[var(--text-secondary)]"
                 name={item.key.kind === 'subagent' ? 'bot' : 'terminalSquare'}
               />
@@ -1523,7 +1523,7 @@ function EnvironmentWorkSection({
                       }}
                       onPointerDown={(event) => event.stopPropagation()}
                     >
-                      <WakuIcon className="size-3 text-[var(--text-tertiary)]" name="stopFilled" />
+                      <MackIcon className="size-3 text-[var(--text-tertiary)]" name="stopFilled" />
                     </button>
                   )}
                 </span>
@@ -1548,7 +1548,7 @@ function EnvironmentWorkStatus({ status, className }: { status: BackgroundWorkSt
           ? 'alert'
           : 'stop'
   return (
-    <WakuIcon
+    <MackIcon
       className={`${className ?? ''} size-3 ${live ? 'text-ring motion-safe:animate-spin' : status === 'completed' ? 'text-[var(--success)]' : status === 'failed' || status === 'lost' ? 'text-destructive' : 'text-[var(--text-tertiary)]'}`}
       name={icon}
     />
@@ -1590,9 +1590,9 @@ function EnvironmentAction({
       type="button"
       onClick={onClick}
     >
-      <WakuIcon className="size-3.5 text-[var(--text-secondary)]" name={icon} />
+      <MackIcon className="size-3.5 text-[var(--text-secondary)]" name={icon} />
       <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-      {trailing && <WakuIcon className="size-[13px] text-[var(--text-tertiary)]" name={trailing} />}
+      {trailing && <MackIcon className="size-[13px] text-[var(--text-tertiary)]" name={trailing} />}
     </button>
   )
 }
@@ -1615,7 +1615,7 @@ function NewTaskCanvas({
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center px-8 pb-12">
       <div className="text-center">
-        <WakuIcon className="mx-auto size-5 text-ring" name="sparkle" />
+        <MackIcon className="mx-auto size-5 text-ring" name="sparkle" />
         <div className="mt-3 flex flex-wrap items-baseline justify-center gap-1 text-xl font-medium">
           {projectless ? (
             <span>{t('onboarding.what_should_we_build')}</span>
@@ -1663,14 +1663,14 @@ function NoProjectState({
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center px-8 pb-12">
       <div className="max-w-sm text-center">
-        <WakuIcon className="mx-auto size-6 text-ring" name="sparkle" />
+        <MackIcon className="mx-auto size-6 text-ring" name="sparkle" />
         <h2 className="mt-4 text-xl font-medium">{t('onboarding.open_project_to_begin')}</h2>
         <p className="mt-2 text-[12.5px] leading-[19px] text-[var(--text-tertiary)]">
           {t('onboarding.web_description')}
         </p>
         <div className="mt-5 flex flex-col items-center gap-2">
           <Button className="rounded-full" onClick={onAddProject}>
-            <WakuIcon name="plus" /> {t('sidebar.add_project')}
+            <MackIcon name="plus" /> {t('sidebar.add_project')}
           </Button>
           <Button
             className="rounded-full"

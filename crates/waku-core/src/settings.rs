@@ -31,7 +31,7 @@ impl DaemonSettingsStore {
                 Err(error) => {
                     let backup = quarantine_corrupt_settings(&path)?;
                     eprintln!(
-                        "Waku daemon moved invalid settings to {}: {error}",
+                        "Mack daemon moved invalid settings to {}: {error}",
                         backup.display()
                     );
                     (DaemonSettings::default(), true)
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn legacy_combined_settings_keep_only_daemon_fields() {
-        let path = std::env::temp_dir().join(format!("waku-settings-{}.json", Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("mack-settings-{}.json", Uuid::new_v4()));
         fs::write(
             &path,
             r#"{"theme":"dark","analytics_enabled":false,"computer_use_enabled":true,"future":42}"#,
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn imports_daemon_fields_from_a_debug_combined_settings_file() {
-        let directory = std::env::temp_dir().join(format!("waku-settings-{}", Uuid::new_v4()));
+        let directory = std::env::temp_dir().join(format!("mack-settings-{}", Uuid::new_v4()));
         let path = directory.join("home/settings.json");
         let legacy = directory.join("checkout/temp/settings.json");
         fs::create_dir_all(legacy.parent().unwrap()).unwrap();
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn corrupt_current_settings_are_quarantined_and_replaced() {
-        let directory = std::env::temp_dir().join(format!("waku-settings-{}", Uuid::new_v4()));
+        let directory = std::env::temp_dir().join(format!("mack-settings-{}", Uuid::new_v4()));
         let path = directory.join("settings.json");
         fs::create_dir_all(&directory).unwrap();
         fs::write(&path, b"{ definitely not json").unwrap();

@@ -1,5 +1,5 @@
 // Build the pinned Cua SDK with its native host/cursor entrypoints exposed.
-// Keep its dependency graph and lockfile isolated from Waku's GPUI workspace.
+// Keep its dependency graph and lockfile isolated from Mack's GPUI workspace.
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -31,7 +31,7 @@ export async function prepareCuaHost(): Promise<string> {
   const key = createHash("sha256")
     .update(revision + extension + header + compiler)
     .digest("hex");
-  const cache = join(root, ".waku-cache/cua-host");
+  const cache = join(root, ".mack-cache/cua-host");
   const destination = join(cache, key);
   const library =
     process.platform === "darwin"

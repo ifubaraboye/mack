@@ -1,7 +1,7 @@
 //! Daemon-owned isolated Git worktrees for tasks.
 //!
 //! A draft records only the user's choice. The first submission creates the
-//! worktree beneath `~/.waku/worktrees`, then every workspace consumer uses
+//! worktree beneath `~/.mack/worktrees`, then every workspace consumer uses
 //! the returned project-relative path for the lifetime of the task.
 
 use std::fs;
@@ -25,8 +25,8 @@ pub fn create(
     base_branch: Option<&str>,
 ) -> anyhow::Result<CreatedWorktree> {
     let root = dirs::home_dir()
-        .ok_or_else(|| anyhow!("could not locate the home directory for ~/.waku/worktrees"))?
-        .join(".waku/worktrees");
+        .ok_or_else(|| anyhow!("could not locate the home directory for ~/.mack/worktrees"))?
+        .join(".mack/worktrees");
     create_in(
         project_path,
         &root,
@@ -77,7 +77,7 @@ fn create_in(
     let slug = worktree_slug(prompt);
     for index in 0..MAX_CANDIDATES {
         let name = candidate_name(&slug, index);
-        let branch = format!("waku/{name}");
+        let branch = format!("mack/{name}");
         let path = project_worktrees.join(&name);
         if path.exists() || local_branch_exists(&repository, &branch)? {
             continue;
@@ -111,7 +111,7 @@ fn create_in(
     // A UUID fallback makes the final attempt independent of human-readable
     // name collisions while keeping the common path and branch pleasant.
     let fallback = format!("{slug}-{}", &session_id.simple().to_string()[..8]);
-    let branch = format!("waku/{fallback}");
+    let branch = format!("mack/{fallback}");
     let path = project_worktrees.join(&fallback);
     if path.exists() || local_branch_exists(&repository, &branch)? {
         bail!("could not allocate a unique Git worktree name");
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn creates_isolated_worktrees_from_the_default_branch() {
-        let root = std::env::temp_dir().join(format!("waku-worktree-test-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("mack-worktree-test-{}", Uuid::new_v4()));
         let repository = root.join("repository");
         let project = repository.join("packages/app");
         fs::create_dir_all(&project).unwrap();
@@ -266,9 +266,9 @@ mod tests {
             &repository,
             &[
                 "-c",
-                "user.name=Waku Tests",
+                "user.name=Mack Tests",
                 "-c",
-                "user.email=waku@example.com",
+                "user.email=mack@example.com",
                 "commit",
                 "-m",
                 "initial",
@@ -293,9 +293,9 @@ mod tests {
             &repository,
             &[
                 "-c",
-                "user.name=Waku Tests",
+                "user.name=Mack Tests",
                 "-c",
-                "user.email=waku@example.com",
+                "user.email=mack@example.com",
                 "commit",
                 "-m",
                 "feature",
@@ -313,7 +313,7 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(first.branch, "waku/build-a-project-selector");
+        assert_eq!(first.branch, "mack/build-a-project-selector");
         assert_eq!(
             fs::read_to_string(first.path.join("README.md")).unwrap(),
             "main\n"
@@ -333,7 +333,7 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(second.branch, "waku/build-a-project-selector-2");
+        assert_eq!(second.branch, "mack/build-a-project-selector-2");
 
         let from_feature = create_in(
             &project,

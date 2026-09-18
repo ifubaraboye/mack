@@ -2,10 +2,10 @@
 //!
 //! Sessions and projects live in SQLite (`app.db`), app-managed UI state in
 //! `state.json`, desktop preferences in `temp/app.json` for Debug or
-//! `~/.waku/app.json` for Release, daemon preferences in
-//! `~/.waku/settings.json`, and binary payloads in [`crate::blob_store`].
+//! `~/.mack/app.json` for Release, daemon preferences in
+//! `~/.mack/settings.json`, and binary payloads in [`crate::blob_store`].
 //! Of the configuration documents, only the desktop file is written here;
-//! daemon settings cross the RPC boundary and are persisted by `waku-daemon`.
+//! daemon settings cross the RPC boundary and are persisted by `mack-daemon`.
 //!
 //! A save writes only the rows whose contents changed, so a streaming turn
 //! costs a few kilobytes no matter how much history exists. Fields the sidebar
@@ -34,6 +34,7 @@ use crate::model::{
     RuntimeMode, SessionWorkspace,
 };
 use crate::theme::ThemePreference;
+use crate::usage_history::{MackUsageTotals, TokenTotals};
 pub use waku_protocol::persistence::{
     ComposerDraft, ComposerDraftAttachment, ComposerDraftChange, ComposerDraftKey,
     ComposerDraftTarget, ComposerDrafts, SessionMessageMatch, StoredMemory,
@@ -186,7 +187,7 @@ impl ComposerDraftStore {
 ///
 /// This deliberately excludes navigation, panel geometry, and other values
 /// that the app changes as a side effect of ordinary use. Both builds keep it
-/// at `~/.waku/app.json` without exposing app-managed state or daemon-owned
+/// at `~/.mack/app.json` without exposing app-managed state or daemon-owned
 /// provider policy.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
@@ -1004,7 +1005,7 @@ pub struct StateStore {
     /// cache. It is never read by the daemon.
     app_state_path: PathBuf,
     /// Desktop-owned preferences. Debug stays isolated in the checkout while
-    /// Release uses the explicit cross-client Waku configuration directory.
+    /// Release uses the explicit cross-client Mack configuration directory.
     app_settings_path: PathBuf,
     /// Read-only migration sources for the former combined settings document.
     legacy_settings_paths: Vec<PathBuf>,
@@ -1040,7 +1041,7 @@ impl StateStore {
         let directory = path.parent().unwrap_or_else(|| Path::new(".")).to_owned();
         let configuration_directory = dirs::home_dir()
             .unwrap_or_else(std::env::temp_dir)
-            .join(".waku");
+            .join(".mack");
         let (app_settings_path, legacy_settings_paths) = if cfg!(debug_assertions) {
             (
                 directory.join("app.json"),
@@ -1055,7 +1056,7 @@ impl StateStore {
         Self::with_settings_paths(path, app_settings_path, legacy_settings_paths)
     }
 
-    /// Local database owner used inside `waku-daemon`. It never reads or
+    /// Local database owner used inside `mack-daemon`. It never reads or
     /// writes desktop-only `app.json` or client navigation state.
     pub fn daemon(path: PathBuf) -> Self {
         let mut store = Self::new(path);
@@ -1218,6 +1219,54 @@ impl StateStore {
             .filter_map(Result::ok)
             .filter_map(memory_from_row)
             .collect())
+    }
+
+    /// Lifetime token totals for turns executed inside Mack, summed over
+    /// every stored session in one pass. A single narrow-row aggregate, so
+    /// the Usage tab never hydrates a transcript to answer it. Sessions
+    /// counts rows with at least one counted turn.
+    pub fn mack_usage_totals(&self) -> io::Result<MackUsageTotals> {
+        let connection = self.open()?;
+        let (uncached, cached, creation, output, reasoning, turns, sessions): (
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            i64,
+        ) = connection
+            .query_row(
+                "SELECT SUM(usage_uncached), SUM(usage_cached), SUM(usage_creation),
+                        SUM(usage_output), SUM(usage_reasoning), SUM(usage_turns),
+                        COUNT(CASE WHEN usage_turns > 0 THEN 1 END)
+                   FROM sessions",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .map_err(to_io_error)?;
+        let non_negative = |value: Option<i64>| value.unwrap_or(0).max(0) as u64;
+        Ok(MackUsageTotals {
+            totals: TokenTotals {
+                uncached_input: non_negative(uncached),
+                cached_input: non_negative(cached),
+                cache_creation: non_negative(creation),
+                output: non_negative(output),
+                reasoning: non_negative(reasoning),
+            },
+            turns: non_negative(turns),
+            sessions: sessions.max(0) as u64,
+        })
     }
 
     /// Builds a memory-search job for the background executor, mirroring
@@ -1393,7 +1442,9 @@ impl StateStore {
         let mut sessions = connection
             .prepare(
                 "SELECT id, project_id, title, auto_title, provider, model, status,
-                        created_at, updated_at, last_reply_at, group_id
+                        created_at, updated_at, last_reply_at, group_id,
+                        usage_uncached, usage_cached, usage_creation, usage_output,
+                        usage_reasoning, usage_turns
                  FROM sessions ORDER BY updated_at",
             )
             .map_err(to_io_error)?;
@@ -1412,6 +1463,12 @@ impl StateStore {
                     row.get::<_, i64>(8)?,
                     row.get::<_, Option<i64>>(9)?,
                     row.get::<_, Option<String>>(10)?,
+                    row.get::<_, i64>(11)?,
+                    row.get::<_, i64>(12)?,
+                    row.get::<_, i64>(13)?,
+                    row.get::<_, i64>(14)?,
+                    row.get::<_, i64>(15)?,
+                    row.get::<_, i64>(16)?,
                 ))
             })
             .map_err(to_io_error)?
@@ -1759,6 +1816,12 @@ type SessionColumns = (
     i64,
     Option<i64>,
     Option<String>,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
 );
 
 /// Builds a list-only session from its columns. `messages`,
@@ -1779,6 +1842,12 @@ fn session_skeleton(row: SessionColumns) -> Option<AgentSession> {
         updated_at,
         last_reply_at,
         group_id,
+        usage_uncached,
+        usage_cached,
+        usage_creation,
+        usage_output,
+        usage_reasoning,
+        usage_turns,
     ) = row;
     let provider: ProviderKind =
         serde_json::from_value(serde_json::Value::String(provider)).ok()?;
@@ -1817,6 +1886,14 @@ fn session_skeleton(row: SessionColumns) -> Option<AgentSession> {
         // Detail (including fork metadata) loads from session_details on
         // hydrate; the list never reads it.
         fork_metadata: None,
+        usage_totals: TokenTotals {
+            uncached_input: usage_uncached.max(0) as u64,
+            cached_input: usage_cached.max(0) as u64,
+            cache_creation: usage_creation.max(0) as u64,
+            output: usage_output.max(0) as u64,
+            reasoning: usage_reasoning.max(0) as u64,
+        },
+        usage_turns: usage_turns.max(0) as u64,
         messages: Vec::new(),
         transcript_blocks: Vec::new(),
         turns: Vec::new(),
@@ -2019,8 +2096,11 @@ fn message_fingerprint(message: &Message, position: usize) -> u64 {
 /// listing sessions never has to deserialize a transcript.
 const UPSERT_SESSION: &str = "INSERT INTO sessions(
          id, project_id, title, auto_title, provider, model, status,
-         created_at, updated_at, last_reply_at, group_id
-     ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         created_at, updated_at, last_reply_at, group_id,
+         usage_uncached, usage_cached, usage_creation, usage_output,
+         usage_reasoning, usage_turns
+     ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+              ?12, ?13, ?14, ?15, ?16, ?17)
      ON CONFLICT(id) DO UPDATE SET
          project_id    = excluded.project_id,
          title         = excluded.title,
@@ -2031,7 +2111,13 @@ const UPSERT_SESSION: &str = "INSERT INTO sessions(
          created_at    = excluded.created_at,
          updated_at    = excluded.updated_at,
          last_reply_at = excluded.last_reply_at,
-         group_id      = excluded.group_id";
+         group_id      = excluded.group_id,
+         usage_uncached  = excluded.usage_uncached,
+         usage_cached    = excluded.usage_cached,
+         usage_creation  = excluded.usage_creation,
+         usage_output    = excluded.usage_output,
+         usage_reasoning = excluded.usage_reasoning,
+         usage_turns     = excluded.usage_turns";
 
 const INSERT_PROJECT: &str = "INSERT INTO projects(id, name, path, position, created_at)
      VALUES(?1, ?2, ?3, ?4, ?5)
@@ -2073,6 +2159,12 @@ fn session_params(session: &AgentSession) -> Vec<rusqlite::types::Value> {
         session
             .group_id
             .map_or(Value::Null, |id| Value::Text(id.to_string())),
+        Value::Integer(session.usage_totals.uncached_input as i64),
+        Value::Integer(session.usage_totals.cached_input as i64),
+        Value::Integer(session.usage_totals.cache_creation as i64),
+        Value::Integer(session.usage_totals.output as i64),
+        Value::Integer(session.usage_totals.reasoning as i64),
+        Value::Integer(session.usage_turns as i64),
     ]
 }
 
@@ -2092,7 +2184,7 @@ mod tests {
     use base64::Engine as _;
 
     fn temporary_directory() -> PathBuf {
-        std::env::temp_dir().join(format!("waku-state-{}", Uuid::new_v4()))
+        std::env::temp_dir().join(format!("mack-state-{}", Uuid::new_v4()))
     }
 
     fn store_in(directory: &Path) -> StateStore {
@@ -2447,7 +2539,7 @@ mod tests {
         state.sessions[0].auto_title = Some("Investigate".into());
         state.sessions[0].workspace = SessionWorkspace::Worktree {
             path: PathBuf::from("/tmp/worktrees/investigate"),
-            branch: "waku/investigate".into(),
+            branch: "mack/investigate".into(),
         };
         state.sessions[0].begin_turn("Ask");
         state.sessions[0].push_message(MessageRole::Assistant, "an answer");
@@ -2480,7 +2572,7 @@ mod tests {
             session.workspace,
             SessionWorkspace::Worktree {
                 path: PathBuf::from("/tmp/worktrees/investigate"),
-                branch: "waku/investigate".into(),
+                branch: "mack/investigate".into(),
             }
         );
         assert!(
@@ -2982,10 +3074,10 @@ mod tests {
         }
         #[cfg(not(debug_assertions))]
         {
-            assert_eq!(directory, Some(std::ffi::OsStr::new("Waku")));
+            assert_eq!(directory, Some(std::ffi::OsStr::new("Mack")));
             let configuration_directory = dirs::home_dir()
                 .unwrap_or_else(std::env::temp_dir)
-                .join(".waku");
+                .join(".mack");
             assert_eq!(
                 store.app_settings_path,
                 configuration_directory.join("app.json")
@@ -3704,6 +3796,82 @@ mod tests {
         assert_eq!(updated as u64, session.updated_at);
         assert_eq!(last_reply.map(|at| at as u64), session.last_reply_at);
         assert!(last_reply.is_some(), "a submitted turn sets last_reply_at");
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn mack_usage_totals_sum_saved_sessions_without_hydrating() {
+        let directory = temporary_directory();
+        let store = store_in(&directory);
+        let mut state = PersistedState::empty();
+        let project_id = Uuid::new_v4();
+
+        let mut first = AgentSession::new(project_id, ProviderKind::ChatGpt);
+        first.begin_turn("one");
+        first.finish_active_turn(crate::model::TurnStatus::Completed);
+        first.usage_totals.add(&TokenTotals {
+            uncached_input: 100,
+            cached_input: 800,
+            cache_creation: 50,
+            output: 200,
+            reasoning: 30,
+        });
+        first.usage_turns = 2;
+        state.push_session(first);
+
+        let mut second = AgentSession::new(project_id, ProviderKind::ChatGpt);
+        second.begin_turn("two");
+        second.finish_active_turn(crate::model::TurnStatus::Completed);
+        second.usage_totals.add(&TokenTotals {
+            uncached_input: 10,
+            cached_input: 0,
+            cache_creation: 0,
+            output: 5,
+            reasoning: 0,
+        });
+        second.usage_turns = 1;
+        state.push_session(second);
+
+        store.save(&mut state).unwrap();
+
+        // The list path carries the totals: no transcript is deserialized to
+        // read them back.
+        let reloaded = store_in(&directory).load().unwrap();
+        assert_eq!(reloaded.sessions.len(), 2);
+        for session in &reloaded.sessions {
+            assert!(!session.detail_loaded);
+        }
+        let reloaded_first = reloaded
+            .sessions
+            .iter()
+            .find(|session| session.usage_turns == 2)
+            .expect("the two-turn session reloaded");
+        assert_eq!(reloaded_first.usage_totals.uncached_input, 100);
+        assert_eq!(reloaded_first.usage_totals.cached_input, 800);
+        assert_eq!(reloaded_first.usage_totals.cache_creation, 50);
+        assert_eq!(reloaded_first.usage_totals.output, 200);
+        assert_eq!(reloaded_first.usage_totals.reasoning, 30);
+
+        let totals = store.mack_usage_totals().unwrap();
+        assert_eq!(totals.totals.uncached_input, 110);
+        assert_eq!(totals.totals.cached_input, 800);
+        assert_eq!(totals.totals.cache_creation, 50);
+        assert_eq!(totals.totals.output, 205);
+        assert_eq!(totals.totals.reasoning, 30);
+        assert_eq!(totals.total_tokens(), 110 + 800 + 50 + 205);
+        assert_eq!(totals.turns, 3);
+        assert_eq!(totals.sessions, 2);
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn mack_usage_totals_on_an_empty_store_are_zero() {
+        let directory = temporary_directory();
+        let store = store_in(&directory);
+        let totals = store.mack_usage_totals().unwrap();
+        assert_eq!(totals, MackUsageTotals::default());
 
         fs::remove_dir_all(directory).ok();
     }

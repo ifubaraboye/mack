@@ -12,6 +12,7 @@ import type { RuntimeMode } from "./RuntimeMode";
 import type { SessionStatus } from "./SessionStatus";
 import type { SessionWorkspace } from "./SessionWorkspace";
 import type { ThreadGoal } from "./ThreadGoal";
+import type { TokenTotals } from "./TokenTotals";
 import type { TranscriptBlock } from "./TranscriptBlock";
 
 export type AgentSession = { id: string,
@@ -72,7 +73,17 @@ thread_goal?: ThreadGoal | null,
  * Context-window occupancy from the live stream, kept so a resumed
  * session's meter starts where the conversation left off.
  */
-context_usage?: ContextUsage | null, runtime_event_cursor?: RuntimeEventCursor | null,
+context_usage?: ContextUsage | null,
+/**
+ * Cumulative token usage for turns executed inside Mack, captured live
+ * from each provider stream (`DriverEvent::TurnUsage`). Stored as list
+ * columns so lifetime totals never need to deserialize a transcript.
+ */
+usage_totals: TokenTotals,
+/**
+ * How many successful Mack-driven turns contributed to `usage_totals`.
+ */
+usage_turns: number, runtime_event_cursor?: RuntimeEventCursor | null,
 /**
  * Read-only compatibility field for v1 state files. New saves omit it.
  */

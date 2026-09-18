@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::WireDriverEvent;
 use crate::computer_use::{ComputerTarget, ComputerUsePhase, ComputerUseState};
 use crate::model::{ActivityKind, DriverEvent, PermissionOption, UserInputQuestion};
+use crate::usage_history::TokenTotals;
 
 pub fn decode_enum<T: DeserializeOwned>(value: &str) -> anyhow::Result<T> {
     serde_json::from_value(Value::String(value.to_owned()))
@@ -114,6 +115,7 @@ pub fn event_to_wire(event: DriverEvent) -> anyhow::Result<WireDriverEvent> {
             }),
         ),
         DriverEvent::PlanUsageUpdated(usage) => ("planUsageUpdated", serde_json::to_value(usage)?),
+        DriverEvent::TurnUsage { totals } => ("turnUsage", serde_json::to_value(totals)?),
         DriverEvent::GoalUpdated(goal) => ("goalUpdated", serde_json::to_value(goal)?),
         DriverEvent::TurnFinished { success, summary } => (
             "turnFinished",
@@ -204,6 +206,9 @@ pub fn event_from_wire(event: WireDriverEvent) -> anyhow::Result<DriverEvent> {
             }
         }
         "planUsageUpdated" => DriverEvent::PlanUsageUpdated(serde_json::from_value(payload)?),
+        "turnUsage" => DriverEvent::TurnUsage {
+            totals: serde_json::from_value::<TokenTotals>(payload)?,
+        },
         "goalUpdated" => DriverEvent::GoalUpdated(serde_json::from_value(payload)?),
         "turnFinished" => {
             let finished: TurnFinishedWire = serde_json::from_value(payload)?;
@@ -289,6 +294,28 @@ struct TurnFinishedWire {
 mod tests {
     use super::*;
     use crate::model::{ThreadGoal, ThreadGoalStatus, UserInputOption, UserInputQuestion};
+    use crate::usage_history::TokenTotals;
+
+    #[test]
+    fn turn_usage_round_trips_through_the_daemon_wire() {
+        let totals = TokenTotals {
+            uncached_input: 100,
+            cached_input: 800,
+            cache_creation: 50,
+            output: 200,
+            reasoning: 30,
+        };
+        let wire = event_to_wire(DriverEvent::TurnUsage { totals }).unwrap();
+        assert_eq!(wire.kind, "turnUsage");
+
+        let DriverEvent::TurnUsage {
+            totals: round_tripped,
+        } = event_from_wire(wire).unwrap()
+        else {
+            panic!("the event changed variants during its wire round trip");
+        };
+        assert_eq!(round_tripped, totals);
+    }
 
     #[test]
     fn goal_updates_round_trip_through_the_daemon_wire() {

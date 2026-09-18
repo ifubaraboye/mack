@@ -468,11 +468,11 @@ mod tests {
     }
 
     fn repository() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("waku-commit-test-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("mack-commit-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         run_git(&root, &["init", "-b", "main"]);
-        run_git(&root, &["config", "user.name", "Waku Tests"]);
-        run_git(&root, &["config", "user.email", "waku@example.com"]);
+        run_git(&root, &["config", "user.name", "Mack Tests"]);
+        run_git(&root, &["config", "user.email", "mack@example.com"]);
         fs::write(root.join("README.md"), "one\n").unwrap();
         run_git(&root, &["add", "."]);
         run_git(&root, &["commit", "-m", "initial"]);

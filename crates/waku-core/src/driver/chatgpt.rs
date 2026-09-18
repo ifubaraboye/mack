@@ -39,8 +39,9 @@ use uuid::Uuid;
 use super::{DriverControl, DriverEventSender, DriverStartOptions, SessionOptions};
 use crate::chatgpt_protocol::{
     ChatGptError, ChatGptErrorCode, CodexRequestHeaders, ResponsesSseParser, ResponsesStreamEvent,
-    completed_output_items, filter_codex_input, is_unsupported_service_tier_error,
-    normalize_responses_body, parse_retry_after_secs, validate_responses_request,
+    completed_output_items, completed_token_usage, filter_codex_input,
+    is_unsupported_service_tier_error, normalize_responses_body, parse_retry_after_secs,
+    validate_responses_request,
 };
 use crate::chatgpt_session::{
     CURL_PATH, ChatGptSessionManager, FreshAuth, default_session_manager,
@@ -51,6 +52,7 @@ use crate::model::{
     ActivityKind, ChatGptHistoryRole, ChatGptHistorySeed, DriverEvent, ProviderResumeCursor,
 };
 use crate::persistence::StateStore;
+use crate::usage_history::TokenTotals;
 
 /// Total curl wall-clock budget per turn attempt. Streaming turns run for
 /// minutes; unary auth calls keep their own 20s budget elsewhere.
@@ -177,13 +179,13 @@ impl ResponsesStreamTransport for CurlStreamTransport {
 }
 
 /// Writes the JSON request body to an owner-only temp file. The body holds
-/// the user's prompt (already stored in Waku's own session) but no
+/// the user's prompt (already stored in Mack's own session) but no
 /// credentials; stdin is claimed by the `-K -` header config, so the body
 /// cannot travel there too.
 fn write_body_file(body: &str) -> Result<std::path::PathBuf, ChatGptError> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
-        "waku-chatgpt-resp-{}-{}.json",
+        "mack-chatgpt-resp-{}-{}.json",
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::SeqCst)
     ));
@@ -303,7 +305,7 @@ fn network_error(message: &str) -> ChatGptError {
 /// stripping, token-cap rejection). When `web_search` is set, the
 /// provider-managed `web_search` tool rides along (`tool_choice` defaults to
 /// `auto`, so the model searches only when it judges it useful); the search
-/// executes inside the provider — Waku never sees credentials for it and
+/// executes inside the provider — Mack never sees credentials for it and
 /// runs no tool loop. `instructions` overrides the default Codex system
 /// instructions when set (memory context); title generation passes `None`.
 /// Returns the model and the JSON text.
@@ -491,7 +493,7 @@ impl ChatGptDriver {
         }));
         let (commands, incoming) = unbounded();
         // Restart resume: rebuild the resend-history a live worker would
-        // have carried from the persisted Waku transcript seed. Post-seed
+        // have carried from the persisted Mack transcript seed. Post-seed
         // behavior is identical to a worker that had remained alive — the
         // next prompt still appends exactly once via `execute_turn`.
         let (history, turn_starts) =
@@ -511,7 +513,7 @@ impl ChatGptDriver {
         };
         worker.enforce_history_cap();
         std::thread::Builder::new()
-            .name("waku-chatgpt-driver".into())
+            .name("mack-chatgpt-driver".into())
             .spawn(move || worker.run(incoming))
             .map_err(|error| anyhow::anyhow!("could not start the ChatGPT driver: {error}"))?;
         Ok(Self {
@@ -748,7 +750,7 @@ impl Worker {
         let user_text = self.last_turn_user.clone();
         let assistant_text = self.last_turn_assistant.clone();
         let _ = std::thread::Builder::new()
-            .name("waku-memory-extraction".into())
+            .name("mack-memory-extraction".into())
             .spawn(move || {
                 run_memory_extraction(
                     transport.as_ref(),
@@ -829,11 +831,15 @@ impl Worker {
                     output,
                     text,
                     search_calls,
+                    usage,
                 } => {
                     self.commit_history(user_message.clone(), output, text.clone(), search_calls);
                     self.last_turn_user = prompt.to_owned();
                     self.last_turn_assistant = text;
                     self.last_turn_account = auth.account_id().to_owned();
+                    // Cumulative turn usage, before the turn settles so the
+                    // app records it even if the finish races a shutdown.
+                    self.emit(DriverEvent::TurnUsage { totals: usage });
                     return TurnEnd::Completed;
                 }
                 PostOutcome::Interrupted => {
@@ -962,6 +968,7 @@ impl Worker {
                             }
                             ResponsesStreamEvent::Completed(payload) => {
                                 return PostOutcome::Done {
+                                    usage: completed_token_usage(&payload),
                                     output: completed_output_items(&payload),
                                     text: std::mem::take(&mut text),
                                     search_calls: std::mem::take(&mut search_calls),
@@ -1108,7 +1115,7 @@ impl Worker {
 /// streaming-collect loop) but never emits events and never touches history,
 /// caps, seeds, or the transcript — extraction is invisible by design.
 ///
-/// `source_session_id` is `None`: the worker never learns the Waku session
+/// `source_session_id` is `None`: the worker never learns the Mack session
 /// id (`DriverStartOptions` carries none, and widening the wire protocol is
 /// out of scope), so provenance waits for a later phase.
 #[allow(clippy::too_many_arguments)]
@@ -1213,6 +1220,7 @@ enum PostOutcome {
         output: Vec<Value>,
         text: String,
         search_calls: Vec<Value>,
+        usage: TokenTotals,
     },
     Interrupted,
     Fatal(String),
@@ -1789,7 +1797,7 @@ mod tests {
     }
 
     fn temp_memory_store() -> (StateStore, std::path::PathBuf) {
-        let directory = std::env::temp_dir().join(format!("waku-memory-{}", Uuid::new_v4()));
+        let directory = std::env::temp_dir().join(format!("mack-memory-{}", Uuid::new_v4()));
         let store = StateStore::with_settings_paths(
             directory.join("app.db"),
             directory.join("app.json"),
@@ -2311,7 +2319,7 @@ mod tests {
     fn broken_memory_database_still_sends_the_request() {
         // A directory is not a database: every memory lookup fails, and the
         // turn must proceed with default instructions regardless.
-        let directory = std::env::temp_dir().join(format!("waku-memory-{}", Uuid::new_v4()));
+        let directory = std::env::temp_dir().join(format!("mack-memory-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&directory).unwrap();
         let chat = format!(
             "{}{}",

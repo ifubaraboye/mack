@@ -153,7 +153,7 @@ pub struct DriverStartOptions {
     pub agent_preset: Option<String>,
     pub computer_use_enabled: bool,
     pub provider_cursor: Option<ProviderResumeCursor>,
-    /// ChatGPT-only resume history, seeded from the persisted Waku
+    /// ChatGPT-only resume history, seeded from the persisted Mack
     /// transcript. Forwarded opaquely to the daemon; ignored otherwise.
     pub chatgpt_history: Option<Vec<ChatGptHistorySeed>>,
     /// Claude-only resume history. Same contract as `chatgpt_history`.

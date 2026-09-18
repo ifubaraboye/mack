@@ -119,12 +119,12 @@ pub fn detect_trigger(text: &str, cursor: usize) -> Option<Trigger> {
 ///
 /// - Claude Code: `.claude/commands` and `.claude/skills` in the project and
 ///   the config dir (`$CLAUDE_CONFIG_DIR`, default `~/.claude`).
-/// - Codex: `~/.codex/prompts`, expanded by Waku at submit.
+/// - Codex: `~/.codex/prompts`, expanded by Mack at submit.
 /// - OpenCode: `.opencode/command` and `~/.config/opencode/command`, resolved
 ///   by the server's native command endpoint.
-/// - Cursor: `.cursor/commands` in the project and home, expanded by Waku.
+/// - Cursor: `.cursor/commands` in the project and home, expanded by Mack.
 /// - Pi: prompt templates in `.pi/prompts` and `~/.pi/agent/prompts`,
-///   expanded by Waku, plus skills in `.pi/skills` and `~/.pi/agent/skills`.
+///   expanded by Mack, plus skills in `.pi/skills` and `~/.pi/agent/skills`.
 /// - Oh My Pi: the same layout under its own root — commands in
 ///   `.omp/commands` and `~/.omp/agent/commands`, skills in `.omp/skills`
 ///   and `~/.omp/agent/skills`.
@@ -140,8 +140,8 @@ pub fn detect_trigger(text: &str, cursor: usize) -> Option<Trigger> {
 /// Pi and Oh My Pi skills retain their short name and resolve to
 /// `/skill:name` there.
 ///
-/// On top of provider sources, every provider reads Waku's user-defined layer
-/// (`.waku/commands` and `~/.config/waku/commands`).
+/// On top of provider sources, every provider reads Mack's user-defined layer
+/// (`.mack/commands` and `~/.config/mack/commands`).
 pub fn discover_slash_commands(
     provider: ProviderKind,
     project_root: &Path,
@@ -166,10 +166,10 @@ fn assemble_slash_commands(
     let mut commands = Vec::new();
     // ChatGPT-only: no provider filesystem command/skill trees. Its catalog
     // surface arrives with the Stage 3 conversation driver. Only the shared
-    // `.agents/skills` + `.waku/commands` layer below applies.
+    // `.agents/skills` + `.mack/commands` layer below applies.
     let _ = provider;
     // The cross-tool skill standard, read by Amp and OpenCode among others;
-    // Waku lists it for every provider.
+    // Mack lists it for every provider.
     scan_skill_files(
         provider,
         &project_root.join(".agents/skills"),
@@ -179,14 +179,14 @@ fn assemble_slash_commands(
         scan_skill_files(provider, &home.join(".agents/skills"), &mut commands);
     }
     scan_command_files(
-        &project_root.join(".waku/commands"),
+        &project_root.join(".mack/commands"),
         CommandScope::Project,
         true,
         &mut commands,
     );
     if let Some(home) = home.as_deref() {
         scan_command_files(
-            &home.join(".config/waku/commands"),
+            &home.join(".config/mack/commands"),
             CommandScope::User,
             true,
             &mut commands,
@@ -194,7 +194,7 @@ fn assemble_slash_commands(
     }
     commands.extend(cli_commands);
     let mut commands = dedup_and_sort_commands(commands);
-    // `/resume` belongs to Waku rather than any one provider. Reserve the
+    // `/resume` belongs to Mack rather than any one provider. Reserve the
     // name after provider/project discovery so every composer exposes the
     // same picker and submitting it can never leak into an agent turn.
     commands.retain(|command| command.name != "resume");
@@ -1125,14 +1125,14 @@ mod tests {
 
     #[test]
     fn provider_cli_catalog_entries_join_the_composer_index() {
-        let root = std::env::temp_dir().join(format!("waku-cli-catalog-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("mack-cli-catalog-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let commands = assemble_slash_commands(
             ProviderKind::ChatGpt,
             &root,
             vec![SlashCommand {
-                name: "waku-test-dynamic-command".into(),
+                name: "mack-test-dynamic-command".into(),
                 description: "Reported by the CLI".into(),
                 scope: CommandScope::Builtin,
                 argument_hint: Some("[target]".into()),
@@ -1141,7 +1141,7 @@ mod tests {
         );
         let command = commands
             .iter()
-            .find(|command| command.name == "waku-test-dynamic-command")
+            .find(|command| command.name == "mack-test-dynamic-command")
             .expect("CLI command must join the index");
         assert_eq!(command.description, "Reported by the CLI");
         assert_eq!(command.argument_hint.as_deref(), Some("[target]"));
@@ -1149,12 +1149,12 @@ mod tests {
     }
 
     #[test]
-    fn waku_templates_still_expand() {
+    fn mack_templates_still_expand() {
         let root =
-            std::env::temp_dir().join(format!("waku-native-commands-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(root.join(".waku/commands")).unwrap();
+            std::env::temp_dir().join(format!("mack-native-commands-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join(".mack/commands")).unwrap();
         std::fs::write(
-            root.join(".waku/commands/waku-review.md"),
+            root.join(".mack/commands/mack-review.md"),
             "Review $ARGUMENTS",
         )
         .unwrap();
@@ -1174,20 +1174,20 @@ mod tests {
             None
         );
         assert_eq!(
-            resolved_submission(ProviderKind::ChatGpt, "/waku-review changes", &commands)
+            resolved_submission(ProviderKind::ChatGpt, "/mack-review changes", &commands)
                 .as_deref(),
             Some("Review changes")
         );
         assert!(
             commands.iter().any(|command| command.name == "init")
-                && commands.iter().any(|command| command.name == "waku-review")
+                && commands.iter().any(|command| command.name == "mack-review")
         );
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn shared_skills_are_listed_raw_on_every_provider() {
-        let root = std::env::temp_dir().join(format!("waku-skills-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("mack-skills-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join(".agents/skills/deploy-runbook")).unwrap();
         std::fs::write(
@@ -1219,11 +1219,11 @@ mod tests {
     }
 
     #[test]
-    fn waku_resume_is_reserved_and_listed_for_every_provider() {
-        let root = std::env::temp_dir().join(format!("waku-resume-command-{}", std::process::id()));
+    fn mack_resume_is_reserved_and_listed_for_every_provider() {
+        let root = std::env::temp_dir().join(format!("mack-resume-command-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join(".waku/commands")).unwrap();
-        std::fs::write(root.join(".waku/commands/resume.md"), "Project override").unwrap();
+        std::fs::create_dir_all(root.join(".mack/commands")).unwrap();
+        std::fs::write(root.join(".mack/commands/resume.md"), "Project override").unwrap();
 
         for provider in ProviderKind::ALL {
             let commands = assemble_slash_commands(provider, &root, Vec::new());
@@ -1251,7 +1251,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn symlinked_skills_and_command_dirs_are_discovered() {
-        let root = std::env::temp_dir().join(format!("waku-symlink-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("mack-symlink-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         // The real content lives outside the scanned roots, linked in — the
         // dotfile-repo layout that a `DirEntry::file_type` check misses.
@@ -1292,7 +1292,7 @@ mod tests {
     #[test]
     fn symlinked_skill_keeps_native_short_name() {
         let root =
-            std::env::temp_dir().join(format!("waku-codex-plugin-skill-{}", std::process::id()));
+            std::env::temp_dir().join(format!("mack-codex-plugin-skill-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let plugin = root.join("plugin");
         let skill = plugin.join("skills/to-spec");
@@ -1321,7 +1321,7 @@ mod tests {
 
     #[test]
     fn derived_directories_join_the_file_index() {
-        let root = std::env::temp_dir().join(format!("waku-files-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("mack-files-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src/deep")).unwrap();
         std::fs::write(root.join("src/deep/lib.rs"), "x").unwrap();

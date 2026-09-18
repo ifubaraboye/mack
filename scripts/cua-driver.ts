@@ -1,5 +1,5 @@
 // Pinned SDK artifacts, shared by every packager and the dev watcher.
-// Only libraries/support files are bundled; Waku never runs cua-driver serve.
+// Only libraries/support files are bundled; Mack never runs cua-driver serve.
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -51,7 +51,7 @@ export function cuaPlatform(
 
 export async function prepareCuaSdk(platform = cuaPlatform()): Promise<string> {
   const [checksum, library] = artifacts[platform];
-  const cacheRoot = join(root, ".waku-cache", "cua-driver", cuaVersion);
+  const cacheRoot = join(root, ".mack-cache", "cua-driver", cuaVersion);
   const destination = join(cacheRoot, platform);
   const support = platform.startsWith("windows")
     ? "cua-driver-uia.exe"
@@ -106,7 +106,7 @@ export async function bundleComputerUse(
   const suffix = process.platform === "win32" ? ".exe" : "";
   await mkdir(binDirectory, { recursive: true });
   await mkdir(resourcesDirectory, { recursive: true });
-  for (const file of [`waku_js_repl${suffix}`, `waku_computer_use${suffix}`]) {
+  for (const file of [`mack_js_repl${suffix}`, `mack_computer_use${suffix}`]) {
     const destination = join(binDirectory, file);
     if (resolve(target, file) !== resolve(destination))
       await cp(join(target, file), destination);
@@ -136,8 +136,8 @@ export async function bundleComputerUse(
     await cp(join(root, source!), destination);
   }
   await writeCuaSkill(
-    join(binDirectory, `waku_computer_use${suffix}`),
-    join(resourcesDirectory, "skills/waku-computer-use/SKILL.md"),
+    join(binDirectory, `mack_computer_use${suffix}`),
+    join(resourcesDirectory, "skills/mack-computer-use/SKILL.md"),
   );
 }
 

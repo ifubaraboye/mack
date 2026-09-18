@@ -20,11 +20,11 @@ const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const DEFAULT_EXECUTION_TIMEOUT_MS: u64 = 30_000;
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 
-// Instructions for Waku's persistent QuickJS runtime and its jsRepl helpers.
-const SERVER_INSTRUCTIONS: &str = "Use `js` to run JavaScript in the persistent QuickJS kernel. When a skill or prompt says to use `waku_js_repl`, call this server's `js` execution tool. Calls default to a 30000 ms (30 seconds) timeout when `timeout_ms` is omitted. The runtime exposes `jsRepl.cwd`, `jsRepl.homeDir`, `jsRepl.tmpDir`, `jsRepl.requestMeta`, `jsRepl.setResponseMeta(...)`, and `await jsRepl.emitImage(...)`. Top-level bindings persist across `js` calls until `js_reset`; do not redeclare existing `const` or `let` names. Reuse existing bindings, use top-level `var` for reusable state that may be assigned again, or choose a fresh descriptive name.";
+// Instructions for Mack's persistent QuickJS runtime and its jsRepl helpers.
+const SERVER_INSTRUCTIONS: &str = "Use `js` to run JavaScript in the persistent QuickJS kernel. When a skill or prompt says to use `mack_js_repl`, call this server's `js` execution tool. Calls default to a 30000 ms (30 seconds) timeout when `timeout_ms` is omitted. The runtime exposes `jsRepl.cwd`, `jsRepl.homeDir`, `jsRepl.tmpDir`, `jsRepl.requestMeta`, `jsRepl.setResponseMeta(...)`, and `await jsRepl.emitImage(...)`. Top-level bindings persist across `js` calls until `js_reset`; do not redeclare existing `const` or `let` names. Reuse existing bindings, use top-level `var` for reusable state that may be assigned again, or choose a fresh descriptive name.";
 
 const KERNEL_BOOTSTRAP: &str = include_str!("js_repl_bootstrap.js");
-const JS_TOOL_DESCRIPTION: &str = "Run JavaScript in a persistent QuickJS kernel with top-level await. This is the JavaScript execution tool for the `waku_js_repl` MCP server; use it whenever instructions say to use `waku_js_repl`, the Waku JavaScript REPL MCP, or run Waku JavaScript REPL code. If `timeout_ms` is omitted, execution times out after 30000 ms (30 seconds); pass a larger `timeout_ms` for slow Computer Use automation or other long-running operations. Use `jsRepl.cwd`, `jsRepl.homeDir`, and `jsRepl.tmpDir` to inspect host paths. Use `jsRepl.requestMeta` to inspect the current MCP request `_meta` object during a tool call. Use `jsRepl.setResponseMeta(meta)` to attach top-level MCP result `_meta`; repeated calls shallow-merge object keys for the current tool call. Use `jsRepl.write(value)` to add output without a newline. Strings are unchanged; other values use console-style formatting, including BigInt and circular objects. Prefer it over `console.log(...)` for final output; `console.log(...)` remains useful for debugging or multiple values. Use `await jsRepl.emitImage(imageLike)` to return images; each call adds one image to the outer tool result, so call it multiple times to emit multiple images. Supported image inputs are a base64 data URL, a file URL, an object with a `url` property, or a Cua image content block with `data` and `mimeType`. Saved references to `jsRepl.write(...)` and `jsRepl.emitImage(...)` stay reusable across calls. Scheduled callbacks only run while a JavaScript execution call is active; overdue timers resume at the start of the next call. Top-level bindings persist across calls until `js_reset`. If a call throws, prior bindings remain available and bindings that finished initializing before the throw often remain reusable. For reusable names that may be assigned again later, prefer top-level `var name = ...`; `var` can be redeclared across calls. If you hit `SyntaxError: Identifier 'x' has already been declared`, reuse the existing binding if possible, reassign it only if it was declared with `let` or `var`, or pick a new name instead of resetting immediately; a previous `const x` cannot be changed into `var x`. Use a short `{ ... }` block only for temporary scratch names, and do not wrap an entire call in block scope if you want those names reusable later. Initialize Cua Driver with `await setupComputerUseRuntime({ globals: globalThis })`, which exposes every native tool as `cua.<tool_name>(arguments)`, such as `cua.list_apps()` or `cua.click(arguments)`. The bundled Computer Use skill documents the method signatures; call the methods directly. Module imports are not supported. Prefer `jsRepl.write(...)` for text or formatted values and `jsRepl.emitImage(...)` for images.";
+const JS_TOOL_DESCRIPTION: &str = "Run JavaScript in a persistent QuickJS kernel with top-level await. This is the JavaScript execution tool for the `mack_js_repl` MCP server; use it whenever instructions say to use `mack_js_repl`, the Mack JavaScript REPL MCP, or run Mack JavaScript REPL code. If `timeout_ms` is omitted, execution times out after 30000 ms (30 seconds); pass a larger `timeout_ms` for slow Computer Use automation or other long-running operations. Use `jsRepl.cwd`, `jsRepl.homeDir`, and `jsRepl.tmpDir` to inspect host paths. Use `jsRepl.requestMeta` to inspect the current MCP request `_meta` object during a tool call. Use `jsRepl.setResponseMeta(meta)` to attach top-level MCP result `_meta`; repeated calls shallow-merge object keys for the current tool call. Use `jsRepl.write(value)` to add output without a newline. Strings are unchanged; other values use console-style formatting, including BigInt and circular objects. Prefer it over `console.log(...)` for final output; `console.log(...)` remains useful for debugging or multiple values. Use `await jsRepl.emitImage(imageLike)` to return images; each call adds one image to the outer tool result, so call it multiple times to emit multiple images. Supported image inputs are a base64 data URL, a file URL, an object with a `url` property, or a Cua image content block with `data` and `mimeType`. Saved references to `jsRepl.write(...)` and `jsRepl.emitImage(...)` stay reusable across calls. Scheduled callbacks only run while a JavaScript execution call is active; overdue timers resume at the start of the next call. Top-level bindings persist across calls until `js_reset`. If a call throws, prior bindings remain available and bindings that finished initializing before the throw often remain reusable. For reusable names that may be assigned again later, prefer top-level `var name = ...`; `var` can be redeclared across calls. If you hit `SyntaxError: Identifier 'x' has already been declared`, reuse the existing binding if possible, reassign it only if it was declared with `let` or `var`, or pick a new name instead of resetting immediately; a previous `const x` cannot be changed into `var x`. Use a short `{ ... }` block only for temporary scratch names, and do not wrap an entire call in block scope if you want those names reusable later. Initialize Cua Driver with `await setupComputerUseRuntime({ globals: globalThis })`, which exposes every native tool as `cua.<tool_name>(arguments)`, such as `cua.list_apps()` or `cua.click(arguments)`. The bundled Computer Use skill documents the method signatures; call the methods directly. Module imports are not supported. Prefer `jsRepl.write(...)` for text or formatted values and `jsRepl.emitImage(...)` for images.";
 
 #[derive(Default)]
 struct CallOutput {
@@ -131,7 +131,7 @@ pub fn serve_stdio() -> anyhow::Result<()> {
 
 fn serve<R: BufRead, W: Write>(mut input: R, mut output: W) -> anyhow::Result<()> {
     let mut repl =
-        ReplHost::new(std::env::var_os("WAKU_COMPUTER_USE_SESSIONS_DIRECTORY").map(PathBuf::from))?;
+        ReplHost::new(std::env::var_os("MACK_COMPUTER_USE_SESSIONS_DIRECTORY").map(PathBuf::from))?;
     let mut line = String::new();
     loop {
         line.clear();
@@ -234,26 +234,26 @@ impl ReplHost {
             Self::Single(repl) => call_tool(repl, params),
             Self::Sessions { directory, kernels } => {
                 // OpenCode supplies this host metadata; it is never an
-                // agent-provided tool argument. Sessions without a Waku
+                // agent-provided tool argument. Sessions without a Mack
                 // registration cannot use the shared workspace connection.
                 let session = params
                     .pointer("/_meta/sessionID")
                     .and_then(JsonValue::as_str)
                     .filter(|session| !session.is_empty() && session.len() <= 160)
                     .ok_or_else(|| {
-                        anyhow!("OpenCode session metadata is required for Waku Computer Use")
+                        anyhow!("OpenCode session metadata is required for Mack Computer Use")
                     })?;
                 kernels.retain(|id, _| session_config_path(directory, id).is_file());
                 let config_path = session_config_path(directory, session);
                 let bytes = fs::read(&config_path)
                     .context("Computer Use is not enabled for this OpenCode session")?;
                 let config: SessionConfig = serde_json::from_slice(&bytes)
-                    .context("invalid Waku Computer Use session registration")?;
+                    .context("invalid Mack Computer Use session registration")?;
                 if !config.process_directory.is_dir() {
                     kernels.remove(session);
-                    bail!("this Waku Computer Use session has ended");
+                    bail!("this Mack Computer Use session has ended");
                 }
-                // A reattached Waku runtime gets a fresh process directory.
+                // A reattached Mack runtime gets a fresh process directory.
                 // Reset only that session, leaving other tasks' bindings intact.
                 if kernels
                     .get(session)
@@ -279,7 +279,7 @@ fn initialize_result() -> JsonValue {
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": {"tools": {"listChanged": false}},
         "serverInfo": {
-            "name": "waku_js_repl",
+            "name": "mack_js_repl",
             "version": env!("CARGO_PKG_VERSION")
         },
         "instructions": SERVER_INSTRUCTIONS
@@ -584,11 +584,11 @@ fn create_kernel(
         |ctx| -> anyhow::Result<(Persistent<Function<'static>>, Persistent<Function<'static>>)> {
             let globals = ctx.globals();
 
-            globals.set("__wakuComputerPlatform", std::env::consts::OS)?;
+            globals.set("__mackComputerPlatform", std::env::consts::OS)?;
             let cua_bridge = bridge.clone();
             let cua_deadline = deadline.clone();
             globals.set(
-                "__wakuCuaCall",
+                "__mackCuaCall",
                 Function::new(ctx.clone(), move |name: String, arguments: String| {
                     let deadline = *cua_deadline.lock();
                     let result = serde_json::from_str::<JsonValue>(&arguments)
@@ -603,7 +603,7 @@ fn create_kernel(
 
             let write_output = call_output.clone();
             globals.set(
-                "__wakuWrite",
+                "__mackWrite",
                 Function::new(ctx.clone(), move |text: String, newline: bool| {
                     let mut active = write_output.lock();
                     let Some(output) = active.as_mut() else {
@@ -619,7 +619,7 @@ fn create_kernel(
 
             let image_output = call_output.clone();
             globals.set(
-                "__wakuEmitImage",
+                "__mackEmitImage",
                 Function::new(ctx.clone(), move |image: String| {
                     let result = decode_image_reference(&image).and_then(|image| {
                         let mut active = image_output.lock();
@@ -638,7 +638,7 @@ fn create_kernel(
 
             let metadata_output = call_output.clone();
             globals.set(
-                "__wakuSetResponseMeta",
+                "__mackSetResponseMeta",
                 Function::new(ctx.clone(), move |metadata: String| {
                     let result = serde_json::from_str::<JsonValue>(&metadata)
                         .context("response metadata is invalid JSON")
@@ -662,7 +662,7 @@ fn create_kernel(
 
             let scheduled_timers = timers.clone();
             globals.set(
-                "__wakuScheduleTimer",
+                "__mackScheduleTimer",
                 Function::new(ctx.clone(), move |delay_ms: u32, repeat: bool| -> u32 {
                     scheduled_timers
                         .lock()
@@ -672,7 +672,7 @@ fn create_kernel(
 
             let cleared_timers = timers.clone();
             globals.set(
-                "__wakuClearTimer",
+                "__mackClearTimer",
                 Function::new(ctx.clone(), move |id: u32| {
                     cleared_timers.lock().clear(id);
                 })?,
@@ -680,7 +680,7 @@ fn create_kernel(
 
             let refreshed_timers = timers.clone();
             globals.set(
-                "__wakuRefreshTimer",
+                "__mackRefreshTimer",
                 Function::new(ctx.clone(), move |id: u32| {
                     refreshed_timers.lock().refresh(id);
                 })?,
@@ -694,14 +694,14 @@ fn create_kernel(
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             let home = dirs::home_dir().unwrap_or_default();
             let temp = std::env::temp_dir();
-            globals.set("__wakuCwd", cwd.display().to_string())?;
-            globals.set("__wakuHomeDir", home.display().to_string())?;
-            globals.set("__wakuTmpDir", temp.display().to_string())?;
+            globals.set("__mackCwd", cwd.display().to_string())?;
+            globals.set("__mackHomeDir", home.display().to_string())?;
+            globals.set("__mackTmpDir", temp.display().to_string())?;
             ctx.eval::<(), _>(KERNEL_BOOTSTRAP)?;
-            let timer_dispatch = globals.get::<_, Function<'_>>("__wakuRunTimer")?;
-            let request_meta_setter = globals.get::<_, Function<'_>>("__wakuSetRequestMeta")?;
-            globals.remove("__wakuRunTimer")?;
-            globals.remove("__wakuSetRequestMeta")?;
+            let timer_dispatch = globals.get::<_, Function<'_>>("__mackRunTimer")?;
+            let request_meta_setter = globals.get::<_, Function<'_>>("__mackSetRequestMeta")?;
+            globals.remove("__mackRunTimer")?;
+            globals.remove("__mackSetRequestMeta")?;
             Ok((
                 Persistent::save(&ctx, timer_dispatch),
                 Persistent::save(&ctx, request_meta_setter),
@@ -919,7 +919,7 @@ impl RequestWatchdog {
             .ok_or_else(|| anyhow!("Computer Use request timed out"))?;
         let (completed, completion) = std::sync::mpsc::channel();
         let thread = std::thread::Builder::new()
-            .name("waku-js-repl-computer-use-timeout".into())
+            .name("mack-js-repl-computer-use-timeout".into())
             .spawn(move || {
                 if completion.recv_timeout(remaining).is_ok() {
                     return false;
@@ -969,23 +969,23 @@ impl HelperConnection {
     fn start(deadline: Option<Instant>, config: Option<&SessionConfig>) -> anyhow::Result<Self> {
         // The SDK host ships in every bundle, but only development builds may
         // run it. Refusing here means a release build never reaches the SDK
-        // even when WAKU_COMPUTER_USE_SERVER is set by hand.
+        // even when MACK_COMPUTER_USE_SERVER is set by hand.
         if !waku_protocol::computer_use::is_available() {
-            bail!("Waku Computer Use is not available in this build");
+            bail!("Mack Computer Use is not available in this build");
         }
         let command = config
             .map(|config| config.server_path.clone())
-            .or_else(|| std::env::var_os("WAKU_COMPUTER_USE_SERVER").map(PathBuf::from))
+            .or_else(|| std::env::var_os("MACK_COMPUTER_USE_SERVER").map(PathBuf::from))
             .ok_or_else(|| {
                 anyhow!(
-                    "WAKU_COMPUTER_USE_SERVER is required before the first Cua Driver operation"
+                    "MACK_COMPUTER_USE_SERVER is required before the first Cua Driver operation"
                 )
             })?;
         let mut helper = Command::new(&command);
         if let Some(config) = config {
             helper
                 .env(
-                    "WAKU_COMPUTER_USE_PROCESS_DIRECTORY",
+                    "MACK_COMPUTER_USE_PROCESS_DIRECTORY",
                     &config.process_directory,
                 )
                 .current_dir(&config.cwd);
@@ -1018,10 +1018,10 @@ impl HelperConnection {
             .ok_or_else(|| anyhow!("Computer Use helper stdout is unavailable"))?;
         if let Some(stderr) = child.stderr.take() {
             std::thread::Builder::new()
-                .name("waku-js-repl-computer-use-stderr".into())
+                .name("mack-js-repl-computer-use-stderr".into())
                 .spawn(move || {
                     for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                        eprintln!("Waku Computer Use: {line}");
+                        eprintln!("Mack Computer Use: {line}");
                     }
                 })?;
         }
@@ -1036,7 +1036,7 @@ impl HelperConnection {
             json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "waku_js_repl", "version": env!("CARGO_PKG_VERSION")}
+                "clientInfo": {"name": "mack_js_repl", "version": env!("CARGO_PKG_VERSION")}
             }),
             deadline,
         )?;
@@ -1152,7 +1152,7 @@ mod tests {
     #[test]
     fn opencode_sessions_isolate_bindings_reset_and_registration_lifetime() {
         let root =
-            std::env::temp_dir().join(format!("waku-repl-sessions-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("mack-repl-sessions-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         let register = |session: &str, generation: &str| {
             let directory = root.join(generation);
@@ -1231,7 +1231,7 @@ mod tests {
             ["js", "js_reset"]
         );
         assert_eq!(tools[0]["description"], JS_TOOL_DESCRIPTION.trim());
-        assert!(SERVER_INSTRUCTIONS.contains("`waku_js_repl`"));
+        assert!(SERVER_INSTRUCTIONS.contains("`mack_js_repl`"));
         assert!(!SERVER_INSTRUCTIONS.contains("`node_repl`"));
         assert!(!SERVER_INSTRUCTIONS.contains("jsRepl.write"));
         assert!(JS_TOOL_DESCRIPTION.contains("jsRepl.write"));

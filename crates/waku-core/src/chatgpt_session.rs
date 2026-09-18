@@ -59,7 +59,7 @@ pub(crate) const CURL_PATH: &str = r"C:\Windows\System32\curl.exe";
 const CURL_TIMEOUT_SECS: &str = "20";
 /// macOS keychain identity for the session data-encryption key.
 #[cfg(target_os = "macos")]
-const KEYCHAIN_SERVICE: &str = "Waku ChatGPT";
+const KEYCHAIN_SERVICE: &str = "Mack ChatGPT";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "session-encryption-key";
 const SESSION_FILE_NAME: &str = "session.json.enc";
@@ -300,11 +300,11 @@ pub struct EncryptedFileStore {
 }
 
 impl EncryptedFileStore {
-    /// `~/.waku/chatgpt` (or the platform temp dir when no home exists).
+    /// `~/.mack/chatgpt` (or the platform temp dir when no home exists).
     pub fn default_dir() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(std::env::temp_dir)
-            .join(".waku")
+            .join(".mack")
             .join("chatgpt")
     }
 
@@ -1335,7 +1335,7 @@ impl ChatGptSessionManager {
 }
 
 /// Default daemon-owned session manager: encrypted file store under
-/// `~/.waku/chatgpt` (in-memory fallback when the directory is unusable),
+/// `~/.mack/chatgpt` (in-memory fallback when the directory is unusable),
 /// curl transport, wall clock. Shared by the auth commands and the Stage 3
 /// `/responses` driver so every daemon path coordinates through the one
 /// credential directory instead of drifting into parallel constructions.
@@ -1344,7 +1344,7 @@ pub fn default_session_manager() -> ChatGptSessionManager {
         match EncryptedFileStore::open(EncryptedFileStore::default_dir()) {
             Ok(store) => Arc::new(store),
             Err(error) => {
-                eprintln!("Waku ChatGPT sessions will not persist across restarts: {error:#}");
+                eprintln!("Mack ChatGPT sessions will not persist across restarts: {error:#}");
                 Arc::new(MemoryStore::default())
             }
         };
@@ -1909,7 +1909,7 @@ mod tests {
 
     #[test]
     fn encrypted_file_store_round_trips_without_plaintext() {
-        let dir = std::env::temp_dir().join(format!("waku-chatgpt-test-{}", unique_suffix()));
+        let dir = std::env::temp_dir().join(format!("mack-chatgpt-test-{}", unique_suffix()));
         let store = EncryptedFileStore::open(dir.clone()).unwrap();
         let access = test_access_token("acct-xyz");
         let session = StoredSession {
@@ -1954,7 +1954,7 @@ mod tests {
 
     #[test]
     fn corrupt_session_file_recovers_to_signed_out() {
-        let dir = std::env::temp_dir().join(format!("waku-chatgpt-corrupt-{}", unique_suffix()));
+        let dir = std::env::temp_dir().join(format!("mack-chatgpt-corrupt-{}", unique_suffix()));
         let store = EncryptedFileStore::open(dir.clone()).unwrap();
         std::fs::write(dir.join(SESSION_FILE_NAME), b"not a session").unwrap();
         // Corrupt state never strands the user: it reads as signed out.

@@ -2,7 +2,7 @@
 import type { ClaudeHistoryRole } from "./ClaudeHistoryRole";
 
 /**
- * One persisted Waku transcript message in Claude-driver shape. Built
+ * One persisted Mack transcript message in Claude-driver shape. Built
  * client-side from the hydrated `AgentSession.messages` when a Claude
  * worker starts, so a restarted worker resends the same conversation a
  * live worker would have carried in memory. Scoped to a single

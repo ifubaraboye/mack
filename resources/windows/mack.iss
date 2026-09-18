@@ -1,4 +1,4 @@
-; Waku's Windows installer.
+; Mack's Windows installer.
 ;
 ; Per-user by design: %LOCALAPPDATA%\Programs needs no elevation, which is
 ; what lets the in-app updater re-run this silently without a UAC prompt.
@@ -31,23 +31,24 @@
 #endif
 
 [Setup]
-; Never change AppId: it is how Windows and every later installer recognize
-; an existing install, and how the updater replaces rather than duplicates it.
-AppId={{8B6C6E4A-3E0F-4F0B-9C5F-2E0E9C4B7A11}
-AppName=Waku
+; Mack's stable AppId: never change it. It is how Windows and every later
+; installer recognize an existing install, and how the updater replaces
+; rather than duplicates it.
+AppId={{6F6BD59F-282F-4841-A983-C06FEF543500}
+AppName=Mack
 AppVersion={#AppVersion}
 VersionInfoVersion={#AppVersion}
-AppPublisher=Waku
-AppPublisherURL=https://waku.sh
-AppSupportURL=https://github.com/egoist/waku/issues
-AppUpdatesURL=https://github.com/egoist/waku/releases
-DefaultDirName={autopf}\Waku
-DefaultGroupName=Waku
-UninstallDisplayName=Waku
-UninstallDisplayIcon={app}\waku.exe
+AppPublisher=Mack
+AppPublisherURL=https://mack.sh
+AppSupportURL=https://github.com/ifubaraboye/mack/issues
+AppUpdatesURL=https://github.com/ifubaraboye/mack/releases
+DefaultDirName={autopf}\Mack
+DefaultGroupName=Mack
+UninstallDisplayName=Mack
+UninstallDisplayIcon={app}\mack.exe
 LicenseFile={#StageDir}\LICENSE
 OutputDir={#OutputDir}
-OutputBaseFilename=Waku-{#AppVersion}-{#Arch}-Setup
+OutputBaseFilename=Mack-{#AppVersion}-{#Arch}-Setup
 SetupIconFile=AppIcon.ico
 Compression=lzma2/max
 SolidCompression=yes
@@ -59,7 +60,7 @@ ArchitecturesInstallIn64BitMode={#Architectures}
 MinVersion=10.0.17763
 ; Two installers must not race — the updater can be triggered again while an
 ; update is already applying.
-SetupMutex=WakuSetup
+SetupMutex=MackSetup
 ; No elevation, so an update never has to ask for it either.
 PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
@@ -67,8 +68,8 @@ DisableReadyPage=yes
 ; The updater passes /DIR, and a manual reinstall should land where the
 ; previous one did rather than asking again.
 UsePreviousAppDir=yes
-; Waku persists continuously to SQLite, so closing it is safe; a silent
-; update cannot stop to ask, and a locked waku.exe would fail the install.
+; Mack persists continuously to SQLite, so closing it is safe; a silent
+; update cannot stop to ask, and a locked mack.exe would fail the install.
 CloseApplications=force
 RestartApplications=no
 
@@ -76,22 +77,22 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "{#StageDir}\waku.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#StageDir}\waku-daemon.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#StageDir}\waku_js_repl.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#StageDir}\waku_computer_use.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\mack.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\mack-daemon.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\mack_js_repl.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\mack_computer_use.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\cua_driver_sdk.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\cua-driver-uia.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\resources\*"; DestDir: "{app}\resources"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Waku"; Filename: "{app}\waku.exe"
-Name: "{userdesktop}\Waku"; Filename: "{app}\waku.exe"; Tasks: desktopicon
+Name: "{group}\Mack"; Filename: "{app}\mack.exe"
+Name: "{userdesktop}\Mack"; Filename: "{app}\mack.exe"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 
 [Run]
-; No skipifsilent: this is also how the updater's silent run brings Waku back.
-Filename: "{app}\waku.exe"; Description: "{cm:LaunchProgram,Waku}"; Flags: nowait postinstall
+; No skipifsilent: this is also how the updater's silent run brings Mack back.
+Filename: "{app}\mack.exe"; Description: "{cm:LaunchProgram,Mack}"; Flags: nowait postinstall

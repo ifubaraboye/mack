@@ -1,6 +1,6 @@
 use super::*;
 
-impl Waku {
+impl Mack {
     pub(super) fn finish_streaming_assistant(&mut self, session_id: Uuid) {
         if let Some(session) = self.state.session_mut(session_id) {
             for message in &mut session.messages {
@@ -530,6 +530,28 @@ impl Waku {
                 }
             }
             DriverEvent::PlanUsageUpdated(_) => {}
+            DriverEvent::TurnUsage { totals } => {
+                // Live token counts for one successful turn. Like
+                // `UsageUpdated` above, this is conversation meta that
+                // applies regardless of turn state; unlike it, the counts
+                // accumulate instead of replacing. The stamp makes replays
+                // idempotent — see `AgentSession::apply_turn_usage`.
+                if let Some(session) = self.state.session_mut(session_id) {
+                    // The first counted turn also promotes the chat into the
+                    // lifetime session count.
+                    let first_counted = session.usage_turns == 0;
+                    if session.apply_turn_usage(&totals) {
+                        self.state.mark_session_dirty(session_id);
+                        if let Some(mack) = self.mack_usage_totals.as_mut() {
+                            mack.totals.add(&totals);
+                            mack.turns += 1;
+                            if first_counted {
+                                mack.sessions += 1;
+                            }
+                        }
+                    }
+                }
+            }
             DriverEvent::GoalUpdated(goal) => {
                 // Conversation meta like usage: it applies regardless of turn
                 // state, and `None` means the provider cleared the goal.

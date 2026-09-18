@@ -17,26 +17,26 @@
     }
   };
 
-  const nativeCuaCall = globalThis.__wakuCuaCall;
-  const nativeWrite = globalThis.__wakuWrite;
-  const nativeEmitImage = globalThis.__wakuEmitImage;
-  const nativeSetResponseMeta = globalThis.__wakuSetResponseMeta;
-  const nativeScheduleTimer = globalThis.__wakuScheduleTimer;
-  const nativeClearTimer = globalThis.__wakuClearTimer;
-  const nativeRefreshTimer = globalThis.__wakuRefreshTimer;
-  const cwd = globalThis.__wakuCwd;
-  const homeDir = globalThis.__wakuHomeDir;
-  const tmpDir = globalThis.__wakuTmpDir;
-  delete globalThis.__wakuCuaCall;
-  delete globalThis.__wakuWrite;
-  delete globalThis.__wakuEmitImage;
-  delete globalThis.__wakuSetResponseMeta;
-  delete globalThis.__wakuScheduleTimer;
-  delete globalThis.__wakuClearTimer;
-  delete globalThis.__wakuRefreshTimer;
-  delete globalThis.__wakuCwd;
-  delete globalThis.__wakuHomeDir;
-  delete globalThis.__wakuTmpDir;
+  const nativeCuaCall = globalThis.__mackCuaCall;
+  const nativeWrite = globalThis.__mackWrite;
+  const nativeEmitImage = globalThis.__mackEmitImage;
+  const nativeSetResponseMeta = globalThis.__mackSetResponseMeta;
+  const nativeScheduleTimer = globalThis.__mackScheduleTimer;
+  const nativeClearTimer = globalThis.__mackClearTimer;
+  const nativeRefreshTimer = globalThis.__mackRefreshTimer;
+  const cwd = globalThis.__mackCwd;
+  const homeDir = globalThis.__mackHomeDir;
+  const tmpDir = globalThis.__mackTmpDir;
+  delete globalThis.__mackCuaCall;
+  delete globalThis.__mackWrite;
+  delete globalThis.__mackEmitImage;
+  delete globalThis.__mackSetResponseMeta;
+  delete globalThis.__mackScheduleTimer;
+  delete globalThis.__mackClearTimer;
+  delete globalThis.__mackRefreshTimer;
+  delete globalThis.__mackCwd;
+  delete globalThis.__mackHomeDir;
+  delete globalThis.__mackTmpDir;
 
   const write = (value, newline = false) => nativeWrite(format(value), newline);
   globalThis.console = Object.freeze({
@@ -46,8 +46,8 @@
     error: (...values) => nativeWrite(values.map((value) => format(value)).join(" "), true),
   });
 
-  const timerId = Symbol("waku.timerId");
-  const timerRefed = Symbol("waku.timerRefed");
+  const timerId = Symbol("mack.timerId");
+  const timerRefed = Symbol("mack.timerRefed");
   const timers = new Map();
   class Timeout {
     constructor(id) {
@@ -88,7 +88,7 @@
     timers.delete(id);
     nativeClearTimer(id);
   };
-  globalThis.__wakuRunTimer = (id) => {
+  globalThis.__mackRunTimer = (id) => {
     const timer = timers.get(id);
     if (!timer) return;
     if (!timer.repeat) timers.delete(id);
@@ -339,13 +339,13 @@
   globalThis.global = globalThis;
   globalThis.tmpDir = tmpDir;
 
-  const computerPlatform = globalThis.__wakuComputerPlatform;
+  const computerPlatform = globalThis.__mackComputerPlatform;
   const nativeCall = (method, arguments_ = {}) => {
     const envelope = JSON.parse(nativeCuaCall(method, JSON.stringify(arguments_)));
     if (!envelope.ok) throw new Error(envelope.error || "Cua Driver connection failed");
     return envelope.value;
   };
-  const computerUseRuntimeKey = Symbol.for("waku.cua-driver.runtime");
+  const computerUseRuntimeKey = Symbol.for("mack.cua-driver.runtime");
   globalThis.setupComputerUseRuntime = async ({ globals = globalThis } = {}) => {
     let cua = globalThis[computerUseRuntimeKey];
     if (!cua) {
@@ -381,7 +381,7 @@
   };
 
   let requestMeta = Object.freeze({});
-  globalThis.__wakuSetRequestMeta = (meta) => {
+  globalThis.__mackSetRequestMeta = (meta) => {
     requestMeta = Object.freeze(meta ?? {});
   };
   globalThis.jsRepl = Object.freeze({

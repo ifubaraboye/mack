@@ -17,14 +17,14 @@ use crate::provider_session::{ProviderSessionFork, ProviderSessionForkRequest};
 use crate::settings::DaemonSettings;
 use crate::skills::SkillsCatalog;
 use crate::usage::PlanUsage;
-use crate::usage_history::{UsageHistory, UsageWindow};
+use crate::usage_history::MackUsageTotals;
 use crate::workspace::{WorkspaceOperation, WorkspaceResult};
 
 pub const PROTOCOL_VERSION: u32 = 8;
 pub const MAX_WIRE_MESSAGE_BYTES: usize = 48 * 1024 * 1024;
-pub const DAEMON_TOKEN_ENV: &str = "WAKU_DAEMON_TOKEN";
-pub const DAEMON_ADDRESS_ENV: &str = "WAKU_DAEMON_ADDRESS";
-pub const APP_EXECUTABLE_ENV: &str = "WAKU_APP_EXECUTABLE";
+pub const DAEMON_TOKEN_ENV: &str = "MACK_DAEMON_TOKEN";
+pub const DAEMON_ADDRESS_ENV: &str = "MACK_DAEMON_ADDRESS";
+pub const APP_EXECUTABLE_ENV: &str = "MACK_APP_EXECUTABLE";
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -159,10 +159,10 @@ pub enum Command {
     ProbeComputerPermissions {
         prompt: bool,
     },
-    LoadUsageHistory {
-        window: UsageWindow,
-        project_roots: Vec<PathBuf>,
-    },
+    /// Lifetime token totals for turns executed inside Mack, summed over
+    /// every stored session. No parameters: the answer is a single row of
+    /// sums, cheap enough to compute on every call.
+    LoadMackUsageTotals,
     LoadSkills {
         projects: Vec<(String, PathBuf)>,
     },
@@ -321,12 +321,12 @@ pub struct WireDriverStartOptions {
     pub computer_use_enabled: bool,
     pub provider_cursor: Option<Value>,
     /// ChatGPT-only resume history, seeded client-side from the persisted
-    /// Waku transcript. Every other provider ignores it and keeps its native
+    /// Mack transcript. Every other provider ignores it and keeps its native
     /// resume path. `None` (and empty) means a fresh conversation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chatgpt_history: Option<Vec<ChatGptHistorySeed>>,
     /// Claude-only resume history, seeded client-side from the persisted
-    /// Waku transcript. Same contract as `chatgpt_history`.
+    /// Mack transcript. Same contract as `chatgpt_history`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_history: Option<Vec<ClaudeHistorySeed>>,
 }
@@ -452,8 +452,8 @@ pub enum ResponsePayload {
     ComputerPermissions {
         permissions: ComputerPermissions,
     },
-    UsageHistory {
-        history: UsageHistory,
+    MackUsageTotals {
+        totals: MackUsageTotals,
     },
     SkillsCatalog {
         catalog: SkillsCatalog,

@@ -349,7 +349,7 @@ mod tests {
     use super::*;
 
     fn temp_root(tag: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("waku-skills-{tag}-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("mack-skills-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root
@@ -481,7 +481,7 @@ mod tests {
                 source: SkillSource::Shared,
                 scope: SkillScope::Project,
                 root: project_root.clone(),
-                project: Some("waku".into()),
+                project: Some("mack".into()),
             },
         ];
         let catalog = scan_skills(&locations);
@@ -493,7 +493,7 @@ mod tests {
         // User scope leads, alphabetical inside each group.
         assert_eq!(
             names,
-            vec![("review", None), ("zeta", None), ("review", Some("waku"))]
+            vec![("review", None), ("zeta", None), ("review", Some("mack"))]
         );
         // A user-scope and a project-scope copy stay separate rows — the
         // project one shadows at invocation — and both carry the note.
@@ -537,8 +537,8 @@ mod tests {
 
     #[test]
     fn every_ecosystem_root_is_listed() {
-        let project_root = std::env::temp_dir().join("waku-skills-project");
-        let projects = vec![("waku".to_owned(), project_root.clone())];
+        let project_root = std::env::temp_dir().join("mack-skills-project");
+        let projects = vec![("mack".to_owned(), project_root.clone())];
         let locations = skill_locations(&projects);
         // ChatGPT-only: only the shared cross-tool root is listed.
         for expected in [".agents/skills"] {

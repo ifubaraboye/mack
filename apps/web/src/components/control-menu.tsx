@@ -1,13 +1,13 @@
 import { Menu } from '@base-ui/react/menu'
 import { type ReactNode, type RefObject, useState } from 'react'
-import { WakuIcon, type WakuIconName } from '@/components/waku-icon'
+import { MackIcon, type MackIconName } from '@/components/mack-icon'
 import { cn } from '@/lib/utils'
 
 export interface ControlMenuItem {
   id: string
   label: string
   description?: string
-  icon?: WakuIconName
+  icon?: MackIconName
   selected?: boolean
   disabled?: boolean
   suffix?: string
@@ -33,7 +33,7 @@ export function ControlMenu({
   returnFocus,
 }: {
   label: string
-  icon?: WakuIconName
+  icon?: MackIconName
   children?: ReactNode
   items: ControlMenuItem[]
   align?: 'left' | 'right'
@@ -68,9 +68,9 @@ export function ControlMenu({
           triggerClassName,
         )}
       >
-        {icon && <WakuIcon className="size-[11px] text-[var(--text-tertiary)]" name={icon} />}
+        {icon && <MackIcon className="size-[11px] text-[var(--text-tertiary)]" name={icon} />}
         {children ?? <span className="truncate">{label}</span>}
-        {caret && <WakuIcon className="size-2.5 text-[var(--text-ghost)]" name="chevronDown" />}
+        {caret && <MackIcon className="size-2.5 text-[var(--text-ghost)]" name="chevronDown" />}
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner
@@ -112,7 +112,7 @@ export function ControlMenu({
                     item.onSelect()
                   }}
                 >
-                  {item.icon && <WakuIcon className="size-3 text-current" name={item.icon} />}
+                  {item.icon && <MackIcon className="size-3 text-current" name={item.icon} />}
                   <span className="min-w-0 flex-1">
                     <span className={cn(
                       'flex items-baseline gap-1 truncate',
@@ -129,7 +129,7 @@ export function ControlMenu({
                       </span>
                     )}
                   </span>
-                  {item.selected && <WakuIcon className="size-[11px] text-[var(--text-tertiary)]" name="check" />}
+                  {item.selected && <MackIcon className="size-[11px] text-[var(--text-tertiary)]" name="check" />}
                 </Menu.Item>
               </div>
             ))}

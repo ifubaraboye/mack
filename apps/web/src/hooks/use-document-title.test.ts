@@ -11,8 +11,8 @@ describe('formatDocumentTitle', () => {
   })
 
   test('identifies the current browser surface', () => {
-    expect(formatDocumentTitle('New Task')).toBe('New Task — Waku Web')
-    expect(formatDocumentTitle('  General  ')).toBe('General — Waku Web')
+    expect(formatDocumentTitle('New Task')).toBe('New Task — Mack Web')
+    expect(formatDocumentTitle('  General  ')).toBe('General — Mack Web')
   })
 
   test('does not duplicate the product title', () => {

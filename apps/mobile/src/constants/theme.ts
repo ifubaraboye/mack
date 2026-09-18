@@ -1,7 +1,7 @@
 import { Platform, PlatformColor, type ColorValue } from 'react-native';
 
 /**
- * Waku's graphite palette, mirrored from the desktop theme (src/theme.rs) so
+ * Mack's graphite palette, mirrored from the desktop theme (src/theme.rs) so
  * every client reads as one product. Layer tokens follow the desktop naming:
  * background (canvas) → surface (raised cards) → surfaceMuted (fills on cards)
  * → inset (code / terminal wells), with hairline `border` strokes instead of
@@ -26,9 +26,9 @@ export const Colors = {
     separator: 'rgba(28, 31, 37, 0.10)',
     border: 'hsla(220, 10%, 12%, 0.08)',
     borderStrong: 'hsla(220, 10%, 12%, 0.15)',
-    accent: '#c85f44',
-    accentSoft: 'rgba(200, 95, 68, 0.12)',
-    codeText: '#9a5528',
+    accent: '#1a1a1a',
+    accentSoft: 'rgba(26, 26, 26, 0.12)',
+    codeText: '#242424',
     codeWash: 'hsla(220, 10%, 12%, 0.07)',
     inverse: '#202227',
     onInverse: '#f8f8f9',
@@ -58,9 +58,9 @@ export const Colors = {
     separator: 'rgba(230, 230, 230, 0.09)',
     border: 'hsla(220, 10%, 90%, 0.07)',
     borderStrong: 'hsla(220, 10%, 90%, 0.14)',
-    accent: '#e2795b',
-    accentSoft: 'rgba(226, 121, 91, 0.15)',
-    codeText: '#e0a882',
+    accent: '#f5f5f5',
+    accentSoft: 'rgba(245, 245, 245, 0.15)',
+    codeText: '#e2e2e2',
     codeWash: 'hsla(220, 10%, 90%, 0.08)',
     inverse: '#e7e9ec',
     onInverse: '#17181c',

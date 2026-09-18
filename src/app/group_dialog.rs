@@ -11,7 +11,7 @@ use gpui::{KeyBinding, actions};
 
 use super::*;
 
-actions!(waku_group_dialog, [ConfirmGroupDialog, DismissGroupDialog]);
+actions!(mack_group_dialog, [ConfirmGroupDialog, DismissGroupDialog]);
 
 const DIALOG_CONTEXT: &str = "GroupDialog";
 const DIALOG_INPUT_CONTEXT: &str = "GroupDialog > TextInput";
@@ -36,7 +36,7 @@ pub(super) struct GroupDialogState {
     save_focus: FocusHandle,
 }
 
-impl Waku {
+impl Mack {
     /// Open the naming modal. The name field is prefilled for renames and
     /// empty for creates; focus lands two frames out, once the deferred
     /// overlay has joined the dispatch tree.
@@ -129,11 +129,11 @@ impl Waku {
         let card = div()
             .id("group-dialog-card")
             .key_context(DIALOG_CONTEXT)
-            .on_action(cx.listener(|waku, _: &ConfirmGroupDialog, window, cx| {
-                waku.confirm_group_dialog(window, cx);
+            .on_action(cx.listener(|mack, _: &ConfirmGroupDialog, window, cx| {
+                mack.confirm_group_dialog(window, cx);
             }))
-            .on_action(cx.listener(|waku, _: &DismissGroupDialog, window, cx| {
-                waku.close_group_dialog(window, cx);
+            .on_action(cx.listener(|mack, _: &DismissGroupDialog, window, cx| {
+                mack.close_group_dialog(window, cx);
             }))
             .tab_group()
             .tab_stop(false)
@@ -201,16 +201,16 @@ impl Waku {
                             let key_weak = save_weak.clone();
                             row.hover(|style| style.bg(theme.overlay_strong))
                                 .on_click(move |_, window, cx| {
-                                    let _ = click_weak.update(cx, |waku, cx| {
-                                        waku.confirm_group_dialog(window, cx)
+                                    let _ = click_weak.update(cx, |mack, cx| {
+                                        mack.confirm_group_dialog(window, cx)
                                     });
                                 })
                                 .on_key_down(move |event: &KeyDownEvent, window, cx| {
                                     if !event.keystroke.modifiers.modified()
                                         && matches!(event.keystroke.key.as_str(), "enter" | "space")
                                     {
-                                        let _ = key_weak.update(cx, |waku, cx| {
-                                            waku.confirm_group_dialog(window, cx)
+                                        let _ = key_weak.update(cx, |mack, cx| {
+                                            mack.confirm_group_dialog(window, cx)
                                         });
                                         cx.stop_propagation();
                                     }
@@ -245,7 +245,7 @@ impl Waku {
             .justify_center()
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|waku, _, window, cx| waku.close_group_dialog(window, cx)),
+                cx.listener(|mack, _, window, cx| mack.close_group_dialog(window, cx)),
             )
             .child(card);
         Some(gpui::deferred(layer).with_priority(4).into_any_element())

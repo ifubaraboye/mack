@@ -136,7 +136,7 @@ pub fn probe_permissions(prompt: bool) -> anyhow::Result<ComputerPermissions> {
     // A release daemon never installs or launches the helper app, not even to
     // read permission status, so production never opens its TCC prompts.
     if !is_available() {
-        bail!("Waku Computer Use is not available in this build");
+        bail!("Mack Computer Use is not available in this build");
     }
     let operation = if prompt {
         json!({"operation": "requestPermissions"})
@@ -209,18 +209,18 @@ fn helper_app_path() -> anyhow::Result<PathBuf> {
     let executable = host_executable_path()?;
     let macos = executable
         .parent()
-        .ok_or_else(|| anyhow!("Waku executable has no parent directory"))?;
+        .ok_or_else(|| anyhow!("Mack executable has no parent directory"))?;
     let contents = macos
         .parent()
-        .ok_or_else(|| anyhow!("Waku app bundle is malformed"))?;
+        .ok_or_else(|| anyhow!("Mack app bundle is malformed"))?;
     let app_name = executable
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| anyhow!("Waku executable name is invalid"))?;
+        .ok_or_else(|| anyhow!("Mack executable name is invalid"))?;
     let helper_name = format!("{app_name} Computer Use");
     let path = contents.join("Helpers").join(format!("{helper_name}.app"));
     if !path.is_dir() {
-        bail!("Computer Use helper is missing from this Waku build")
+        bail!("Computer Use helper is missing from this Mack build")
     }
     Ok(path)
 }
@@ -233,7 +233,7 @@ pub fn helper_display_name() -> String {
                 .map(|name| name.to_string_lossy().into_owned())
         })
         .map(|app_name| format!("{app_name} Computer Use"))
-        .unwrap_or_else(|| "Waku Computer Use".into())
+        .unwrap_or_else(|| "Mack Computer Use".into())
 }
 
 pub fn mcp_server_command() -> anyhow::Result<PathBuf> {
@@ -253,32 +253,32 @@ pub fn mcp_server_command() -> anyhow::Result<PathBuf> {
 
 fn helper_executable_name() -> &'static str {
     if cfg!(windows) {
-        "waku_computer_use.exe"
+        "mack_computer_use.exe"
     } else {
-        "waku_computer_use"
+        "mack_computer_use"
     }
 }
 
 fn resources_directory(executable: &Path, os: &str) -> anyhow::Result<PathBuf> {
     let directory = executable
         .parent()
-        .ok_or_else(|| anyhow!("Waku executable has no parent"))?;
+        .ok_or_else(|| anyhow!("Mack executable has no parent"))?;
     Ok(match os {
         "macos" => directory
             .parent()
-            .ok_or_else(|| anyhow!("Waku app bundle is malformed"))?
+            .ok_or_else(|| anyhow!("Mack app bundle is malformed"))?
             .join("Resources"),
         "linux" if directory.file_name().is_some_and(|name| name == "bin") => directory
             .parent()
-            .ok_or_else(|| anyhow!("Waku installation is malformed"))?
-            .join("share/waku"),
+            .ok_or_else(|| anyhow!("Mack installation is malformed"))?
+            .join("share/mack"),
         _ => directory.join("resources"),
     })
 }
 
 fn packaged_file(path: &Path, name: &str) -> anyhow::Result<PathBuf> {
     if !path.is_file() {
-        bail!("{name} is missing from this Waku build: {}", path.display());
+        bail!("{name} is missing from this Mack build: {}", path.display());
     }
     Ok(path.to_path_buf())
 }
@@ -286,35 +286,35 @@ fn packaged_file(path: &Path, name: &str) -> anyhow::Result<PathBuf> {
 pub fn js_repl_server_path() -> anyhow::Result<PathBuf> {
     let executable = host_executable_path()?;
     let path = if cfg!(target_os = "macos") {
-        resources_directory(&executable, "macos")?.join("waku_js_repl")
+        resources_directory(&executable, "macos")?.join("mack_js_repl")
     } else {
         executable.with_file_name(if cfg!(windows) {
-            "waku_js_repl.exe"
+            "mack_js_repl.exe"
         } else {
-            "waku_js_repl"
+            "mack_js_repl"
         })
     };
-    packaged_file(&path, "Waku JavaScript REPL")
+    packaged_file(&path, "Mack JavaScript REPL")
 }
 
 pub fn pi_extension_path() -> anyhow::Result<PathBuf> {
     let path = resources_directory(&host_executable_path()?, std::env::consts::OS)?
         .join("computer-use/pi-extension.ts");
-    packaged_file(&path, "Waku Pi Computer Use extension")
+    packaged_file(&path, "Mack Pi Computer Use extension")
 }
 
 /// Install the bundled helper as an independent, stable runtime service.
 ///
 /// Screen Recording differs from Accessibility on macOS: it follows the
-/// responsible application. A helper launched from inside Waku's bundle is
-/// therefore attributed to Waku even though the capture API runs in the
+/// responsible application. A helper launched from inside Mack's bundle is
+/// therefore attributed to Mack even though the capture API runs in the
 /// helper. Launching this standalone copy through Launch Services gives the
 /// helper its own TCC identity while the signed app bundle remains the source
-/// shipped with Waku.
+/// shipped with Mack.
 fn install_helper_app(source: &Path) -> anyhow::Result<PathBuf> {
     let application_support =
         dirs::data_dir().ok_or_else(|| anyhow!("Application Support directory is unavailable"))?;
-    let install_root = application_support.join("Waku").join("Computer Use");
+    let install_root = application_support.join("Mack").join("Computer Use");
     crate::fs_ext::create_private_dir_all(&install_root)
         .with_context(|| format!("could not create {}", install_root.display()))?;
     let bundle_name = source
@@ -350,7 +350,7 @@ fn helper_install_matches(source: &Path, destination: &Path) -> anyhow::Result<b
     if !destination.is_dir() {
         return Ok(false);
     }
-    let fingerprint = Path::new("Contents/Resources/.waku-helper-fingerprint");
+    let fingerprint = Path::new("Contents/Resources/.mack-helper-fingerprint");
     let source_fingerprint = fs::read(source.join(fingerprint))?;
     let Ok(installed_fingerprint) = fs::read(destination.join(fingerprint)) else {
         return Ok(false);
@@ -385,8 +385,8 @@ fn copy_directory(source: &Path, destination: &Path) -> anyhow::Result<()> {
 pub fn skill_root_path() -> anyhow::Result<PathBuf> {
     let path = resources_directory(&host_executable_path()?, std::env::consts::OS)?.join("skills");
     packaged_file(
-        &path.join("waku-computer-use/SKILL.md"),
-        "Waku Computer Use skill",
+        &path.join("mack-computer-use/SKILL.md"),
+        "Mack Computer Use skill",
     )?;
     Ok(path)
 }
@@ -396,7 +396,7 @@ fn host_executable_path() -> anyhow::Result<PathBuf> {
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .map(Ok)
-        .unwrap_or_else(|| std::env::current_exe().context("Waku executable path is unavailable"))
+        .unwrap_or_else(|| std::env::current_exe().context("Mack executable path is unavailable"))
 }
 
 #[cfg(test)]
@@ -407,17 +407,17 @@ mod tests {
     fn packaged_resources_follow_each_platform_layout() {
         for (executable, os, resources) in [
             (
-                "/Applications/Waku.app/Contents/MacOS/Waku",
+                "/Applications/Mack.app/Contents/MacOS/Mack",
                 "macos",
-                "/Applications/Waku.app/Contents/Resources",
+                "/Applications/Mack.app/Contents/Resources",
             ),
-            ("/opt/waku/bin/waku", "linux", "/opt/waku/share/waku"),
+            ("/opt/mack/bin/mack", "linux", "/opt/mack/share/mack"),
             (
-                "/dev/waku/target/debug/waku",
+                "/dev/mack/target/debug/mack",
                 "linux",
-                "/dev/waku/target/debug/resources",
+                "/dev/mack/target/debug/resources",
             ),
-            ("/Waku/waku.exe", "windows", "/Waku/resources"),
+            ("/Mack/mack.exe", "windows", "/Mack/resources"),
         ] {
             assert_eq!(
                 resources_directory(Path::new(executable), os).unwrap(),
