@@ -253,6 +253,7 @@ sidebar.minutes_ago: "%{count} 分前"
 sidebar.hours_ago: "%{count} 時間前"
 sidebar.days_ago: "%{count} 日前"
 sidebar.unknown_project: 不明なプロジェクト
+sidebar.no_group: グループなし
 sidebar.close: サイドバーを閉じる
 sidebar.hide: サイドバーを隠す
 sidebar.open: サイドバーを開く

@@ -1590,11 +1590,6 @@ impl Mack {
         // Grouped chats align with the rest of the list: no indent, no
         // guide rail. The group name underneath says where each one lives.
         let left_padding = 8.0;
-        let project = self
-            .state
-            .projects
-            .iter()
-            .find(|project| project.id == session.project_id);
         let detail_label = if let Some(parent_title) = session
             .fork_metadata
             .as_ref()
@@ -1616,11 +1611,9 @@ impl Mack {
         {
             Some(SharedString::from(group.name.clone()))
         } else {
-            Some(SharedString::from(
-                project
-                    .map(Project::display_name)
-                    .unwrap_or_else(|| tr!("sidebar.unknown_project")),
-            ))
+            // Ungrouped chats name their (missing) group, not their project:
+            // the slot answers "which group is this in".
+            Some(SharedString::from(tr!("sidebar.no_group")))
         };
         let has_detail_label = detail_label.is_some();
         let detail_icon = if session.fork_metadata.is_some() {

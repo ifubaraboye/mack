@@ -241,6 +241,7 @@ sidebar.minutes_ago: "%{count} 分钟前"
 sidebar.hours_ago: "%{count} 小时前"
 sidebar.days_ago: "%{count} 天前"
 sidebar.unknown_project: 未知项目
+sidebar.no_group: 无分组
 sidebar.close: 关闭侧边栏
 sidebar.hide: 隐藏侧边栏
 sidebar.open: 打开侧边栏

@@ -648,6 +648,8 @@ sidebar.days_ago:
   en: "%{count}d"
 sidebar.unknown_project:
   en: Unknown project
+sidebar.no_group:
+  en: No Group
 sidebar.fork_of:
   en: Fork of %{parent}
 sidebar.move_to_group:
