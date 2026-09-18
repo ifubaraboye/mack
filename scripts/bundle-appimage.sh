@@ -33,7 +33,9 @@ cd "$root"
 
 profile="${MACK_APPIMAGE_PROFILE:-release}"
 target_dir="${CARGO_TARGET_DIR:-target}"
-version="$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"name":"mack","version":"\([^"]*\)".*/\1/p')"
+# The workspace package keeps its historical `waku` name; the product
+# binaries ship under the Mack name.
+version="$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"name":"waku","version":"\([^"]*\)".*/\1/p')"
 if [ -z "${version:-}" ]; then
   echo "Could not determine version from Cargo.toml" >&2
   exit 1
